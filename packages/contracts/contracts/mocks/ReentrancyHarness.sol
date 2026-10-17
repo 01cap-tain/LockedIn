@@ -57,6 +57,91 @@ contract FalseReturnUSDT is ERC20 {
     }
 }
 
+contract FeeOnTransferUSDT is ERC20 {
+    bool public feesEnabled;
+
+    constructor() ERC20("Fee USDT", "feeUSDT") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address recipient, uint256 amount) external {
+        _mint(recipient, amount);
+    }
+
+    function setFeesEnabled(bool enabled) external {
+        feesEnabled = enabled;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (feesEnabled && from != address(0) && to != address(0)) {
+            uint256 fee = value / 10;
+            super._update(from, to, value - fee);
+            if (fee != 0) super._update(from, address(0), fee);
+            return;
+        }
+        super._update(from, to, value);
+    }
+}
+
+contract SlashableUSDT is ERC20 {
+    constructor() ERC20("Slashable USDT", "sUSDT") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address recipient, uint256 amount) external {
+        _mint(recipient, amount);
+    }
+
+    function slash(address account, uint256 amount) external {
+        _burn(account, amount);
+    }
+}
+
+contract WrongDecimalsToken is ERC20 {
+    constructor() ERC20("Wrong Decimals", "WRONG") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 18;
+    }
+}
+
+contract NoReturnUSDT {
+    string public constant name = "No Return USDT";
+    string public constant symbol = "nrUSDT";
+    uint8 public constant decimals = 6;
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+
+    function mint(address recipient, uint256 amount) external {
+        balanceOf[recipient] += amount;
+    }
+
+    function approve(address spender, uint256 amount) external {
+        allowance[msg.sender][spender] = amount;
+    }
+
+    function transfer(address recipient, uint256 amount) external {
+        _transfer(msg.sender, recipient, amount);
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) external {
+        uint256 permitted = allowance[sender][msg.sender];
+        require(permitted >= amount, "allowance");
+        allowance[sender][msg.sender] = permitted - amount;
+        _transfer(sender, recipient, amount);
+    }
+
+    function _transfer(address sender, address recipient, uint256 amount) internal {
+        require(balanceOf[sender] >= amount, "balance");
+        balanceOf[sender] -= amount;
+        balanceOf[recipient] += amount;
+    }
+}
+
 contract ReentrantMarketSeller is ITokenReceiver {
     SavingsVault public vault;
     IERC20 public token;

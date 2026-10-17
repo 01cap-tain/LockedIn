@@ -74,6 +74,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     error PositionChanged();
     error PositionAlreadySold();
     error PositionNotSaleable();
+    error TokenAccountingMismatch();
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
@@ -114,6 +115,13 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 providerFee
     );
 
+    function isPositionListed(address vault, uint256 positionId) external view returns (bool) {
+        uint256 value = activeListing[vault][positionId];
+        if (value == 0) return false;
+        Listing storage listing = listings[value - 1];
+        return listing.active && listing.expiresAt > block.timestamp;
+    }
+
     constructor(
         IERC20 asset_,
         RewardPool rewardPool_,
@@ -123,7 +131,12 @@ contract EarlyExitMarket is ReentrancyGuard {
     ) {
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) ||
-            factory_ == address(0) || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
+            factory_ == address(0) || riskReserve_ == address(0) || maintenanceTreasury_ == address(0) ||
+            riskReserve_ == maintenanceTreasury_ || riskReserve_ == address(this) ||
+            maintenanceTreasury_ == address(this) || riskReserve_ == address(asset_) ||
+            maintenanceTreasury_ == address(asset_) || riskReserve_ == address(rewardPool_) ||
+            maintenanceTreasury_ == address(rewardPool_) || riskReserve_ == factory_ ||
+            maintenanceTreasury_ == factory_
         ) revert InvalidAddress();
         asset = asset_;
         rewardPool = rewardPool_;
@@ -235,12 +248,14 @@ contract EarlyExitMarket is ReentrancyGuard {
         positionSold[listing.vault][listing.positionId] = true;
         _closeListing(listing);
 
-        asset.safeTransferFrom(offer.provider, address(this), sellerReceives + providerFee);
-        asset.safeTransfer(listing.seller, sellerReceives);
-        asset.forceApprove(address(rewardPool), rewardShare);
-        rewardPool.receiveProtocolRevenue(rewardShare);
-        asset.safeTransfer(riskReserve, riskShare);
-        asset.safeTransfer(maintenanceTreasury, maintenanceShare);
+        _pullExact(offer.provider, sellerReceives + providerFee);
+        _transferOutExact(listing.seller, sellerReceives);
+        if (rewardShare != 0) {
+            asset.forceApprove(address(rewardPool), rewardShare);
+            rewardPool.receiveProtocolRevenue(rewardShare);
+        }
+        _transferOutExact(riskReserve, riskShare);
+        _transferOutExact(maintenanceTreasury, maintenanceShare);
         vault.transferPosition(listing.positionId, listing.seller, offer.provider);
 
         emit OfferAccepted(listingId, offerId, offer.provider, sellerReceives, providerFee);
@@ -308,6 +323,25 @@ contract EarlyExitMarket is ReentrancyGuard {
         if (discountBps < MIN_DISCOUNT_BPS || discountBps > MAX_DISCOUNT_BPS) {
             revert InvalidDiscount();
         }
+    }
+
+    function _pullExact(address payer, uint256 amount) internal {
+        uint256 balanceBefore = asset.balanceOf(address(this));
+        asset.safeTransferFrom(payer, address(this), amount);
+        if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
+    }
+
+    function _transferOutExact(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 senderBefore = asset.balanceOf(address(this));
+        uint256 recipientBefore = asset.balanceOf(recipient);
+        asset.safeTransfer(recipient, amount);
+        uint256 senderAfter = asset.balanceOf(address(this));
+        uint256 recipientAfter = asset.balanceOf(recipient);
+        if (
+            senderBefore < senderAfter || senderBefore - senderAfter != amount ||
+            recipientAfter < recipientBefore || recipientAfter - recipientBefore != amount
+        ) revert TokenAccountingMismatch();
     }
 
     function _min(uint256 a, uint256 b) internal pure returns (uint256) {

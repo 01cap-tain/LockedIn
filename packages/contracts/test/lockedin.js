@@ -122,6 +122,7 @@ describe('LockedIn Circle Phase 1', function () {
     await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsNotReady')
 
     await vault.connect(memberTwo).deposit(1, 100n * UNIT)
+    await networkHelpers.time.increaseTo(maturity)
     await vault.activateRewards()
     expect(await pool.claimable(await creator.getAddress())).to.equal(10n * UNIT)
     expect(await pool.claimable(await memberTwo.getAddress())).to.equal(10n * UNIT)

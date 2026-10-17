@@ -14,8 +14,8 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 4. Each deposit is split using integer basis points: `emergency = amount * emergencyBps / 10_000`; all remainder goes to the locked balance.
 5. A member may withdraw any part of their emergency balance at any time. This does not reduce cumulative deposited value or reverse goal completion.
 6. At or after maturity, the current position owner may withdraw that position's locked balance exactly once (subsequent calls have no funds and revert).
-7. Incomplete positions recover their locked funds but are not individually reward-eligible. For a group, rewards activate only if every fixed active member has reached their target.
-8. Anyone may trigger reward activation once its objective vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded specifically for that vault.
+7. Incomplete positions recover their locked funds but are not individually reward-eligible. A sold position is inactive and permanently reward-disqualified. For a group, rewards activate only if every remaining active member has reached their target.
+8. Reward activation is allowed only at or after maturity. Anyone may trigger it once the objective vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded specifically for that vault.
 
 ## Contract responsibilities
 
@@ -33,7 +33,9 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 - Maintains cumulative deposits and current emergency/locked balances per position.
 - Maintains `positionId => owner`; the owner has the right to the locked balance only.
 - Keeps emergency withdrawal rights with the original member.
-- Exposes a transfer hook callable only by the immutable future early-exit market address. A zero address disables transfers in Phase 1.
+- Exposes a transfer hook callable only by the immutable factory-created early-exit market.
+- Freezes deposits while a non-expired listing is active; emergency withdrawals remain independent and permitted.
+- Tracks aggregate emergency and locked liabilities and rejects any transfer whose observed token-balance delta is not exact.
 - Uses checks-effects-interactions, `SafeERC20`, and `ReentrancyGuard` on value-moving operations.
 - Has no administrator, developer withdrawal, pause, target-editing or maturity-editing function.
 
@@ -41,8 +43,9 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 
 - Accepts token revenue earmarked to registered vaults.
 - Derives eligibility and recipients directly from the calling registered vault.
-- Requires the vault to report that all members have completed before activation.
+- Requires maturity and completion by every non-exited active member before activation.
 - Requires the vault reward budget to divide exactly by the eligible position count, then assigns equal claimable amounts.
+- Separately accounts for funded campaign budgets, activated claims and non-distributable protocol revenue.
 - Allows recipients to pull their own rewards and has no administrator allocation or withdrawal function.
 
 ### Future interfaces
@@ -60,7 +63,8 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 4. The saver may reject any offer, cancel an unaccepted listing, or accept one offer. The developer has no selection role.
 5. Acceptance pulls the claim value and fee from the selected provider, pays the saver, distributes the fee, and transfers the locked-position ownership in one transaction. Any failed step reverts the complete transaction.
 6. The original saver retains emergency withdrawal rights. The provider receives only the locked claim and may withdraw it at maturity.
-7. A position may be sold only once. Sales are prohibited at maturity, after locked withdrawal, when ownership changed, or when the locked balance changed after listing.
+7. A sale permanently disqualifies the original position from rewards. It does not disqualify the whole group: remaining active members may activate an equally divided campaign at maturity if all of them completed.
+8. A position may be sold only once. Sales are prohibited at maturity, after locked withdrawal, when ownership changed, or when the locked balance changed after listing.
 
 ### Market fee
 
@@ -106,12 +110,16 @@ The reference is informational. Providers choose their own valid discount and th
 - Vault liabilities are separated per position and transfers occur only after state is reduced.
 - Locked funds cannot leave before `block.timestamp >= maturity`.
 - New deposits are rejected at and after maturity.
+- New deposits are rejected while a non-expired early-exit listing is active.
 - A locked balance cannot be withdrawn twice.
 - A position cannot be sold twice, partially sold, or sold at/after maturity.
 - Market settlement, fee distribution and position transfer are atomic.
 - Market entry points that move value are reentrancy-protected.
 - Risk-reserve and maintenance-treasury fee recipients cannot be changed.
 - No privileged party can withdraw member principal or choose reward recipients.
-- Reward activation is one-time and depends only on registered-vault state.
-- Fee-on-transfer and rebasing tokens are out of scope; Phase 1 assumes a standard USDT-compatible token whose received amount equals the requested transfer.
+- Reward activation is one-time, cannot occur before maturity and depends only on registered-vault state.
+- A seller is reward-disqualified atomically with position transfer, while emergency ownership remains unchanged.
+- Vault token balances must cover aggregate emergency plus locked liabilities. Reward-pool balances must cover campaign budgets, activated claims and retained protocol revenue.
+- The factory accepts only token contracts reporting six decimals. Every inbound and outbound transfer verifies exact sender/recipient balance deltas; fee-on-transfer behaviour reverts atomically.
+- Negative rebases are unsupported. Solvency checks block state-changing outflows after an external balance reduction, but they cannot restore tokens removed by the token contract. Production deployment therefore requires a reviewed, non-rebasing USDT contract.
 - Contracts are unaudited and intended only for local Hardhat use.

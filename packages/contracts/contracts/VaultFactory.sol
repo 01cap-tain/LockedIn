@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {RewardPool} from "./RewardPool.sol";
 import {SavingsVault} from "./SavingsVault.sol";
 import {EarlyExitMarket} from "./EarlyExitMarket.sol";
@@ -11,6 +12,7 @@ contract VaultFactory {
 
     error InvalidConfiguration();
     error CreatorNotMember();
+    error UnsupportedToken();
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
@@ -24,8 +26,17 @@ contract VaultFactory {
 
     constructor(IERC20 asset_, address riskReserve_, address maintenanceTreasury_) {
         if (
-            address(asset_) == address(0) || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
+            address(asset_) == address(0) || address(asset_).code.length == 0 ||
+            riskReserve_ == address(0) || maintenanceTreasury_ == address(0) ||
+            riskReserve_ == maintenanceTreasury_ || riskReserve_ == address(asset_) ||
+            maintenanceTreasury_ == address(asset_) || riskReserve_ == address(this) ||
+            maintenanceTreasury_ == address(this)
         ) revert InvalidConfiguration();
+        try IERC20Metadata(address(asset_)).decimals() returns (uint8 tokenDecimals) {
+            if (tokenDecimals != 6) revert UnsupportedToken();
+        } catch {
+            revert UnsupportedToken();
+        }
         asset = asset_;
         rewardPool = new RewardPool(asset_, address(this));
         earlyExitMarket = new EarlyExitMarket(

@@ -60,4 +60,6 @@ Open `http://localhost:5173` for the browser preview. To test the preserved Nimi
 - No guardian recovery
 - No mainnet deployment configuration
 - No assertion that the Nimiq and EVM addresses belong to the same key or account
+- Only reviewed six-decimal, exact-transfer, non-rebasing USDT deployments are supported
+- Real-device Nimiq Pay EVM signing still requires device verification
 - Contracts are unaudited

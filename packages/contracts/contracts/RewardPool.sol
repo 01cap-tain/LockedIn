@@ -6,8 +6,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IRewardVault {
-    function memberCount() external view returns (uint256);
-    function memberAt(uint256 positionId) external view returns (address);
+    function rewardEligibleCount() external view returns (uint256);
+    function rewardRecipientAt(uint256 eligibleIndex) external view returns (address);
     function rewardsReady() external view returns (bool);
 }
 
@@ -21,6 +21,8 @@ contract RewardPool is ReentrancyGuard {
     error InvalidAmount();
     error UnequalRewardFunding();
     error NothingToClaim();
+    error TokenAccountingMismatch();
+    error Insolvent();
 
     IERC20 public immutable asset;
     address public immutable factory;
@@ -31,6 +33,8 @@ contract RewardPool is ReentrancyGuard {
     mapping(address vault => mapping(address recipient => bool)) public rewardEligible;
     mapping(address recipient => uint256) public claimable;
     uint256 public protocolRevenue;
+    uint256 public totalVaultBudgets;
+    uint256 public totalClaimable;
 
     event VaultRegistered(address indexed vault);
     event VaultFunded(address indexed vault, address indexed funder, uint256 amount);
@@ -54,14 +58,17 @@ contract RewardPool is ReentrancyGuard {
         if (rewardsActivated[vault]) revert RewardsAlreadyActivated();
         if (amount == 0) revert InvalidAmount();
         vaultBudget[vault] += amount;
-        asset.safeTransferFrom(msg.sender, address(this), amount);
+        totalVaultBudgets += amount;
+        _pullExact(msg.sender, amount);
+        _assertSolvent();
         emit VaultFunded(vault, msg.sender, amount);
     }
 
     function receiveProtocolRevenue(uint256 amount) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
         protocolRevenue += amount;
-        asset.safeTransferFrom(msg.sender, address(this), amount);
+        _pullExact(msg.sender, amount);
+        _assertSolvent();
         emit ProtocolRevenueReceived(msg.sender, amount);
     }
 
@@ -69,8 +76,10 @@ contract RewardPool is ReentrancyGuard {
         if (!registeredVault[msg.sender]) revert VaultNotRegistered();
         if (rewardsActivated[msg.sender]) revert RewardsAlreadyActivated();
         if (!IRewardVault(msg.sender).rewardsReady()) revert RewardsNotReady();
+        _assertSolvent();
 
-        uint256 count = IRewardVault(msg.sender).memberCount();
+        uint256 count = IRewardVault(msg.sender).rewardEligibleCount();
+        if (count == 0) revert RewardsNotReady();
         uint256 budget = vaultBudget[msg.sender];
         if (budget == 0) revert InvalidAmount();
         if (budget % count != 0) revert UnequalRewardFunding();
@@ -78,9 +87,11 @@ contract RewardPool is ReentrancyGuard {
         uint256 rewardEach = budget / count;
         rewardsActivated[msg.sender] = true;
         vaultBudget[msg.sender] = 0;
+        totalVaultBudgets -= budget;
+        totalClaimable += budget;
 
-        for (uint256 positionId; positionId < count; ++positionId) {
-            address recipient = IRewardVault(msg.sender).memberAt(positionId);
+        for (uint256 eligibleIndex; eligibleIndex < count; ++eligibleIndex) {
+            address recipient = IRewardVault(msg.sender).rewardRecipientAt(eligibleIndex);
             rewardEligible[msg.sender][recipient] = true;
             claimable[recipient] += rewardEach;
         }
@@ -91,7 +102,39 @@ contract RewardPool is ReentrancyGuard {
         uint256 amount = claimable[msg.sender];
         if (amount == 0) revert NothingToClaim();
         claimable[msg.sender] = 0;
-        asset.safeTransfer(msg.sender, amount);
+        totalClaimable -= amount;
+        _transferOutExact(msg.sender, amount);
+        _assertSolvent();
         emit RewardClaimed(msg.sender, amount);
+    }
+
+    function totalLiability() public view returns (uint256) {
+        return totalVaultBudgets + totalClaimable + protocolRevenue;
+    }
+
+    function isSolvent() external view returns (bool) {
+        return asset.balanceOf(address(this)) >= totalLiability();
+    }
+
+    function _pullExact(address payer, uint256 amount) internal {
+        uint256 balanceBefore = asset.balanceOf(address(this));
+        asset.safeTransferFrom(payer, address(this), amount);
+        if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
+    }
+
+    function _transferOutExact(address recipient, uint256 amount) internal {
+        uint256 senderBefore = asset.balanceOf(address(this));
+        uint256 recipientBefore = asset.balanceOf(recipient);
+        asset.safeTransfer(recipient, amount);
+        uint256 senderAfter = asset.balanceOf(address(this));
+        uint256 recipientAfter = asset.balanceOf(recipient);
+        if (
+            senderBefore < senderAfter || senderBefore - senderAfter != amount ||
+            recipientAfter < recipientBefore || recipientAfter - recipientBefore != amount
+        ) revert TokenAccountingMismatch();
+    }
+
+    function _assertSolvent() internal view {
+        if (asset.balanceOf(address(this)) < totalLiability()) revert Insolvent();
     }
 }

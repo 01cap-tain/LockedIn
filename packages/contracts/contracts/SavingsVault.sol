@@ -6,6 +6,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {RewardPool} from "./RewardPool.sol";
 
+interface IEarlyExitMarketStatus {
+    function isPositionListed(address vault, uint256 positionId) external view returns (bool);
+}
+
 contract SavingsVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -33,6 +37,9 @@ contract SavingsVault is ReentrancyGuard {
     error NotMatured();
     error NothingToWithdraw();
     error RewardsNotReady();
+    error PositionListed();
+    error TokenAccountingMismatch();
+    error Insolvent();
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
@@ -47,6 +54,9 @@ contract SavingsVault is ReentrancyGuard {
     mapping(uint256 positionId => uint32 count) public depositCount;
     mapping(uint256 positionId => uint64 timestamp) public firstDepositAt;
     mapping(uint256 positionId => uint64 timestamp) public lastDepositAt;
+    mapping(uint256 positionId => bool disqualified) public rewardDisqualified;
+    uint256 public totalEmergencyLiability;
+    uint256 public totalLockedLiability;
 
     event Deposited(
         uint256 indexed positionId,
@@ -58,6 +68,7 @@ contract SavingsVault is ReentrancyGuard {
     event EmergencyWithdrawn(uint256 indexed positionId, address indexed member, uint256 amount);
     event LockedWithdrawn(uint256 indexed positionId, address indexed owner, uint256 amount);
     event PositionTransferred(uint256 indexed positionId, address indexed previousOwner, address indexed newOwner);
+    event RewardEligibilityRevoked(uint256 indexed positionId, address indexed member);
 
     constructor(
         IERC20 asset_,
@@ -127,17 +138,25 @@ contract SavingsVault is ReentrancyGuard {
         if (msg.sender != stored.member || positionOwner[positionId] != msg.sender) revert MemberOnly();
         if (amount == 0) revert InvalidAmount();
         if (block.timestamp >= maturity) revert DepositsClosed();
+        if (IEarlyExitMarketStatus(earlyExitMarket).isPositionListed(address(this), positionId)) {
+            revert PositionListed();
+        }
 
         uint256 emergencyAmount = amount * stored.emergencyBps / 10_000;
         uint256 lockedAmount = amount - emergencyAmount;
+        uint256 balanceBefore = asset.balanceOf(address(this));
         stored.deposited += amount;
         stored.emergencyBalance += emergencyAmount;
         stored.lockedBalance += lockedAmount;
+        totalEmergencyLiability += emergencyAmount;
+        totalLockedLiability += lockedAmount;
         if (depositCount[positionId] == 0) firstDepositAt[positionId] = uint64(block.timestamp);
         depositCount[positionId] += 1;
         lastDepositAt[positionId] = uint64(block.timestamp);
 
         asset.safeTransferFrom(msg.sender, address(this), amount);
+        if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
+        _assertSolvent();
         emit Deposited(positionId, msg.sender, amount, emergencyAmount, lockedAmount);
     }
 
@@ -148,7 +167,9 @@ contract SavingsVault is ReentrancyGuard {
         if (amount > stored.emergencyBalance) revert InsufficientEmergencyBalance();
 
         stored.emergencyBalance -= amount;
-        asset.safeTransfer(msg.sender, amount);
+        totalEmergencyLiability -= amount;
+        _transferOutExact(msg.sender, amount);
+        _assertSolvent();
         emit EmergencyWithdrawn(positionId, msg.sender, amount);
     }
 
@@ -161,8 +182,10 @@ contract SavingsVault is ReentrancyGuard {
         if (amount == 0 || stored.lockedWithdrawn) revert NothingToWithdraw();
         stored.lockedBalance = 0;
         stored.lockedWithdrawn = true;
+        totalLockedLiability -= amount;
 
-        asset.safeTransfer(msg.sender, amount);
+        _transferOutExact(msg.sender, amount);
+        _assertSolvent();
         emit LockedWithdrawn(positionId, msg.sender, amount);
     }
 
@@ -174,7 +197,9 @@ contract SavingsVault is ReentrancyGuard {
         if (stored.lockedWithdrawn) revert NothingToWithdraw();
 
         positionOwner[positionId] = newOwner;
+        rewardDisqualified[positionId] = true;
         emit PositionTransferred(positionId, expectedOwner, newOwner);
+        emit RewardEligibilityRevoked(positionId, stored.member);
     }
 
     function goalComplete(uint256 positionId) public view returns (bool) {
@@ -183,11 +208,33 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function rewardsReady() public view returns (bool) {
+        if (block.timestamp < maturity) return false;
         uint256 count = _positions.length;
+        bool hasEligibleMember;
         for (uint256 i; i < count; ++i) {
+            if (rewardDisqualified[i]) continue;
+            hasEligibleMember = true;
             if (!goalComplete(i)) return false;
         }
-        return true;
+        return hasEligibleMember;
+    }
+
+    function rewardEligibleCount() external view returns (uint256 eligible) {
+        uint256 count = _positions.length;
+        for (uint256 i; i < count; ++i) {
+            if (!rewardDisqualified[i]) ++eligible;
+        }
+    }
+
+    function rewardRecipientAt(uint256 eligibleIndex) external view returns (address) {
+        uint256 count = _positions.length;
+        uint256 current;
+        for (uint256 i; i < count; ++i) {
+            if (rewardDisqualified[i]) continue;
+            if (current == eligibleIndex) return _positions[i].member;
+            ++current;
+        }
+        revert UnknownPosition();
     }
 
     function marketPositionData(uint256 positionId)
@@ -218,6 +265,32 @@ contract SavingsVault is ReentrancyGuard {
     function activateRewards() external {
         if (!rewardsReady()) revert RewardsNotReady();
         rewardPool.activateRewards();
+    }
+
+    function totalPrincipalLiability() external view returns (uint256) {
+        return totalEmergencyLiability + totalLockedLiability;
+    }
+
+    function isSolvent() external view returns (bool) {
+        return asset.balanceOf(address(this)) >= totalEmergencyLiability + totalLockedLiability;
+    }
+
+    function _transferOutExact(address recipient, uint256 amount) internal {
+        uint256 senderBefore = asset.balanceOf(address(this));
+        uint256 recipientBefore = asset.balanceOf(recipient);
+        asset.safeTransfer(recipient, amount);
+        uint256 senderAfter = asset.balanceOf(address(this));
+        uint256 recipientAfter = asset.balanceOf(recipient);
+        if (
+            senderBefore < senderAfter || senderBefore - senderAfter != amount ||
+            recipientAfter < recipientBefore || recipientAfter - recipientBefore != amount
+        ) revert TokenAccountingMismatch();
+    }
+
+    function _assertSolvent() internal view {
+        if (asset.balanceOf(address(this)) < totalEmergencyLiability + totalLockedLiability) {
+            revert Insolvent();
+        }
     }
 
     function _position(uint256 positionId) internal view returns (Position storage stored) {
