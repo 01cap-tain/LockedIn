@@ -30,11 +30,13 @@ contract RewardPool is ReentrancyGuard {
     mapping(address vault => bool) public rewardsActivated;
     mapping(address vault => mapping(address recipient => bool)) public rewardEligible;
     mapping(address recipient => uint256) public claimable;
+    uint256 public protocolRevenue;
 
     event VaultRegistered(address indexed vault);
     event VaultFunded(address indexed vault, address indexed funder, uint256 amount);
     event RewardsActivated(address indexed vault, uint256 memberCount, uint256 rewardEach);
     event RewardClaimed(address indexed recipient, uint256 amount);
+    event ProtocolRevenueReceived(address indexed payer, uint256 amount);
 
     constructor(IERC20 asset_, address factory_) {
         asset = asset_;
@@ -54,6 +56,13 @@ contract RewardPool is ReentrancyGuard {
         vaultBudget[vault] += amount;
         asset.safeTransferFrom(msg.sender, address(this), amount);
         emit VaultFunded(vault, msg.sender, amount);
+    }
+
+    function receiveProtocolRevenue(uint256 amount) external nonReentrant {
+        if (amount == 0) revert InvalidAmount();
+        protocolRevenue += amount;
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        emit ProtocolRevenueReceived(msg.sender, amount);
     }
 
     function activateRewards() external {

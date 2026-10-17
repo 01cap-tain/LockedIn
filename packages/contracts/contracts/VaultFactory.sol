@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RewardPool} from "./RewardPool.sol";
 import {SavingsVault} from "./SavingsVault.sol";
+import {EarlyExitMarket} from "./EarlyExitMarket.sol";
 
 contract VaultFactory {
     uint256 public constant MAX_GROUP_MEMBERS = 50;
@@ -13,7 +14,7 @@ contract VaultFactory {
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
-    address public immutable earlyExitMarket;
+    EarlyExitMarket public immutable earlyExitMarket;
 
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
@@ -21,11 +22,15 @@ contract VaultFactory {
 
     event VaultCreated(address indexed vault, address indexed creator, bool indexed isGroup, uint64 maturity);
 
-    constructor(IERC20 asset_, address earlyExitMarket_) {
-        if (address(asset_) == address(0)) revert InvalidConfiguration();
+    constructor(IERC20 asset_, address riskReserve_, address maintenanceTreasury_) {
+        if (
+            address(asset_) == address(0) || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
+        ) revert InvalidConfiguration();
         asset = asset_;
-        earlyExitMarket = earlyExitMarket_;
         rewardPool = new RewardPool(asset_, address(this));
+        earlyExitMarket = new EarlyExitMarket(
+            asset_, rewardPool, address(this), riskReserve_, maintenanceTreasury_
+        );
     }
 
     function createPersonalVault(uint256 target, uint64 maturity, uint16 emergencyBps)
@@ -82,7 +87,7 @@ contract VaultFactory {
             rewardPool,
             maturity,
             group,
-            earlyExitMarket,
+            address(earlyExitMarket),
             members,
             targets,
             emergencyBps

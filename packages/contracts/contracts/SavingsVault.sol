@@ -37,12 +37,16 @@ contract SavingsVault is ReentrancyGuard {
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
     uint64 public immutable maturity;
+    uint64 public immutable createdAt;
     bool public immutable isGroup;
     address public immutable earlyExitMarket;
 
     Position[] private _positions;
     mapping(address member => uint256 positionIdPlusOne) private _memberPosition;
     mapping(uint256 positionId => address owner) public positionOwner;
+    mapping(uint256 positionId => uint32 count) public depositCount;
+    mapping(uint256 positionId => uint64 timestamp) public firstDepositAt;
+    mapping(uint256 positionId => uint64 timestamp) public lastDepositAt;
 
     event Deposited(
         uint256 indexed positionId,
@@ -75,6 +79,7 @@ contract SavingsVault is ReentrancyGuard {
         asset = asset_;
         rewardPool = rewardPool_;
         maturity = maturity_;
+        createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
         earlyExitMarket = earlyExitMarket_;
 
@@ -128,6 +133,9 @@ contract SavingsVault is ReentrancyGuard {
         stored.deposited += amount;
         stored.emergencyBalance += emergencyAmount;
         stored.lockedBalance += lockedAmount;
+        if (depositCount[positionId] == 0) firstDepositAt[positionId] = uint64(block.timestamp);
+        depositCount[positionId] += 1;
+        lastDepositAt[positionId] = uint64(block.timestamp);
 
         asset.safeTransferFrom(msg.sender, address(this), amount);
         emit Deposited(positionId, msg.sender, amount, emergencyAmount, lockedAmount);
@@ -180,6 +188,31 @@ contract SavingsVault is ReentrancyGuard {
             if (!goalComplete(i)) return false;
         }
         return true;
+    }
+
+    function marketPositionData(uint256 positionId)
+        external
+        view
+        returns (
+            address member,
+            uint256 target,
+            uint256 deposited,
+            uint256 emergencyBalance,
+            uint256 lockedBalance,
+            bool lockedWithdrawn,
+            uint32 deposits
+        )
+    {
+        Position storage stored = _position(positionId);
+        return (
+            stored.member,
+            stored.target,
+            stored.deposited,
+            stored.emergencyBalance,
+            stored.lockedBalance,
+            stored.lockedWithdrawn,
+            depositCount[positionId]
+        );
     }
 
     function activateRewards() external {

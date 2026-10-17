@@ -9,15 +9,21 @@ describe('LockedIn Circle Phase 1', function () {
   let creator
   let memberTwo
   let outsider
+  let riskReserve
+  let maintenanceTreasury
   let token
   let factory
   let maturity
 
   beforeEach(async function () {
     ;({ ethers, networkHelpers } = await network.create())
-    ;[creator, memberTwo, outsider] = await ethers.getSigners()
+    ;[creator, memberTwo, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [await token.getAddress(), ethers.ZeroAddress])
+    factory = await ethers.deployContract('VaultFactory', [
+      await token.getAddress(),
+      await riskReserve.getAddress(),
+      await maintenanceTreasury.getAddress(),
+    ])
     maturity = BigInt(await networkHelpers.time.latest()) + 3_600n
   })
 
@@ -154,7 +160,11 @@ describe('LockedIn Circle Phase 1', function () {
   it('blocks reentrant emergency withdrawals', async function () {
     const callbackToken = await ethers.deployContract('CallbackUSDT')
     const attacker = await ethers.deployContract('ReentrantMember')
-    const callbackFactory = await ethers.deployContract('VaultFactory', [await callbackToken.getAddress(), ethers.ZeroAddress])
+    const callbackFactory = await ethers.deployContract('VaultFactory', [
+      await callbackToken.getAddress(),
+      await riskReserve.getAddress(),
+      await maintenanceTreasury.getAddress(),
+    ])
     const members = [await creator.getAddress(), await attacker.getAddress()]
     await callbackFactory.createGroupVault(members, [UNIT, 100n * UNIT], [1_000, 1_000], maturity)
     const vault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
@@ -177,21 +187,12 @@ describe('LockedIn Circle Phase 1', function () {
     ).to.be.revertedWithCustomError(vault, 'MarketOnly')
   })
 
-  it('lets only the configured market move the locked-withdrawal right', async function () {
-    const marketFactory = await ethers.deployContract('VaultFactory', [
-      await token.getAddress(),
-      await outsider.getAddress(),
-    ])
-    await marketFactory.createPersonalVault(100n * UNIT, maturity, 1_000)
-    const vault = await ethers.getContractAt('SavingsVault', await marketFactory.vaultAt(0))
-    await fundAndApprove(creator, await vault.getAddress(), 100n * UNIT)
-    await vault.deposit(0, 100n * UNIT)
-
-    await vault.connect(outsider).transferPosition(0, await creator.getAddress(), await memberTwo.getAddress())
-    expect(await vault.positionOwner(0)).to.equal(await memberTwo.getAddress())
-    await networkHelpers.time.increaseTo(maturity)
-    await expect(vault.withdrawLocked(0)).to.be.revertedWithCustomError(vault, 'PositionOwnerOnly')
-    await (await vault.connect(memberTwo).withdrawLocked(0)).wait()
+  it('configures the factory-created market as the sole transfer authority', async function () {
+    const vault = await personalVault()
+    expect(await vault.earlyExitMarket()).to.equal(await factory.earlyExitMarket())
+    await expect(
+      vault.connect(outsider).transferPosition(0, await creator.getAddress(), await memberTwo.getAddress()),
+    ).to.be.revertedWithCustomError(vault, 'MarketOnly')
   })
 
   it('enforces the maturity boundary timestamp', async function () {

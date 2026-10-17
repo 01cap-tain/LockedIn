@@ -1,10 +1,10 @@
-# LockedIn Circle — Phase 1 specification
+# LockedIn Circle — Phase 1 and Phase 2A specification
 
 ## Scope
 
-Phase 1 is a local-development prototype for savings vault accounting with a USDT-compatible ERC-20. It does not include Aave, yield, early-exit trading, guardian recovery, mainnet deployment, or a production bridge between Nimiq identities and EVM accounts.
+Phase 1 established savings-vault accounting with a USDT-compatible ERC-20. Phase 2A adds EVM ownership through Nimiq Pay and full-position early-exit trading. Aave, yield, guardian recovery and production mainnet deployment remain out of scope.
 
-Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Local Solidity calls are signed by an unlocked Hardhat EVM development account. These are distinct identities. A production identity/linking design is required before deployment.
+Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Its separately injected EIP-1193 `window.ethereum` provider supplies the EVM account that owns vault positions. These are distinct addresses and both are shown to the user. The unlocked Hardhat account is available only when the explicit development fallback flag is enabled.
 
 ## Workflow
 
@@ -47,10 +47,39 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Lo
 
 ### Future interfaces
 
-- `IEarlyExitMarket` defines the future atomic ownership-purchase boundary.
+- `IEarlyExitMarket` defines the implemented Phase 2A atomic ownership-purchase boundary.
 - `IYieldAdapter` defines asset deposit, withdrawal and accounting boundaries.
 - `IAaveYieldAdapter` extends the yield boundary with the future Aave pool identity.
-- No implementation of these modules exists in Phase 1.
+- Yield adapters remain interface-only.
+
+## Phase 2A early-exit workflow
+
+1. Before maturity, the original saver lists their entire locked position with a maximum acceptable discount from 4.5% to 8% and an expiration no later than maturity.
+2. Liquidity providers submit competing offers within 4.5% to 8%. An offer's discount may not exceed the listing's asking discount.
+3. Submitting an offer grants the market token allowance for the calculated claim value plus the 0.9% provider fee. Tokens remain with the provider until acceptance.
+4. The saver may reject any offer, cancel an unaccepted listing, or accept one offer. The developer has no selection role.
+5. Acceptance pulls the claim value and fee from the selected provider, pays the saver, distributes the fee, and transfers the locked-position ownership in one transaction. Any failed step reverts the complete transaction.
+6. The original saver retains emergency withdrawal rights. The provider receives only the locked claim and may withdraw it at maturity.
+7. A position may be sold only once. Sales are prohibited at maturity, after locked withdrawal, when ownership changed, or when the locked balance changed after listing.
+
+### Market fee
+
+- Provider fee: `sellerReceipt * 90 / 10_000` (0.9%), paid on top of the offer.
+- Reward pool: `fee * 60 / 100`.
+- Risk reserve: `fee * 20 / 100`.
+- Maintenance treasury: the remaining fee, preserving all integer rounding dust.
+- All fee destinations are immutable. The reward share is recorded as protocol revenue and is not arbitrarily allocatable by a developer.
+
+### Reference discount v1
+
+The reference starts at 450 basis points and is capped at 800. It adds four on-chain scores:
+
+- Remaining time: up to 125 points, scaling linearly from zero to 365 remaining days.
+- Time-weighted progress lag: up to 100 points, comparing actual goal progress with elapsed-plan progress.
+- Deposit consistency: up to 75 points, comparing deposit count with one expected deposit per elapsed 30-day period.
+- Current locked value: up to 50 points for positions below a 1,000 USDT reference size.
+
+The reference is informational. Providers choose their own valid discount and the saver chooses the offer.
 
 ## Permissions
 
@@ -60,7 +89,10 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Lo
 | Deposit | Original member while they own the position |
 | Withdraw emergency balance | Original member |
 | Withdraw locked balance after maturity | Current position owner |
-| Transfer a position | Immutable early-exit market only (disabled when zero) |
+| Transfer a position | Factory-created immutable early-exit market only |
+| Create/cancel listing | Original saver and current position owner |
+| Submit/cancel offer | Liquidity provider |
+| Accept/reject offer | Listing saver |
 | Fund a vault reward budget | Any token holder |
 | Activate rewards | Any caller through the eligible vault |
 | Claim a reward | Reward recipient |
@@ -75,6 +107,10 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Lo
 - Locked funds cannot leave before `block.timestamp >= maturity`.
 - New deposits are rejected at and after maturity.
 - A locked balance cannot be withdrawn twice.
+- A position cannot be sold twice, partially sold, or sold at/after maturity.
+- Market settlement, fee distribution and position transfer are atomic.
+- Market entry points that move value are reentrancy-protected.
+- Risk-reserve and maintenance-treasury fee recipients cannot be changed.
 - No privileged party can withdraw member principal or choose reward recipients.
 - Reward activation is one-time and depends only on registered-vault state.
 - Fee-on-transfer and rebasing tokens are out of scope; Phase 1 assumes a standard USDT-compatible token whose received amount equals the requested transfer.
