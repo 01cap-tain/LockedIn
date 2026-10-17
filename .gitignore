@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+.env.example
+*.log
+.DS_Store
+.vite/
+apps/web/.vite/
+*.tsbuildinfo
+artifacts/
+cache/
+coverage-contracts/
+packages/contracts/deployments/
+packages/contracts/types/
