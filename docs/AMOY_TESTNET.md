@@ -17,7 +17,11 @@ Polygon documents Amoy chain ID 80002 and the Amoy PolygonScan explorer. Aave do
 
 ## Configure
 
-Copy `.env.amoy.example` to `.env.amoy` and fill its blank values. The file is ignored by Git. Use three distinct disposable private keys: deployer, wallet A and wallet B. Risk-reserve and maintenance addresses must also be non-zero and distinct.
+Copy `.env.amoy.example` to `.env.amoy` and fill its blank values. The file is ignored by Git. The deployer is the only required private key. Risk-reserve and maintenance addresses are public recipient addresses; they must be non-zero and distinct.
+
+For interactive testing, leave `AMOY_WALLET_A_PRIVATE_KEY` and `AMOY_WALLET_B_PRIVATE_KEY` blank. Connect Wallet A through MetaMask, use the Wallet page to mint valueless test mUSDT, and perform the saver flow. Then switch MetaMask to Wallet B; the app listens for the account change, clears address-scoped state and reloads the market for the new signer. Wallet B can mint its own test mUSDT before funding the listing.
+
+The two optional wallet private keys are needed only by `contracts:test:amoy`, which provides a repeatable automated CLI version of the same flow. Never export real or funded-wallet keys for this test.
 
 The Hardhat configuration reads `.env.amoy` using Node's built-in environment-file loader. Vite exposes only variables prefixed with `VITE_`; private key variables are never included in the browser bundle.
 
@@ -36,7 +40,7 @@ npm run contracts:test:amoy:persistence
 npm run dev:amoy
 ```
 
-The first flow creates Safe and Earn vaults with two wallets, deposits MockUSDT, settles an early exit, checks the 0.9% fee split and funds mock yield. The persistence command starts a fresh process and re-queries ownership and listing state. Restarting Vite cannot erase Amoy state.
+When the optional Wallet A/B keys are configured, the automated flow creates Safe and Earn vaults with two wallets, deposits MockUSDT, settles an early exit, checks the 0.9% fee split and funds mock yield. The persistence command starts a fresh process and re-queries ownership and listing state. When testing with MetaMask instead, perform those actions in the UI; restarting Vite cannot erase Amoy state because the contracts retain it on Amoy.
 
 For PolygonScan verification, configure `POLYGONSCAN_API_KEY` and run:
 

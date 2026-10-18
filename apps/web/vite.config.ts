@@ -5,7 +5,7 @@ import { defineConfig } from 'vite'
 
 interface AmoyManifest {
   chainId: number
-  contracts: { vaultFactory: { address: string } }
+  contracts: { vaultFactory: { address: string; blockNumber: number } }
 }
 
 function amoyFactoryDefinition(mode: string): Record<string, string> {
@@ -32,6 +32,9 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
   return {
     'import.meta.env.VITE_FACTORY_ADDRESS': JSON.stringify(
       manifest.contracts.vaultFactory.address
+    ),
+    'import.meta.env.VITE_CONTRACT_START_BLOCK': JSON.stringify(
+      String(manifest.contracts.vaultFactory.blockNumber)
     ),
   }
 }

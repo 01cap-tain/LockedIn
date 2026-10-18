@@ -51,6 +51,10 @@ const vaultAbi = [
 
 const tokenAbi = [
   "function approve(address spender,uint256 amount) returns (bool)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function mint(address recipient,uint256 amount)",
 ] as const;
 
 const marketAbi = [
@@ -385,6 +389,44 @@ export async function depositToVault(
     await token.getFunction("approve")(await vault.getAddress(), parsed)
   ).wait();
   await (await vault.getFunction("deposit")(positionId, parsed)).wait();
+}
+
+export async function loadMockUsdtBalance(signer: Signer): Promise<string> {
+  const token = new Contract(
+    await factoryFor(signer).getFunction("asset")(),
+    tokenAbi,
+    signer
+  );
+  const [symbol, decimals, balance] = await Promise.all([
+    token.getFunction("symbol")(),
+    token.getFunction("decimals")(),
+    token.getFunction("balanceOf")(await signer.getAddress()),
+  ]);
+  if (symbol !== "mUSDT" || Number(decimals) !== USDT_DECIMALS) {
+    throw new Error("The configured asset is not the Amoy MockUSDT token.");
+  }
+  return formatUnits(balance, USDT_DECIMALS);
+}
+
+export async function requestMockUsdt(
+  signer: Signer,
+  value = "250"
+): Promise<void> {
+  const token = new Contract(
+    await factoryFor(signer).getFunction("asset")(),
+    tokenAbi,
+    signer
+  );
+  const [symbol, decimals] = await Promise.all([
+    token.getFunction("symbol")(),
+    token.getFunction("decimals")(),
+  ]);
+  if (symbol !== "mUSDT" || Number(decimals) !== USDT_DECIMALS) {
+    throw new Error("Mock-token minting is unavailable for this deployment.");
+  }
+  await (
+    await token.getFunction("mint")(await signer.getAddress(), amount(value))
+  ).wait();
 }
 
 export async function withdrawEmergency(

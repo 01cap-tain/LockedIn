@@ -11,8 +11,10 @@ import {
   loadExitListing,
   fundExitListing,
   loadExitMarket,
+  loadMockUsdtBalance,
   loadVault,
   loadVaultsForSigner,
+  requestMockUsdt,
   withdrawEmergency,
   withdrawLocked,
   type ActivityItem,
@@ -84,6 +86,8 @@ export function App() {
     /\/$/,
     ""
   );
+  const mockTokenFaucetEnabled =
+    import.meta.env.VITE_ENABLE_MOCK_TOKEN_FAUCET === "true";
 
   // Nimiq identity and EVM ownership are intentionally separate. Nimiq Pay
   // identifies the Mini App user, while only the EVM signer can own or move
@@ -113,6 +117,7 @@ export function App() {
   const [minimumPayout, setMinimumPayout] = useState("0");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [developmentAccounts, setDevelopmentAccounts] = useState<string[]>([]);
+  const [mockTokenBalance, setMockTokenBalance] = useState<string | null>(null);
 
   const evmSession = evm.status === "connected" ? evm.session : null;
   const connectedAddress = evmSession?.address.toLowerCase();
@@ -198,6 +203,7 @@ export function App() {
     setListings([]);
     setExitState(null);
     setActivity([]);
+    setMockTokenBalance(null);
   }
 
   async function connectNimiq(): Promise<void> {
@@ -219,8 +225,11 @@ export function App() {
       const session = await connectEvmWallet({
         // Supplying an index is an explicit local-only action. Production
         // connections must come from Nimiq Pay's injected EIP-1193 provider.
+        // MetaMask and Nimiq Pay both expose the standard EIP-1193 interface.
+        // Local unlocked accounts remain available only through the explicit
+        // development-account selector below.
         provider:
-          developmentAccountIndex === undefined && environment.isNimiqPay
+          developmentAccountIndex === undefined
             ? getInjectedEvmProvider()
             : undefined,
         developmentAccountIndex,
@@ -246,16 +255,21 @@ export function App() {
     // The chain remains authoritative. This MVP reconstructs the portfolio and
     // activity feed from contract views and events rather than trusting a DB.
     const nextVaults = await loadVaultsForSigner(session.signer);
-    const [nextListings, nextActivity] = await Promise.all([
-      loadAllExitListings(session.signer),
-      loadActivity(
-        session.signer,
-        nextVaults.map((vault) => vault.address)
-      ),
-    ]);
+    const [nextListings, nextActivity, nextMockTokenBalance] =
+      await Promise.all([
+        loadAllExitListings(session.signer),
+        loadActivity(
+          session.signer,
+          nextVaults.map((vault) => vault.address)
+        ),
+        mockTokenFaucetEnabled
+          ? loadMockUsdtBalance(session.signer)
+          : Promise.resolve(null),
+      ]);
     setVaults(nextVaults);
     setListings(nextListings);
     setActivity(nextActivity);
+    setMockTokenBalance(nextMockTokenBalance);
     if (
       snapshot &&
       nextVaults.some((vault) => vault.address === snapshot.address)
@@ -384,6 +398,18 @@ export function App() {
         message: describeContractError(error),
       });
     }
+  }
+
+  function requestTestFunds(): void {
+    void runTransaction(
+      "Requesting 250 mUSDT from the Amoy test token…",
+      async () => {
+        const session = requireSession();
+        await requestMockUsdt(session.signer);
+        setMockTokenBalance(await loadMockUsdtBalance(session.signer));
+      },
+      "250 mUSDT minted to the connected test wallet."
+    );
   }
 
   return (
@@ -1149,6 +1175,26 @@ export function App() {
               </span>
             </div>
           </div>
+          {mockTokenFaucetEnabled && evmSession && (
+            <div className="test-token-card">
+              <div>
+                <small>Amoy test balance</small>
+                <strong>{mockTokenBalance ?? "Loading…"} mUSDT</strong>
+                <span>
+                  MockUSDT has no real value. Your wallet pays only Amoy POL gas
+                  for this mint transaction.
+                </span>
+              </div>
+              <button
+                className="secondary"
+                disabled={actionsDisabled}
+                onClick={requestTestFunds}
+                type="button"
+              >
+                Get 250 test mUSDT
+              </button>
+            </div>
+          )}
           {evmSession?.source === "hardhat-development" &&
             developmentAccounts.length > 0 && (
               <label className="dev-account">
