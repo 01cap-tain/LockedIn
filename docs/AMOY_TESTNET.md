@@ -11,13 +11,15 @@ Never use a funded production wallet for this testnet. Create disposable Amoy-on
 - Chain ID: `80002` (`0x13882`)
 - Native test token: POL
 - Explorer: `https://amoy.polygonscan.com`
-- RPC: supplied as `AMOY_RPC_URL`; no credential-bearing URL is committed
+- RPC: supplied as `AMOY_RPC_URL`; no real credential-bearing URL is committed
 
 Polygon documents Amoy chain ID 80002 and the Amoy PolygonScan explorer. Aave does not publish an official Polygon Amoy V3 deployment used by this project, so the testnet deployment uses `MockUSDT` and an isolated `MockYieldAdapter` for every Earn vault. The production `AaveYieldAdapter` remains covered locally and through an explicitly configured Polygon-mainnet fork.
 
 ## Configure
 
 Copy `.env.amoy.example` to `.env.amoy` and fill its blank values. The file is ignored by Git. The deployer is the only required private key. Risk-reserve and maintenance addresses are public recipient addresses; they must be non-zero and distinct.
+
+Use a dedicated Amoy endpoint such as `https://polygon-amoy.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY`. The formerly documented `rpc-amoy.polygon.technology` host may fail DNS resolution, while shared demo endpoints can return rate-limit errors during deployment.
 
 For interactive testing, leave `AMOY_WALLET_A_PRIVATE_KEY` and `AMOY_WALLET_B_PRIVATE_KEY` blank. Connect Wallet A through MetaMask, use the Wallet page to mint valueless test mUSDT, and perform the saver flow. Then switch MetaMask to Wallet B; the app listens for the account change, clears address-scoped state and reloads the market for the new signer. Wallet B can mint its own test mUSDT before funding the listing.
 
@@ -32,7 +34,7 @@ npm run build -w @lockedin-circle/contracts
 npm run contracts:deploy:amoy
 ```
 
-The deployer writes a timestamped manifest and `packages/contracts/deployments/amoy/latest.json`. Amoy-mode Vite reads the public factory address directly from that manifest; no address is copied into source code or `.env.amoy`. Then run:
+The deployer writes a timestamped manifest and `packages/contracts/deployments/amoy/latest.json`. Amoy-mode Vite reads the public factory address directly from that manifest; no address is copied into source code or `.env.amoy`. Before deployment, `dev:amoy` may still be used to test MetaMask connection, but it disables all contract actions and displays a deployment-pending notice. Restart Vite after deployment, then run:
 
 ```powershell
 npm run contracts:test:amoy

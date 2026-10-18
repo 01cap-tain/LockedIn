@@ -88,6 +88,7 @@ export function App() {
   );
   const mockTokenFaucetEnabled =
     import.meta.env.VITE_ENABLE_MOCK_TOKEN_FAUCET === "true";
+  const deploymentReady = import.meta.env.VITE_DEPLOYMENT_READY !== "false";
 
   // Nimiq identity and EVM ownership are intentionally separate. Nimiq Pay
   // identifies the Mini App user, while only the EVM signer can own or move
@@ -121,7 +122,8 @@ export function App() {
 
   const evmSession = evm.status === "connected" ? evm.session : null;
   const connectedAddress = evmSession?.address.toLowerCase();
-  const actionsDisabled = !evmSession || transaction.status === "pending";
+  const actionsDisabled =
+    !deploymentReady || !evmSession || transaction.status === "pending";
   const progress = snapshot
     ? Math.min(
         100,
@@ -186,7 +188,7 @@ export function App() {
   }, [evm.status === "connected" ? evm.session.source : null]);
 
   useEffect(() => {
-    if (!evmSession) return;
+    if (!evmSession || !deploymentReady) return;
     void refreshPortfolio(evmSession).catch((error) =>
       setTransaction({ status: "error", message: describeContractError(error) })
     );
@@ -481,6 +483,14 @@ export function App() {
             : "Contract actions disabled"}
         </code>
       </div>
+      {!deploymentReady && (
+        <div className="notice" role="status">
+          <strong>Amoy deployment pending.</strong> Wallet connection is
+          available, but contract actions remain disabled until{" "}
+          <code>npm run contracts:deploy:amoy</code> creates the deployment
+          manifest. Restart this server after deployment.
+        </div>
+      )}
 
       {route === "vaults" && (
         <section className="route-page">
@@ -1175,7 +1185,7 @@ export function App() {
               </span>
             </div>
           </div>
-          {mockTokenFaucetEnabled && evmSession && (
+          {mockTokenFaucetEnabled && deploymentReady && evmSession && (
             <div className="test-token-card">
               <div>
                 <small>Amoy test balance</small>
