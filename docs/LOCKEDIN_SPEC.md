@@ -1,128 +1,155 @@
-# LockedIn Circle — Phase 1 and Phase 2A specification
+# LockedIn Circle — Phase 1 through Phase 2B specification
 
 ## Scope
 
-Phase 1 established savings-vault accounting with a USDT-compatible ERC-20. Phase 2A adds EVM ownership through Nimiq Pay and full-position early-exit trading. Aave, yield, guardian recovery and production mainnet deployment remain out of scope.
+Phase 1 established savings-vault accounting with a USDT-compatible ERC-20. Phase 2A adds EVM ownership through Nimiq Pay and deterministic full-position early exits. Phase 2B adds immutable Safe and Earn vault modes, with Earn vaults using isolated Aave V3 adapters and share-based yield accounting. Guardian recovery, borrowing, performance fees and production deployment remain out of scope.
 
-Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. Its separately injected EIP-1193 `window.ethereum` provider supplies the EVM account that owns vault positions. These are distinct addresses and both are shown to the user. The unlocked Hardhat account is available only when the explicit development fallback flag is enabled.
+Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-1193 provider supplies the EVM account that owns vault positions. The interface displays both addresses. An unlocked Hardhat account is available only through the explicit local-development fallback.
 
-## Workflow
+## Savings workflow
 
-1. A creator selects personal or group mode, a common maturity timestamp, and a USDT-denominated target and emergency percentage for each member.
-2. `VaultFactory` deploys a new, non-upgradeable `SavingsVault` and records it globally and per member.
-3. Before maturity, a member approves the vault to spend the accepted token and deposits against their fixed position.
-4. Each deposit is split using integer basis points: `emergency = amount * emergencyBps / 10_000`; all remainder goes to the locked balance.
-5. A member may withdraw any part of their emergency balance at any time. This does not reduce cumulative deposited value or reverse goal completion.
-6. At or after maturity, the current position owner may withdraw that position's locked balance exactly once (subsequent calls have no funds and revert).
-7. Incomplete positions recover their locked funds but are not individually reward-eligible. A sold position is inactive and permanently reward-disqualified. For a group, rewards activate only if every remaining active member has reached their target.
-8. Reward activation is allowed only at or after maturity. Anyone may trigger it once the objective vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded specifically for that vault.
+1. A creator selects personal or group mode, Safe or Earn mode, a common maturity, and a USDT target and emergency percentage for each member.
+2. `VaultFactory` deploys a non-upgradeable `SavingsVault` and records it globally and per member.
+3. Before maturity, a member approves and deposits the accepted token into their fixed position.
+4. Each deposit uses integer basis points: `emergency = amount * emergencyBps / 10_000`; all rounding remainder enters the locked balance.
+5. A member may withdraw their emergency balance at any time. This never reduces cumulative deposits or reverses goal completion.
+6. At or after maturity, the current position owner may withdraw its locked claim exactly once.
+7. Incomplete positions recover their funds but are not reward-eligible. A sold position is inactive and permanently reward-disqualified. Group rewards require every remaining active member to have reached the target.
+8. Anyone may trigger reward activation at or after maturity when the vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded for that vault.
 
 ## Contract responsibilities
 
 ### VaultFactory
 
-- Holds immutable references to the accepted token and its `RewardPool`.
-- Deploys non-upgradeable personal and group vault contracts.
-- Validates creation parameters and records all vaults plus member-to-vault indexes.
+- Holds immutable accepted-token and `RewardPool` references.
+- Deploys non-upgradeable personal and group vaults.
+- Creates a dedicated adapter for each Earn vault.
+- Validates creation parameters and records vault and member indexes.
 - Registers only factory-created vaults with the reward pool.
 - Has no withdrawal or vault-administration authority.
 
 ### SavingsVault
 
-- Maintains immutable membership, targets, emergency allocations and maturity.
-- Maintains cumulative deposits and current emergency/locked balances per position.
-- Maintains `positionId => owner`; the owner has the right to the locked balance only.
-- Keeps emergency withdrawal rights with the original member.
-- Exposes a transfer hook callable only by the immutable factory-created early-exit market.
-- Freezes deposits while a non-expired listing is active; emergency withdrawals remain independent and permitted.
-- Tracks aggregate emergency and locked liabilities and rejects any transfer whose observed token-balance delta is not exact.
-- Uses checks-effects-interactions, `SafeERC20`, and `ReentrancyGuard` on value-moving operations.
-- Has no administrator, developer withdrawal, pause, target-editing or maturity-editing function.
+- Maintains immutable membership, targets, emergency allocations, maturity and mode.
+- Separates cumulative deposits, emergency balances, locked principal and Earn shares per position.
+- Maintains `positionId => owner`; ownership conveys only the locked claim.
+- Keeps emergency withdrawal rights with the original saver after an early exit.
+- Allows only the immutable factory-created market to transfer position ownership.
+- Freezes deposits while a non-expired listing is active.
+- Tracks liabilities and rejects non-exact token transfer deltas.
+- Uses checks-effects-interactions, `SafeERC20` and `ReentrancyGuard` on value-moving operations.
+- Exposes no administrator, developer withdrawal, pause, target-editing or maturity-editing function.
 
 ### RewardPool
 
-- Accepts token revenue earmarked to registered vaults.
-- Derives eligibility and recipients directly from the calling registered vault.
-- Requires maturity and completion by every non-exited active member before activation.
-- Requires the vault reward budget to divide exactly by the eligible position count, then assigns equal claimable amounts.
-- Separately accounts for funded campaign budgets, activated claims and non-distributable protocol revenue.
-- Allows recipients to pull their own rewards and has no administrator allocation or withdrawal function.
+- Accepts revenue earmarked to registered vaults.
+- Derives recipients from the calling registered vault.
+- Requires maturity and completion by every non-exited active member.
+- Divides a valid campaign equally and requires an exactly divisible budget.
+- Separates campaign budgets, activated claims and non-distributable protocol revenue.
+- Lets recipients pull their rewards and provides no administrator allocation or withdrawal.
 
-### Future interfaces
+### Yield interfaces
 
-- `IEarlyExitMarket` defines the implemented Phase 2A atomic ownership-purchase boundary.
-- `IYieldAdapter` defines asset deposit, withdrawal and accounting boundaries.
-- `IAaveYieldAdapter` extends the yield boundary with the future Aave pool identity.
-- Yield adapters remain interface-only.
+- `IEarlyExitMarket` defines the atomic listing-funding and ownership-transfer boundary.
+- `IYieldAdapter` defines asset deposit, withdrawal, share conversion and total-asset accounting.
+- `IAaveYieldAdapter` extends it with immutable Aave Pool and aToken identities.
+- `AaveYieldAdapter` is assigned once to exactly one Earn vault.
 
-## Phase 2A early-exit workflow
+## Safe and Earn modes
 
-1. Before maturity, the original saver may list their entire locked position with an expiration no later than maturity. The contract calculates and freezes the listing discount from the saver’s on-chain commitment record; the saver cannot supply or override it.
-2. Liquidity providers submit competing offers within 4.5% to 8%. An offer's discount may not exceed the system-set listing discount, so a provider can only match it or improve the saver’s price.
-3. Submitting an offer grants the market token allowance for the calculated claim value plus the 0.9% provider fee. Tokens remain with the provider until acceptance.
-4. The saver may reject any offer, cancel an unaccepted listing, or accept one offer. The developer has no selection role.
-5. Acceptance pulls the claim value and fee from the selected provider, pays the saver, distributes the fee, and transfers the locked-position ownership in one transaction. Any failed step reverts the complete transaction.
-6. The original saver retains emergency withdrawal rights. The provider receives only the locked claim and may withdraw it at maturity.
-7. A sale permanently disqualifies the original position from rewards. It does not disqualify the whole group: remaining active members may activate an equally divided campaign at maturity if all of them completed.
-8. A position may be sold only once. Sales are prohibited at maturity, after locked withdrawal, when ownership changed, or when the locked balance changed after listing.
-9. Cancellation or expiration releases an unsold position for a new listing. Each relisting creates a new immutable listing record and leaves the previous attempt in event history.
+- Safe keeps locked USDT in the vault and earns no yield.
+- Earn sends only the locked portion to its dedicated adapter. Emergency funds never enter Aave.
+- Mode is immutable from creation and cannot change after any deposit.
+- Only the assigned vault can supply to or redeem from its adapter.
+- The adapter accepts USDT only, disables collateral use, has no borrowing path, and exposes no administrator or arbitrary-token withdrawal.
+- Deployment validates chain ID, six-decimal underlying and aToken, aToken underlying, and the Pool reserve's configured aToken.
 
-Personal and group listings share the same settlement rules. Clients identify the category from the originating vault's immutable `isGroup` value and may filter the market by category.
+### Share and yield accounting
+
+An Earn deposit mints shares at the pre-deposit exchange rate: `shares = assets * totalShares / totalAssets`; the first deposit uses one share per base unit. Current value is `positionShares * totalAdapterAssets / totalShares`. Principal remains separately recorded. Accrued yield is the positive difference between value and principal, flooring at zero after a loss.
+
+An early-exit sale transfers the fixed share balance and all future yield or loss exposure. Settlement reads the live share value rather than trusting the listing snapshot.
+
+At maturity, the adapter redeems the position shares. The vault clears shares and withdrawal state only after receiving the exact USDT amount. If Aave reverts or lacks liquidity, the transaction reverts, the position remains intact, and the owner may retry. Phase 2B has no custom withdrawal queue.
+
+The displayed Aave liquidity rate is variable and is never represented as guaranteed interest or capital safety.
+
+### Polygon configuration source
+
+Production configuration comes from the maintained `@aave-dao/aave-address-book` package, not handwritten constants. The selected package identifies Polygon chain ID `137`, Pool `0x794a61358D6845594F94dc1DB02A252b5b4814aD`, six-decimal USDT/USDT0 `0xc2132D05D31c914a87C6611C10748AEb04B58e8F`, and aUSDT `0x6ab707Aca953eDAeFBc4fD23bA73294241490620`. Deployment still validates these identities on-chain.
+
+## Deterministic early-exit workflow
+
+1. Before maturity, the original saver may list their entire locked position with an expiration no later than maturity and a minimum acceptable payout. The contract calculates the displayed discount from objective on-chain history; neither saver nor provider can override it.
+2. A liquidity provider decides only whether to fund at the current system price. Multiple providers may race, but there are no competing prices and only the first successful transaction wins.
+3. Settlement recalculates current claim value and discount. It reverts if the saver payout is below the listing's recorded minimum.
+4. The provider grants allowance for the current saver payout plus the separate 0.9% fee. Tokens remain with the provider until settlement.
+5. Funding atomically pays the saver, distributes the fee and transfers locked-position ownership. Failure of any step reverts everything.
+6. Emergency withdrawal rights remain with the original saver. The provider receives only the locked claim.
+7. A sale permanently disqualifies the original position from rewards. It does not disqualify the entire group; every remaining active member must still complete.
+8. A position may sell only once and never at maturity, after locked withdrawal or after ownership changes. Active listings freeze deposits so new principal cannot invalidate a quote.
+9. Cancellation or expiration permits relisting. Each attempt remains visible in immutable event history.
+
+Personal and group listings use identical settlement rules. Clients derive the category from the vault's immutable `isGroup` value and may filter by it.
 
 ### Market fee
 
-- Provider fee: `sellerReceipt * 90 / 10_000` (0.9%), paid on top of the offer.
+- Provider fee: `saverPayout * 90 / 10_000` (0.9%), paid on top of the payout.
 - Reward pool: `fee * 60 / 100`.
 - Risk reserve: `fee * 20 / 100`.
-- Maintenance treasury: the remaining fee, preserving all integer rounding dust.
-- All fee destinations are immutable. The reward share is recorded as protocol revenue and is not arbitrarily allocatable by a developer.
+- Maintenance treasury: all remaining fee units, preserving integer rounding dust.
+- Destinations are immutable. RewardPool records its share as protocol revenue; no developer allocates it.
 
 ### System discount v1
 
-The reference starts at 450 basis points and is capped at 800. It adds four on-chain scores:
+The discount starts at 450 basis points and is clamped to 450–800 basis points. It adds:
 
-- Remaining time: up to 125 points, scaling linearly from zero to 365 remaining days.
-- Time-weighted progress lag: up to 100 points, comparing actual goal progress with elapsed-plan progress.
-- Deposit commitment: up to 75 points. Up to 50 points measure deposit frequency against one expected deposit per elapsed 30-day period; up to 25 points measure how overdue the most recent deposit is after a 30-day grace period.
-- Current locked value: up to 50 points for positions below a 1,000 USDT reference size.
+- Remaining-time penalty: 0–150 basis points, proportional to the share of the original savings duration still remaining.
+- Commitment penalty: 0–125 basis points, derived only from on-chain position history:
+  - actual savings versus expected time-weighted savings: 0–45;
+  - goal-completion percentage: 0–35;
+  - deposit regularity versus expected monthly contributions: 0–25;
+  - recent contribution activity after a 30-day grace period: 0–20.
+- Aave/liquidity-risk penalty: 0–75 basis points. Safe vaults receive zero. Earn vaults use the adapter's current Aave liquidity-rate signal as a deterministic utilization-risk proxy, increasing linearly to the maximum at a 15% ray-denominated liquidity rate.
 
-The resulting discount is enforced when a listing is created and frozen for that listing. Providers choose their own valid discount at or below the system rate, and the saver chooses whether to accept an offer. Relisting recalculates the rate from the then-current on-chain record.
+The listing stores display snapshots of claim value, discount, payout, provider potential return, fee and expiration. Settlement does not trust them: `fundListing` recalculates the claim and discount in the funding transaction. The saver controls only expiration and minimum payout. Providers cannot choose or negotiate a rate.
 
 ## Permissions
 
-| Action | Authorized caller |
-| --- | --- |
-| Create a vault | Any address |
-| Deposit | Original member while they own the position |
-| Withdraw emergency balance | Original member |
-| Withdraw locked balance after maturity | Current position owner |
-| Transfer a position | Factory-created immutable early-exit market only |
-| Create/cancel listing | Original saver and current position owner |
-| Submit/cancel offer | Liquidity provider |
-| Accept/reject offer | Listing saver |
-| Fund a vault reward budget | Any token holder |
-| Activate rewards | Any caller through the eligible vault |
-| Claim a reward | Reward recipient |
+| Action                                          | Authorized caller                                  |
+| ----------------------------------------------- | -------------------------------------------------- |
+| Create a vault                                  | Any address                                        |
+| Deposit                                         | Original member while they own the position        |
+| Withdraw emergency balance                      | Original member                                    |
+| Withdraw locked balance after maturity          | Current position owner                             |
+| Transfer a position                             | Immutable early-exit market only                   |
+| Create/cancel listing                           | Original saver while still current owner           |
+| Fund an active listing at its live system price | Any provider with sufficient balance and allowance |
+| Fund a vault reward budget                      | Any token holder                                   |
+| Activate rewards                                | Any caller through an eligible vault               |
+| Claim a reward                                  | Reward recipient                                   |
 
 ## Security invariants
 
-- Accepted token, maturity, members, targets, allocations, reward pool and market authority are immutable after deployment.
-- Emergency allocation is between 1,000 and 1,500 basis points inclusive.
-- Members and positions are unique, fixed and bounded to 50 per group.
-- A position's cumulative deposit never decreases; emergency withdrawal cannot undo completion.
-- Vault liabilities are separated per position and transfers occur only after state is reduced.
-- Locked funds cannot leave before `block.timestamp >= maturity`.
-- New deposits are rejected at and after maturity.
-- New deposits are rejected while a non-expired early-exit listing is active.
+- Accepted token, maturity, members, targets, allocations, mode, reward pool and market authority are immutable.
+- Emergency allocation is 1,000–1,500 basis points inclusive.
+- Members and positions are unique, fixed and limited to 50 per group.
+- Cumulative deposit never decreases; emergency withdrawal cannot undo completion.
+- Emergency ownership never transfers with the locked position.
+- Vault liabilities are separated by position and state is reduced before outbound calls.
+- Locked funds cannot leave before maturity; deposits are rejected at and after maturity.
+- Deposits are rejected while a non-expired listing is active.
 - A locked balance cannot be withdrawn twice.
-- A position cannot be sold twice, partially sold, or sold at/after maturity.
-- Market settlement, fee distribution and position transfer are atomic.
-- Market entry points that move value are reentrancy-protected.
-- Risk-reserve and maintenance-treasury fee recipients cannot be changed.
-- No privileged party can withdraw member principal or choose reward recipients.
-- Reward activation is one-time, cannot occur before maturity and depends only on registered-vault state.
-- A seller is reward-disqualified atomically with position transfer, while emergency ownership remains unchanged.
-- Vault token balances must cover aggregate emergency plus locked liabilities. Reward-pool balances must cover campaign budgets, activated claims and retained protocol revenue.
-- The factory accepts only token contracts reporting six decimals. Every inbound and outbound transfer verifies exact sender/recipient balance deltas; fee-on-transfer behaviour reverts atomically.
-- Negative rebases are unsupported. Solvency checks block state-changing outflows after an external balance reduction, but they cannot restore tokens removed by the token contract. Production deployment therefore requires a reviewed, non-rebasing USDT contract.
-- Contracts are unaudited and intended only for local Hardhat use.
+- A position cannot be sold twice, partially, or at/after maturity.
+- Discounts are deterministic, remain within 450–800 basis points and are recalculated atomically at settlement.
+- Settlement reverts below the saver's immutable listing payout floor.
+- Settlement, fee distribution and position transfer are atomic and reentrancy-protected.
+- Risk-reserve and maintenance-treasury recipients are immutable.
+- No privileged party can withdraw principal or choose reward recipients.
+- Reward activation is one-time, post-maturity and derived only from registered-vault state.
+- A seller is reward-disqualified atomically while emergency ownership remains unchanged.
+- Vault balances cover emergency and locked liabilities. RewardPool balances cover campaigns, claims and retained protocol revenue.
+- The factory accepts only tokens reporting six decimals. Exact balance-delta checks reject fee-on-transfer tokens.
+- Negative rebases are unsupported. Solvency checks block later outflows after an external balance reduction but cannot restore removed tokens; production requires reviewed non-rebasing USDT.
+- Contracts are unaudited and intended for local Hardhat or explicitly configured test environments only.

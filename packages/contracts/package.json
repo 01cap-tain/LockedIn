@@ -7,10 +7,13 @@
     "build": "hardhat build",
     "clean": "hardhat clean",
     "test": "hardhat test",
+    "test:polygon-fork": "hardhat test test/polygon-fork.js --network polygonFork --no-compile",
     "node": "hardhat node",
-    "deploy:local": "hardhat run scripts/deploy-local.js --network localhost"
+    "deploy:local": "hardhat run scripts/deploy-local.js --network localhost --no-compile"
   },
   "dependencies": {
+    "@aave-dao/aave-address-book": "^4.74.1",
+    "@aave/core-v3": "^1.19.3",
     "@openzeppelin/contracts": "5.6.1"
   },
   "devDependencies": {

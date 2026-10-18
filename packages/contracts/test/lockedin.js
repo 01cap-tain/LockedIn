@@ -23,19 +23,22 @@ describe('LockedIn Circle Phase 1', function () {
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
     maturity = BigInt(await networkHelpers.time.latest()) + 3_600n
   })
 
   async function personalVault({ target = 100n * UNIT, bps = 1_000, owner = creator } = {}) {
-    await factory.connect(owner).createPersonalVault(target, maturity, bps)
+    await factory.connect(owner).createPersonalVault(target, maturity, bps, 0)
     const address = await factory.vaultAt((await factory.vaultCount()) - 1n)
     return ethers.getContractAt('SavingsVault', address)
   }
 
   async function groupVault(targets = [100n * UNIT, 100n * UNIT], bps = [1_000, 1_000]) {
     const members = [await creator.getAddress(), await memberTwo.getAddress()]
-    await factory.createGroupVault(members, targets, bps, maturity)
+    await factory.createGroupVault(members, targets, bps, maturity, 0)
     return ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
   }
 
@@ -70,8 +73,8 @@ describe('LockedIn Circle Phase 1', function () {
   }
 
   it('rejects emergency allocations below 10% or above 15%', async function () {
-    await expect(factory.createPersonalVault(UNIT, maturity, 999)).to.revert(ethers)
-    await expect(factory.createPersonalVault(UNIT, maturity, 1_501)).to.revert(ethers)
+    await expect(factory.createPersonalVault(UNIT, maturity, 999, 0)).to.revert(ethers)
+    await expect(factory.createPersonalVault(UNIT, maturity, 1_501, 0)).to.revert(ethers)
   })
 
   it('allows emergency withdrawals without reversing goal completion', async function () {
@@ -165,9 +168,12 @@ describe('LockedIn Circle Phase 1', function () {
       await callbackToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
     const members = [await creator.getAddress(), await attacker.getAddress()]
-    await callbackFactory.createGroupVault(members, [UNIT, 100n * UNIT], [1_000, 1_000], maturity)
+    await callbackFactory.createGroupVault(members, [UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0)
     const vault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
 
     await attacker.configure(await vault.getAddress(), await callbackToken.getAddress(), 1)

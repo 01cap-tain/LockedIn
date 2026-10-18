@@ -5,16 +5,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {RewardPool} from "./RewardPool.sol";
+import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 interface IEarlyExitMarketStatus {
     function isPositionListed(address vault, uint256 positionId) external view returns (bool);
 }
 
+/// @notice Non-upgradeable savings vault separating emergency ownership from a transferable locked claim.
+/// @dev Safe mode holds locked assets locally; Earn mode represents them with adapter shares.
 contract SavingsVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint16 public constant MIN_EMERGENCY_BPS = 1_000;
     uint16 public constant MAX_EMERGENCY_BPS = 1_500;
+
+    enum VaultMode { Safe, Earn }
 
     struct Position {
         address member;
@@ -22,6 +27,7 @@ contract SavingsVault is ReentrancyGuard {
         uint256 deposited;
         uint256 emergencyBalance;
         uint256 lockedBalance;
+        uint256 lockedShares;
         uint16 emergencyBps;
         bool lockedWithdrawn;
     }
@@ -47,6 +53,8 @@ contract SavingsVault is ReentrancyGuard {
     uint64 public immutable createdAt;
     bool public immutable isGroup;
     address public immutable earlyExitMarket;
+    VaultMode public immutable mode;
+    IYieldAdapter public immutable yieldAdapter;
 
     Position[] private _positions;
     mapping(address member => uint256 positionIdPlusOne) private _memberPosition;
@@ -57,6 +65,7 @@ contract SavingsVault is ReentrancyGuard {
     mapping(uint256 positionId => bool disqualified) public rewardDisqualified;
     uint256 public totalEmergencyLiability;
     uint256 public totalLockedLiability;
+    uint256 public totalLockedShares;
 
     event Deposited(
         uint256 indexed positionId,
@@ -76,6 +85,8 @@ contract SavingsVault is ReentrancyGuard {
         uint64 maturity_,
         bool isGroup_,
         address earlyExitMarket_,
+        VaultMode mode_,
+        IYieldAdapter yieldAdapter_,
         address[] memory members_,
         uint256[] memory targets_,
         uint16[] memory emergencyBps_
@@ -84,7 +95,9 @@ contract SavingsVault is ReentrancyGuard {
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) ||
             maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
-            count != emergencyBps_.length
+            count != emergencyBps_.length ||
+            (mode_ == VaultMode.Safe && address(yieldAdapter_) != address(0)) ||
+            (mode_ == VaultMode.Earn && address(yieldAdapter_) == address(0))
         ) revert InvalidConfiguration();
 
         asset = asset_;
@@ -93,6 +106,8 @@ contract SavingsVault is ReentrancyGuard {
         createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
         earlyExitMarket = earlyExitMarket_;
+        mode = mode_;
+        yieldAdapter = yieldAdapter_;
 
         for (uint256 i; i < count; ++i) {
             if (
@@ -107,6 +122,7 @@ contract SavingsVault is ReentrancyGuard {
                 deposited: 0,
                 emergencyBalance: 0,
                 lockedBalance: 0,
+                lockedShares: 0,
                 emergencyBps: emergencyBps_[i],
                 lockedWithdrawn: false
             }));
@@ -142,9 +158,24 @@ contract SavingsVault is ReentrancyGuard {
             revert PositionListed();
         }
 
+        // Integer rounding intentionally benefits the locked portion: emergency receives the
+        // truncated basis-point amount and every remaining unit is counted as locked principal.
         uint256 emergencyAmount = amount * stored.emergencyBps / 10_000;
         uint256 lockedAmount = amount - emergencyAmount;
         uint256 balanceBefore = asset.balanceOf(address(this));
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
+
+        uint256 shares;
+        if (mode == VaultMode.Earn) {
+            // The external adapter call happens before local shares are committed. Any Aave or
+            // token failure reverts this transaction, including the inbound member transfer.
+            asset.forceApprove(address(yieldAdapter), lockedAmount);
+            shares = yieldAdapter.deposit(lockedAmount);
+            asset.forceApprove(address(yieldAdapter), 0);
+            stored.lockedShares += shares;
+            totalLockedShares += shares;
+        }
         stored.deposited += amount;
         stored.emergencyBalance += emergencyAmount;
         stored.lockedBalance += lockedAmount;
@@ -153,9 +184,6 @@ contract SavingsVault is ReentrancyGuard {
         if (depositCount[positionId] == 0) firstDepositAt[positionId] = uint64(block.timestamp);
         depositCount[positionId] += 1;
         lastDepositAt[positionId] = uint64(block.timestamp);
-
-        asset.safeTransferFrom(msg.sender, address(this), amount);
-        if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
         _assertSolvent();
         emit Deposited(positionId, msg.sender, amount, emergencyAmount, lockedAmount);
     }
@@ -178,13 +206,23 @@ contract SavingsVault is ReentrancyGuard {
         if (msg.sender != positionOwner[positionId]) revert PositionOwnerOnly();
         if (block.timestamp < maturity) revert NotMatured();
 
-        uint256 amount = stored.lockedBalance;
-        if (amount == 0 || stored.lockedWithdrawn) revert NothingToWithdraw();
+        uint256 principal = stored.lockedBalance;
+        if (principal == 0 || stored.lockedWithdrawn) revert NothingToWithdraw();
+        uint256 amount;
+        if (mode == VaultMode.Earn) {
+            // The adapter burns shares only after exact redemption. We clear the position only
+            // after that call succeeds, so temporary Aave failures remain safely retryable.
+            uint256 shares = stored.lockedShares;
+            amount = yieldAdapter.withdraw(shares, msg.sender);
+            stored.lockedShares = 0;
+            totalLockedShares -= shares;
+        } else {
+            amount = principal;
+            _transferOutExact(msg.sender, amount);
+        }
         stored.lockedBalance = 0;
         stored.lockedWithdrawn = true;
-        totalLockedLiability -= amount;
-
-        _transferOutExact(msg.sender, amount);
+        totalLockedLiability -= principal;
         _assertSolvent();
         emit LockedWithdrawn(positionId, msg.sender, amount);
     }
@@ -196,6 +234,8 @@ contract SavingsVault is ReentrancyGuard {
         if (positionOwner[positionId] != expectedOwner) revert PositionOwnerOnly();
         if (stored.lockedWithdrawn) revert NothingToWithdraw();
 
+        // Only the locked claim changes hands. `stored.member` remains the emergency owner and
+        // the original reward identity, which is simultaneously disqualified from rewards.
         positionOwner[positionId] = newOwner;
         rewardDisqualified[positionId] = true;
         emit PositionTransferred(positionId, expectedOwner, newOwner);
@@ -205,6 +245,23 @@ contract SavingsVault is ReentrancyGuard {
     function goalComplete(uint256 positionId) public view returns (bool) {
         Position storage stored = _position(positionId);
         return stored.deposited >= stored.target;
+    }
+
+    function positionValue(uint256 positionId) public view returns (uint256) {
+        Position storage stored = _position(positionId);
+        if (stored.lockedWithdrawn) return 0;
+        if (mode == VaultMode.Safe) return stored.lockedBalance;
+        return yieldAdapter.convertToAssets(stored.lockedShares);
+    }
+
+    function accruedYield(uint256 positionId) external view returns (uint256) {
+        Position storage stored = _position(positionId);
+        uint256 current = positionValue(positionId);
+        return current > stored.lockedBalance ? current - stored.lockedBalance : 0;
+    }
+
+    function currentLiquidityRate() external view returns (uint256) {
+        return mode == VaultMode.Earn ? yieldAdapter.currentLiquidityRate() : 0;
     }
 
     function rewardsReady() public view returns (bool) {
@@ -245,7 +302,7 @@ contract SavingsVault is ReentrancyGuard {
             uint256 target,
             uint256 deposited,
             uint256 emergencyBalance,
-            uint256 lockedBalance,
+            uint256 currentPositionValue,
             bool lockedWithdrawn,
             uint32 deposits
         )
@@ -256,7 +313,7 @@ contract SavingsVault is ReentrancyGuard {
             stored.target,
             stored.deposited,
             stored.emergencyBalance,
-            stored.lockedBalance,
+            positionValue(positionId),
             stored.lockedWithdrawn,
             depositCount[positionId]
         );
@@ -272,7 +329,11 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function isSolvent() external view returns (bool) {
-        return asset.balanceOf(address(this)) >= totalEmergencyLiability + totalLockedLiability;
+        if (mode == VaultMode.Safe) {
+            return asset.balanceOf(address(this)) >= totalEmergencyLiability + totalLockedLiability;
+        }
+        return asset.balanceOf(address(this)) >= totalEmergencyLiability
+            && yieldAdapter.totalShares() == totalLockedShares;
     }
 
     function _transferOutExact(address recipient, uint256 amount) internal {
@@ -288,7 +349,13 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function _assertSolvent() internal view {
-        if (asset.balanceOf(address(this)) < totalEmergencyLiability + totalLockedLiability) {
+        uint256 requiredVaultBalance = mode == VaultMode.Safe
+            ? totalEmergencyLiability + totalLockedLiability
+            : totalEmergencyLiability;
+        if (
+            asset.balanceOf(address(this)) < requiredVaultBalance ||
+            (mode == VaultMode.Earn && yieldAdapter.totalShares() != totalLockedShares)
+        ) {
             revert Insolvent();
         }
     }

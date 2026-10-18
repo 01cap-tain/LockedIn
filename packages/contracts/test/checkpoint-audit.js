@@ -26,6 +26,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
     rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
@@ -33,7 +36,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   })
 
   async function personalVault(target = 100n * UNIT, emergencyBps = 1_000) {
-    await factory.createPersonalVault(target, maturity, emergencyBps)
+    await factory.createPersonalVault(target, maturity, emergencyBps, 0)
     return ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
   }
 
@@ -42,15 +45,16 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await selectedToken.connect(account).approve(spender, amount)
   }
 
-  async function sellPosition(vault, positionId = 0n, discountBps = 450) {
-    await market.connect(saver).createListing(await vault.getAddress(), positionId, maturity)
+  async function sellPosition(vault, positionId = 0n) {
+    const claim = await vault.positionValue(positionId)
+    const reference = await market.referenceDiscount(await vault.getAddress(), positionId)
+    const receipt = await market.payoutFor(claim, reference.discountBps)
+    await market.connect(saver).createListing(await vault.getAddress(), positionId, maturity, receipt)
     const listingId = (await market.nextListingId()) - 1n
-    await market.connect(provider).submitOffer(listingId, discountBps, maturity)
     const locked = (await vault.position(positionId)).lockedBalance
-    const receipt = await market.claimValue(locked, discountBps)
     const fee = await market.feeFor(receipt)
     await fundAndApprove(provider, await market.getAddress(), receipt + fee)
-    await market.connect(saver).acceptOffer(listingId, 0)
+    await market.connect(provider).fundListing(listingId)
     return { listingId, locked, receipt, fee }
   }
 
@@ -90,7 +94,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await fundAndApprove(saver, await vault.getAddress(), 101n * UNIT)
     await vault.deposit(0, 100n * UNIT)
     const expires = BigInt(await networkHelpers.time.latest()) + 100n
-    await market.createListing(await vault.getAddress(), 0, expires)
+    const reference = await market.referenceDiscount(await vault.getAddress(), 0)
+    const payout = await market.payoutFor(await vault.positionValue(0), reference.discountBps)
+    await market.createListing(await vault.getAddress(), 0, expires, payout)
 
     await expect(vault.deposit(0, UNIT)).to.be.revertedWithCustomError(vault, 'PositionListed')
     await networkHelpers.time.increaseTo(expires + 1n)
@@ -100,7 +106,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('revokes reward eligibility on sale while preserving the remaining active group campaign', async function () {
     const members = [await saver.getAddress(), await memberTwo.getAddress()]
-    await factory.createGroupVault(members, [100n * UNIT, 100n * UNIT], [1_000, 1_000], maturity)
+    await factory.createGroupVault(members, [100n * UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0)
     const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
     await fundAndApprove(memberTwo, await vault.getAddress(), 100n * UNIT)
@@ -172,18 +178,18 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await rewardPool.isSolvent()).to.equal(true)
   })
 
-  it('safely reverts acceptance after a provider revokes allowance', async function () {
+  it('safely reverts funding after a provider revokes allowance', async function () {
     const vault = await personalVault()
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
     await vault.deposit(0, 100n * UNIT)
-    await market.createListing(await vault.getAddress(), 0, maturity)
-    await market.connect(provider).submitOffer(0, 500, maturity)
-    const receipt = await market.claimValue(90n * UNIT, 500)
+    const reference = await market.referenceDiscount(await vault.getAddress(), 0)
+    const receipt = await market.payoutFor(90n * UNIT, reference.discountBps)
+    await market.createListing(await vault.getAddress(), 0, maturity, receipt)
     const fee = await market.feeFor(receipt)
     await fundAndApprove(provider, await market.getAddress(), receipt + fee)
     await token.connect(provider).approve(await market.getAddress(), 0)
 
-    await expect(market.acceptOffer(0, 0)).to.revert(ethers)
+    await expect(market.connect(provider).fundListing(0)).to.revert(ethers)
     expect(await vault.positionOwner(0)).to.equal(await saver.getAddress())
     expect((await market.listings(0)).active).to.equal(true)
     expect(await market.positionSold(await vault.getAddress(), 0)).to.equal(false)
@@ -193,7 +199,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     const values = [1n, 2n, 10n, 111n, 112n, 999n, UNIT, 17n * UNIT, 999_999n * UNIT]
     for (let discount = 450; discount <= 800; discount += 7) {
       for (const positionValue of values) {
-        const receipt = await market.claimValue(positionValue, discount)
+        const receipt = await market.payoutFor(positionValue, discount)
         const fee = await market.feeFor(receipt)
         const rewardShare = fee * 60n / 100n
         const riskShare = fee * 20n / 100n
@@ -209,10 +215,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('fuzzes listing and sale settlement while preserving ownership and solvency invariants', async function () {
     const cases = [
-      { amount: 2n * UNIT, offer: 450, emergency: 1_000 },
-      { amount: 17n * UNIT + 13n, offer: 475, emergency: 1_200 },
-      { amount: 99n * UNIT, offer: 500, emergency: 1_500 },
-      { amount: 1_001n * UNIT + 99n, offer: 450, emergency: 1_333 },
+      { amount: 2n * UNIT, emergency: 1_000 },
+      { amount: 17n * UNIT + 13n, emergency: 1_200 },
+      { amount: 99n * UNIT, emergency: 1_500 },
+      { amount: 1_001n * UNIT + 99n, emergency: 1_333 },
     ]
 
     for (const entry of cases) {
@@ -220,13 +226,13 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await fundAndApprove(saver, await vault.getAddress(), entry.amount)
       await vault.deposit(0, entry.amount)
       const position = await vault.position(0)
-      await market.createListing(await vault.getAddress(), 0, maturity)
+      const reference = await market.referenceDiscount(await vault.getAddress(), 0)
+      const receipt = await market.payoutFor(position.lockedBalance, reference.discountBps)
+      await market.createListing(await vault.getAddress(), 0, maturity, receipt)
       const listingId = (await market.nextListingId()) - 1n
-      await market.connect(provider).submitOffer(listingId, entry.offer, maturity)
-      const receipt = await market.claimValue(position.lockedBalance, entry.offer)
       const fee = await market.feeFor(receipt)
       await fundAndApprove(provider, await market.getAddress(), receipt + fee)
-      await market.acceptOffer(listingId, 0)
+      await market.connect(provider).fundListing(listingId)
 
       expect(await vault.positionOwner(0)).to.equal(await provider.getAddress())
       expect((await vault.position(0)).emergencyBalance).to.equal(position.emergencyBalance)
@@ -248,6 +254,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         await wrong.getAddress(),
         await riskReserve.getAddress(),
         await maintenanceTreasury.getAddress(),
+        ethers.ZeroAddress,
+        ethers.ZeroAddress,
+        31_337,
       ]),
     ).to.be.revertedWithCustomError(factory, 'UnsupportedToken')
 
@@ -256,8 +265,11 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await feeToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
-    await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000)
+    await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
     await fundAndApprove(saver, await feeVault.getAddress(), 100n * UNIT, feeToken)
     await feeToken.setFeesEnabled(true)
@@ -269,8 +281,11 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await slashToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
-    await slashFactory.createPersonalVault(100n * UNIT, maturity, 1_000)
+    await slashFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const slashVault = await ethers.getContractAt('SavingsVault', await slashFactory.vaultAt(0))
     await fundAndApprove(saver, await slashVault.getAddress(), 100n * UNIT, slashToken)
     await slashVault.deposit(0, 100n * UNIT)
@@ -285,8 +300,11 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await noReturn.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
-    await noReturnFactory.createPersonalVault(100n * UNIT, maturity, 1_000)
+    await noReturnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const vault = await ethers.getContractAt('SavingsVault', await noReturnFactory.vaultAt(0))
     await noReturn.mint(await saver.getAddress(), 100n * UNIT)
     await noReturn.connect(saver).approve(await vault.getAddress(), 100n * UNIT)
@@ -301,20 +319,23 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await feeToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
     ])
     const feeMarket = await ethers.getContractAt('EarlyExitMarket', await feeFactory.earlyExitMarket())
-    await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000)
+    await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
     await fundAndApprove(saver, await feeVault.getAddress(), 100n * UNIT, feeToken)
     await feeVault.deposit(0, 100n * UNIT)
-    await feeMarket.createListing(await feeVault.getAddress(), 0, maturity)
-    await feeMarket.connect(provider).submitOffer(0, 500, maturity)
-    const receipt = await feeMarket.claimValue(90n * UNIT, 500)
+    const reference = await feeMarket.referenceDiscount(await feeVault.getAddress(), 0)
+    const receipt = await feeMarket.payoutFor(90n * UNIT, reference.discountBps)
+    await feeMarket.createListing(await feeVault.getAddress(), 0, maturity, receipt)
     const fee = await feeMarket.feeFor(receipt)
     await fundAndApprove(provider, await feeMarket.getAddress(), receipt + fee, feeToken)
     await feeToken.setFeesEnabled(true)
 
-    await expect(feeMarket.acceptOffer(0, 0)).to.be.revertedWithCustomError(feeMarket, 'TokenAccountingMismatch')
+    await expect(feeMarket.connect(provider).fundListing(0)).to.be.revertedWithCustomError(feeMarket, 'TokenAccountingMismatch')
     expect(await feeVault.positionOwner(0)).to.equal(await saver.getAddress())
     expect((await feeMarket.listings(0)).active).to.equal(true)
     expect(await feeMarket.positionSold(await feeVault.getAddress(), 0)).to.equal(false)
@@ -326,6 +347,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         await outsider.getAddress(),
         await riskReserve.getAddress(),
         await maintenanceTreasury.getAddress(),
+        ethers.ZeroAddress,
+        ethers.ZeroAddress,
+        31_337,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
@@ -333,6 +357,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         await token.getAddress(),
         ethers.ZeroAddress,
         await maintenanceTreasury.getAddress(),
+        ethers.ZeroAddress,
+        ethers.ZeroAddress,
+        31_337,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
@@ -340,12 +367,15 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         await token.getAddress(),
         await riskReserve.getAddress(),
         await riskReserve.getAddress(),
+        ethers.ZeroAddress,
+        ethers.ZeroAddress,
+        31_337,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
 
     const duplicate = [await saver.getAddress(), await saver.getAddress()]
     await expect(
-      factory.createGroupVault(duplicate, [UNIT, UNIT], [1_000, 1_000], maturity),
+      factory.createGroupVault(duplicate, [UNIT, UNIT], [1_000, 1_000], maturity, 0),
     ).to.revert(ethers)
   })
 

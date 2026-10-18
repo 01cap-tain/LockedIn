@@ -147,7 +147,6 @@ contract ReentrantMarketSeller is ITokenReceiver {
     IERC20 public token;
     address public market;
     uint256 public listingId;
-    uint256 public offerId;
     bool public reentrySucceeded;
 
     function configure(SavingsVault vault_, IERC20 token_, address market_) external {
@@ -161,30 +160,21 @@ contract ReentrantMarketSeller is ITokenReceiver {
         vault.deposit(positionId, amount);
     }
 
-    function list(uint256 positionId, uint64 expiresAt) external {
+    function list(uint256 positionId, uint64 expiresAt, uint256 minimumPayout) external {
         (bool success, bytes memory data) = market.call(
             abi.encodeWithSignature(
-                "createListing(address,uint256,uint64)",
-                address(vault), positionId, expiresAt
+                "createListing(address,uint256,uint64,uint256)",
+                address(vault), positionId, expiresAt, minimumPayout
             )
         );
         require(success, "listing failed");
         listingId = abi.decode(data, (uint256));
     }
 
-    function accept(uint256 offerId_) external {
-        offerId = offerId_;
-        (bool success,) = market.call(
-            abi.encodeWithSignature("acceptOffer(uint256,uint256)", listingId, offerId_)
-        );
-        require(success, "accept failed");
-    }
-
     function onTokenReceived() external {
         if (msg.sender == address(token)) {
-            (reentrySucceeded,) = market.call(
-                abi.encodeWithSignature("acceptOffer(uint256,uint256)", listingId, offerId)
-            );
+            // The seller receives tokens during settlement and attempts to reenter the same listing.
+            (reentrySucceeded,) = market.call(abi.encodeWithSignature("fundListing(uint256)", listingId));
         }
     }
 }
