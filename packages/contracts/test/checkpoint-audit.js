@@ -29,6 +29,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
@@ -257,6 +258,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
+        ethers.ZeroAddress,
       ]),
     ).to.be.revertedWithCustomError(factory, 'UnsupportedToken')
 
@@ -268,6 +270,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
@@ -284,6 +287,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     await slashFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const slashVault = await ethers.getContractAt('SavingsVault', await slashFactory.vaultAt(0))
@@ -303,6 +307,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     await noReturnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const vault = await ethers.getContractAt('SavingsVault', await noReturnFactory.vaultAt(0))
@@ -322,6 +327,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     const feeMarket = await ethers.getContractAt('EarlyExitMarket', await feeFactory.earlyExitMarket())
     await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
@@ -350,6 +356,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
+        ethers.ZeroAddress,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
@@ -360,6 +367,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
+        ethers.ZeroAddress,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
@@ -370,6 +378,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
+        ethers.ZeroAddress,
       ]),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
 

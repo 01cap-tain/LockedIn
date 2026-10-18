@@ -26,6 +26,7 @@ describe('LockedIn Circle Phase 1', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     maturity = BigInt(await networkHelpers.time.latest()) + 3_600n
   })
@@ -171,6 +172,7 @@ describe('LockedIn Circle Phase 1', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     const members = [await creator.getAddress(), await attacker.getAddress()]
     await callbackFactory.createGroupVault(members, [UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0)

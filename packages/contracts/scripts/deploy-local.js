@@ -18,6 +18,7 @@ const factory = await ethers.deployContract('VaultFactory', [
   await aavePool.getAddress(),
   await aToken.getAddress(),
   31_337,
+  ethers.ZeroAddress,
 ])
 await factory.waitForDeployment()
 

@@ -23,10 +23,16 @@ describe('LockedIn Circle Phase 2B', function () {
 
   beforeEach(async function () {
     ;({ ethers, networkHelpers } = await network.create())
-    ;[saver, memberTwo, buyer, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
+    ;[saver, memberTwo, buyer, outsider, riskReserve, maintenanceTreasury] =
+      await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
-    pool = await ethers.deployContract('MockAavePool', [await token.getAddress(), await aToken.getAddress()])
+    aToken = await ethers.deployContract('MockAToken', [
+      await token.getAddress(),
+    ])
+    pool = await ethers.deployContract('MockAavePool', [
+      await token.getAddress(),
+      await aToken.getAddress(),
+    ])
     await aToken.bindPool(await pool.getAddress())
     factory = await ethers.deployContract('VaultFactory', [
       await token.getAddress(),
@@ -35,14 +41,26 @@ describe('LockedIn Circle Phase 2B', function () {
       await pool.getAddress(),
       await aToken.getAddress(),
       31_337,
+      ethers.ZeroAddress,
     ])
-    market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
-    maturity = BigInt(await networkHelpers.time.latest()) + 365n * 24n * 60n * 60n
+    market = await ethers.getContractAt(
+      'EarlyExitMarket',
+      await factory.earlyExitMarket()
+    )
+    maturity =
+      BigInt(await networkHelpers.time.latest()) + 365n * 24n * 60n * 60n
   })
 
-  async function createVault(mode = 1, target = 100n * UNIT, emergencyBps = 1_000) {
+  async function createVault(
+    mode = 1,
+    target = 100n * UNIT,
+    emergencyBps = 1_000
+  ) {
     await factory.createPersonalVault(target, maturity, emergencyBps, mode)
-    return ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
+    return ethers.getContractAt(
+      'SavingsVault',
+      await factory.vaultAt((await factory.vaultCount()) - 1n)
+    )
   }
 
   async function createGroupVault() {
@@ -52,9 +70,12 @@ describe('LockedIn Circle Phase 2B', function () {
       [100n * UNIT, 100n * UNIT],
       [1_000, 1_000],
       maturity,
-      1,
+      1
     )
-    return ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
+    return ethers.getContractAt(
+      'SavingsVault',
+      await factory.vaultAt((await factory.vaultCount()) - 1n)
+    )
   }
 
   async function fundAndApprove(account, spender, amount) {
@@ -85,8 +106,13 @@ describe('LockedIn Circle Phase 2B', function () {
     expect(await safe.yieldAdapter()).to.equal(ethers.ZeroAddress)
     expect(await earn.mode()).to.equal(1n)
     expect(await earn.yieldAdapter()).not.to.equal(ethers.ZeroAddress)
-    expect(await secondEarn.yieldAdapter()).not.to.equal(await earn.yieldAdapter())
-    const adapter = await ethers.getContractAt('AaveYieldAdapter', await earn.yieldAdapter())
+    expect(await secondEarn.yieldAdapter()).not.to.equal(
+      await earn.yieldAdapter()
+    )
+    const adapter = await ethers.getContractAt(
+      'AaveYieldAdapter',
+      await earn.yieldAdapter()
+    )
     expect(await adapter.vault()).to.equal(await earn.getAddress())
   })
 
@@ -107,7 +133,10 @@ describe('LockedIn Circle Phase 2B', function () {
     await fundAndApprove(saver, await vault.getAddress(), 200n * UNIT)
     await vault.deposit(0, 100n * UNIT)
     const adapterAddress = await vault.yieldAdapter()
-    const adapter = await ethers.getContractAt('AaveYieldAdapter', adapterAddress)
+    const adapter = await ethers.getContractAt(
+      'AaveYieldAdapter',
+      adapterAddress
+    )
     expect((await vault.position(0)).lockedShares).to.equal(90n * UNIT)
     await accrue(adapterAddress, 9n * UNIT)
     await vault.deposit(0, 100n * UNIT)
@@ -157,14 +186,31 @@ describe('LockedIn Circle Phase 2B', function () {
     await vault.deposit(0, 100n * UNIT)
     const adapter = await vault.yieldAdapter()
     await accrue(adapter, 9n * UNIT)
-    const listingReference = await market.referenceDiscount(await vault.getAddress(), 0)
-    const listingPayout = await market.payoutFor(await vault.positionValue(0), listingReference.discountBps)
-    await market.createListing(await vault.getAddress(), 0, maturity, listingPayout)
+    const listingReference = await market.referenceDiscount(
+      await vault.getAddress(),
+      0
+    )
+    const listingPayout = await market.payoutFor(
+      await vault.positionValue(0),
+      listingReference.discountBps
+    )
+    await market.createListing(
+      await vault.getAddress(),
+      0,
+      maturity,
+      listingPayout
+    )
     const listing = await market.listings(0)
     await accrue(adapter, 9n * UNIT)
     const currentValue = await vault.positionValue(0)
-    const settlementReference = await market.referenceDiscount(await vault.getAddress(), 0)
-    const receipt = await market.payoutFor(currentValue, settlementReference.discountBps)
+    const settlementReference = await market.referenceDiscount(
+      await vault.getAddress(),
+      0
+    )
+    const receipt = await market.payoutFor(
+      currentValue,
+      settlementReference.discountBps
+    )
     const fee = await market.feeFor(receipt)
     await fundAndApprove(buyer, await market.getAddress(), receipt + fee)
     await market.connect(buyer).fundListing(0)
@@ -177,7 +223,9 @@ describe('LockedIn Circle Phase 2B', function () {
     await networkHelpers.time.increaseTo(maturity)
     const before = await token.balanceOf(await buyer.getAddress())
     await vault.connect(buyer).withdrawLocked(0)
-    expect((await token.balanceOf(await buyer.getAddress())) - before).to.equal(buyerValue)
+    expect((await token.balanceOf(await buyer.getAddress())) - before).to.equal(
+      buyerValue
+    )
   })
 
   it('redeems principal and yield at maturity and prevents a double withdrawal', async function () {
@@ -188,9 +236,14 @@ describe('LockedIn Circle Phase 2B', function () {
     await networkHelpers.time.increaseTo(maturity)
     const before = await token.balanceOf(await saver.getAddress())
     await vault.withdrawLocked(0)
-    expect((await token.balanceOf(await saver.getAddress())) - before).to.equal(99n * UNIT)
+    expect((await token.balanceOf(await saver.getAddress())) - before).to.equal(
+      99n * UNIT
+    )
     expect((await vault.position(0)).lockedShares).to.equal(0n)
-    await expect(vault.withdrawLocked(0)).to.be.revertedWithCustomError(vault, 'NothingToWithdraw')
+    await expect(vault.withdrawLocked(0)).to.be.revertedWithCustomError(
+      vault,
+      'NothingToWithdraw'
+    )
   })
 
   it('preserves shares and withdrawal state when Aave redemption fails, then allows retry', async function () {
@@ -200,7 +253,10 @@ describe('LockedIn Circle Phase 2B', function () {
     const shares = (await vault.position(0)).lockedShares
     await networkHelpers.time.increaseTo(maturity)
     await pool.setFailWithdrawals(true)
-    await expect(vault.withdrawLocked(0)).to.be.revertedWithCustomError(pool, 'WithdrawalUnavailable')
+    await expect(vault.withdrawLocked(0)).to.be.revertedWithCustomError(
+      pool,
+      'WithdrawalUnavailable'
+    )
     expect((await vault.position(0)).lockedShares).to.equal(shares)
     expect((await vault.position(0)).lockedWithdrawn).to.equal(false)
     await pool.setFailWithdrawals(false)
@@ -210,10 +266,19 @@ describe('LockedIn Circle Phase 2B', function () {
 
   it('rejects unauthorized adapter deposits, withdrawals and rebinding', async function () {
     const vault = await createVault()
-    const adapter = await ethers.getContractAt('AaveYieldAdapter', await vault.yieldAdapter())
-    await expect(adapter.connect(outsider).deposit(UNIT)).to.be.revertedWithCustomError(adapter, 'VaultOnly')
-    await expect(adapter.connect(outsider).withdraw(UNIT, await outsider.getAddress())).to.be.revertedWithCustomError(adapter, 'VaultOnly')
-    await expect(adapter.bindVault(await outsider.getAddress())).to.be.revertedWithCustomError(adapter, 'FactoryOnly')
+    const adapter = await ethers.getContractAt(
+      'AaveYieldAdapter',
+      await vault.yieldAdapter()
+    )
+    await expect(
+      adapter.connect(outsider).deposit(UNIT)
+    ).to.be.revertedWithCustomError(adapter, 'VaultOnly')
+    await expect(
+      adapter.connect(outsider).withdraw(UNIT, await outsider.getAddress())
+    ).to.be.revertedWithCustomError(adapter, 'VaultOnly')
+    await expect(
+      adapter.bindVault(await outsider.getAddress())
+    ).to.be.revertedWithCustomError(adapter, 'FactoryOnly')
   })
 
   for (const state of ['paused', 'frozen']) {
@@ -231,45 +296,182 @@ describe('LockedIn Circle Phase 2B', function () {
   }
 
   it('validates chain, Pool, token, aToken underlying and six-decimal assumptions', async function () {
-    await expect(ethers.deployContract('AaveYieldAdapter', [
-      await token.getAddress(), await pool.getAddress(), await aToken.getAddress(), await saver.getAddress(), 1,
-    ])).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
-    await expect(ethers.deployContract('AaveYieldAdapter', [
-      await token.getAddress(), await outsider.getAddress(), await aToken.getAddress(), await saver.getAddress(), 31_337,
-    ])).to.revert(ethers)
+    await expect(
+      ethers.deployContract('AaveYieldAdapter', [
+        await token.getAddress(),
+        await pool.getAddress(),
+        await aToken.getAddress(),
+        await saver.getAddress(),
+        1,
+      ])
+    ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
+    await expect(
+      ethers.deployContract('AaveYieldAdapter', [
+        await token.getAddress(),
+        await outsider.getAddress(),
+        await aToken.getAddress(),
+        await saver.getAddress(),
+        31_337,
+      ])
+    ).to.revert(ethers)
 
     const wrongToken = await ethers.deployContract('WrongDecimalsToken')
-    await expect(ethers.deployContract('AaveYieldAdapter', [
-      await wrongToken.getAddress(), await pool.getAddress(), await aToken.getAddress(), await saver.getAddress(), 31_337,
-    ])).to.revert(ethers)
-    const wrongUnderlying = await ethers.deployContract('WrongUnderlyingAToken', [await outsider.getAddress()])
-    await expect(ethers.deployContract('AaveYieldAdapter', [
-      await token.getAddress(), await pool.getAddress(), await wrongUnderlying.getAddress(), await saver.getAddress(), 31_337,
-    ])).to.revert(ethers)
-    const wrongDecimals = await ethers.deployContract('WrongDecimalsAToken', [await token.getAddress()])
-    await expect(ethers.deployContract('AaveYieldAdapter', [
-      await token.getAddress(), await pool.getAddress(), await wrongDecimals.getAddress(), await saver.getAddress(), 31_337,
-    ])).to.revert(ethers)
+    await expect(
+      ethers.deployContract('AaveYieldAdapter', [
+        await wrongToken.getAddress(),
+        await pool.getAddress(),
+        await aToken.getAddress(),
+        await saver.getAddress(),
+        31_337,
+      ])
+    ).to.revert(ethers)
+    const wrongUnderlying = await ethers.deployContract(
+      'WrongUnderlyingAToken',
+      [await outsider.getAddress()]
+    )
+    await expect(
+      ethers.deployContract('AaveYieldAdapter', [
+        await token.getAddress(),
+        await pool.getAddress(),
+        await wrongUnderlying.getAddress(),
+        await saver.getAddress(),
+        31_337,
+      ])
+    ).to.revert(ethers)
+    const wrongDecimals = await ethers.deployContract('WrongDecimalsAToken', [
+      await token.getAddress(),
+    ])
+    await expect(
+      ethers.deployContract('AaveYieldAdapter', [
+        await token.getAddress(),
+        await pool.getAddress(),
+        await wrongDecimals.getAddress(),
+        await saver.getAddress(),
+        31_337,
+      ])
+    ).to.revert(ethers)
   })
 
   it('fuzzes share coverage across deposits and yield changes', async function () {
     const vault = await createVault(1, 1_000_000n * UNIT, 1_000)
-    const adapter = await ethers.getContractAt('AaveYieldAdapter', await vault.yieldAdapter())
-    const deposits = [1n * UNIT, 7n * UNIT, 31n * UNIT, 101n * UNIT, 997n * UNIT]
-    await fundAndApprove(saver, await vault.getAddress(), deposits.reduce((sum, value) => sum + value, 0n))
+    const adapter = await ethers.getContractAt(
+      'AaveYieldAdapter',
+      await vault.yieldAdapter()
+    )
+    const deposits = [
+      1n * UNIT,
+      7n * UNIT,
+      31n * UNIT,
+      101n * UNIT,
+      997n * UNIT,
+    ]
+    await fundAndApprove(
+      saver,
+      await vault.getAddress(),
+      deposits.reduce((sum, value) => sum + value, 0n)
+    )
     for (const [index, amount] of deposits.entries()) {
       await vault.deposit(0, amount)
-      if (index % 2 === 0) await accrue(await adapter.getAddress(), BigInt(index + 1) * UNIT)
+      if (index % 2 === 0)
+        await accrue(await adapter.getAddress(), BigInt(index + 1) * UNIT)
       const shares = await adapter.totalShares()
-      expect(await adapter.convertToAssets(shares)).to.equal(await adapter.totalAssets())
+      expect(await adapter.convertToAssets(shares)).to.equal(
+        await adapter.totalAssets()
+      )
       expect(await vault.totalLockedShares()).to.equal(shares)
       expect(await vault.isSolvent()).to.equal(true)
     }
   })
 
   it('exposes the current variable liquidity rate without representing it as guaranteed yield', async function () {
-    await pool.setLiquidityRate(35n * RAY / 1_000n)
+    await pool.setLiquidityRate((35n * RAY) / 1_000n)
     const vault = await createVault()
-    expect(await vault.currentLiquidityRate()).to.equal(35n * RAY / 1_000n)
+    expect(await vault.currentLiquidityRate()).to.equal((35n * RAY) / 1_000n)
+  })
+})
+
+describe('Polygon Amoy mock-yield configuration', function () {
+  it('creates Safe and Earn vaults without deploying a fictitious Aave adapter', async function () {
+    const { ethers, networkHelpers } = await network.create()
+    const [saver, riskReserve, maintenanceTreasury, yieldFunder] =
+      await ethers.getSigners()
+    const token = await ethers.deployContract('MockUSDT')
+    const adapterFactory = await ethers.deployContract(
+      'MockYieldAdapterFactory',
+      [await token.getAddress(), 31_337, (5n * RAY) / 100n]
+    )
+    const factory = await ethers.deployContract('VaultFactory', [
+      await token.getAddress(),
+      await riskReserve.getAddress(),
+      await maintenanceTreasury.getAddress(),
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
+      await adapterFactory.getAddress(),
+    ])
+    const maturity =
+      BigInt(await networkHelpers.time.latest()) + 30n * 24n * 60n * 60n
+
+    await factory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
+    await factory.createPersonalVault(100n * UNIT, maturity, 1_200, 1)
+    const safeVault = await ethers.getContractAt(
+      'SavingsVault',
+      await factory.vaultAt(0)
+    )
+    const earnVault = await ethers.getContractAt(
+      'SavingsVault',
+      await factory.vaultAt(1)
+    )
+    expect(await safeVault.yieldAdapter()).to.equal(ethers.ZeroAddress)
+
+    const adapter = await ethers.getContractAt(
+      'MockYieldAdapter',
+      await earnVault.yieldAdapter()
+    )
+    expect(await adapter.vault()).to.equal(await earnVault.getAddress())
+    expect(await adapter.currentLiquidityRate()).to.equal((5n * RAY) / 100n)
+    await token.mint(await saver.getAddress(), 100n * UNIT)
+    await token.approve(await earnVault.getAddress(), 100n * UNIT)
+    await earnVault.deposit(0, 100n * UNIT)
+    expect((await earnVault.position(0)).emergencyBalance).to.equal(12n * UNIT)
+    expect(await adapter.totalAssets()).to.equal(88n * UNIT)
+
+    await token.mint(await yieldFunder.getAddress(), 8n * UNIT)
+    await token
+      .connect(yieldFunder)
+      .approve(await adapter.getAddress(), 8n * UNIT)
+    await adapter.connect(yieldFunder).fundYield(8n * UNIT)
+    expect(await earnVault.positionValue(0)).to.equal(96n * UNIT)
+    expect(await earnVault.accruedYield(0)).to.equal(8n * UNIT)
+  })
+
+  it('keeps mock adapter value movement vault-only and validates its chain', async function () {
+    const { ethers } = await network.create()
+    const [saver] = await ethers.getSigners()
+    const token = await ethers.deployContract('MockUSDT')
+    const wrongChainFactory = await ethers.deployContract(
+      'MockYieldAdapterFactory',
+      [await token.getAddress(), 80_002, 0]
+    )
+    await expect(wrongChainFactory.createAdapter()).to.revert(ethers)
+
+    const adapterFactory = await ethers.deployContract(
+      'MockYieldAdapterFactory',
+      [await token.getAddress(), 31_337, 0]
+    )
+    await adapterFactory.createAdapter()
+    const events = await adapterFactory.queryFilter(
+      adapterFactory.filters.AdapterCreated
+    )
+    expect(events.length).to.equal(1)
+    // A directly created unbound adapter rejects value movement from arbitrary callers.
+    const adapterAddress = events[0].args.adapter
+    const adapter = await ethers.getContractAt(
+      'MockYieldAdapter',
+      adapterAddress
+    )
+    await expect(
+      adapter.connect(saver).deposit(UNIT)
+    ).to.be.revertedWithCustomError(adapter, 'VaultOnly')
   })
 })

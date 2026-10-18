@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
+    "build:amoy": "tsc -b && vite build --mode amoy",
     "dev": "vite",
+    "dev:amoy": "vite --mode amoy",
     "test": "vitest run src --pool=threads --maxWorkers=1",
     "typecheck": "tsc -b --noEmit"
   },

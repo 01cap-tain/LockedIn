@@ -31,6 +31,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
       ethers.ZeroAddress,
       ethers.ZeroAddress,
       31_337,
+      ethers.ZeroAddress,
     ])
     maturity = BigInt(await networkHelpers.time.latest()) + 365n * 24n * 60n * 60n
     await factory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
@@ -147,6 +148,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
       await pool.getAddress(),
       await aToken.getAddress(),
       31_337,
+      ethers.ZeroAddress,
     ])
     await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
     const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
@@ -203,7 +205,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     await aToken.bindPool(await pool.getAddress())
     const earnFactory = await ethers.deployContract('VaultFactory', [
       await token.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
-      await pool.getAddress(), await aToken.getAddress(), 31_337,
+      await pool.getAddress(), await aToken.getAddress(), 31_337, ethers.ZeroAddress,
     ])
     await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
     const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
@@ -266,7 +268,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     const badToken = await ethers.deployContract('FalseReturnUSDT')
     const badFactory = await ethers.deployContract('VaultFactory', [
       await badToken.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
-      ethers.ZeroAddress, ethers.ZeroAddress, 31_337,
+      ethers.ZeroAddress, ethers.ZeroAddress, 31_337, ethers.ZeroAddress,
     ])
     await badFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const badVault = await ethers.getContractAt('SavingsVault', await badFactory.vaultAt(0))
@@ -290,7 +292,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     const sellerContract = await ethers.deployContract('ReentrantMarketSeller')
     const callbackFactory = await ethers.deployContract('VaultFactory', [
       await callbackToken.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
-      ethers.ZeroAddress, ethers.ZeroAddress, 31_337,
+      ethers.ZeroAddress, ethers.ZeroAddress, 31_337, ethers.ZeroAddress,
     ])
     const callbackMarket = await ethers.getContractAt('EarlyExitMarket', await callbackFactory.earlyExitMarket())
     await callbackFactory.createGroupVault(

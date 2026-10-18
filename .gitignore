@@ -3,6 +3,9 @@ dist/
 coverage/
 .env
 .env.local
+.env.*
+!.env.example
+!.env.amoy.example
 *.log
 .DS_Store
 .vite/
@@ -11,5 +14,4 @@ apps/web/.vite/
 artifacts/
 cache/
 coverage-contracts/
-packages/contracts/deployments/
 packages/contracts/types/

@@ -9,6 +9,8 @@ import {RewardPool} from "./RewardPool.sol";
 import {SavingsVault} from "./SavingsVault.sol";
 import {EarlyExitMarket} from "./EarlyExitMarket.sol";
 import {AaveYieldAdapter} from "./AaveYieldAdapter.sol";
+import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
+import {IYieldAdapterFactory} from "./interfaces/IYieldAdapterFactory.sol";
 
 /// @notice Deploys immutable Safe or Earn savings vaults and records membership indexes.
 /// @dev The factory creates infrastructure but receives no authority over member principal.
@@ -25,6 +27,7 @@ contract VaultFactory {
     IPool public immutable aavePool;
     IAToken public immutable aToken;
     uint256 public immutable deploymentChainId;
+    IYieldAdapterFactory public immutable testYieldAdapterFactory;
 
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
@@ -45,7 +48,8 @@ contract VaultFactory {
         address maintenanceTreasury_,
         IPool aavePool_,
         IAToken aToken_,
-        uint256 deploymentChainId_
+        uint256 deploymentChainId_,
+        IYieldAdapterFactory testYieldAdapterFactory_
     ) {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
@@ -59,10 +63,18 @@ contract VaultFactory {
         } catch {
             revert UnsupportedToken();
         }
+        if (
+            address(testYieldAdapterFactory_) != address(0)
+                && (
+                    address(testYieldAdapterFactory_).code.length == 0
+                        || testYieldAdapterFactory_.asset() != address(asset_)
+                )
+        ) revert InvalidConfiguration();
         asset = asset_;
         aavePool = aavePool_;
         aToken = aToken_;
         deploymentChainId = deploymentChainId_;
+        testYieldAdapterFactory = testYieldAdapterFactory_;
         rewardPool = new RewardPool(asset_, address(this));
         earlyExitMarket = new EarlyExitMarket(
             asset_, rewardPool, address(this), riskReserve_, maintenanceTreasury_
@@ -125,13 +137,20 @@ contract VaultFactory {
         uint64 maturity,
         SavingsVault.VaultMode mode
     ) internal returns (address vault) {
-        AaveYieldAdapter adapter;
+        IYieldAdapter adapter;
         if (mode == SavingsVault.VaultMode.Earn) {
-            // Each Earn vault receives an isolated adapter. Sharing one adapter would mix
-            // share supplies between vaults and weaken both accounting and access control.
-            adapter = new AaveYieldAdapter(
-                asset, aavePool, aToken, address(this), deploymentChainId
-            );
+            if (address(testYieldAdapterFactory) != address(0)) {
+                // Amoy has no official Aave deployment. Its explicit test factory creates
+                // isolated mock adapters without inventing production-protocol addresses.
+                adapter = testYieldAdapterFactory.createAdapter();
+                if (adapter.asset() != address(asset)) revert InvalidConfiguration();
+            } else {
+                // Production/fork mode keeps the real Aave adapter and validates Pool,
+                // aToken, chain and token identities inside its constructor.
+                adapter = new AaveYieldAdapter(
+                    asset, aavePool, aToken, address(this), deploymentChainId
+                );
+            }
         }
         SavingsVault deployed = new SavingsVault(
             asset,

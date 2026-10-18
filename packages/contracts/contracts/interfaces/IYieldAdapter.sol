@@ -6,6 +6,7 @@ pragma solidity ^0.8.30;
 interface IYieldAdapter {
     function asset() external view returns (address);
     function vault() external view returns (address);
+    function bindVault(address vault_) external;
     function totalAssets() external view returns (uint256);
     function totalShares() external view returns (uint256);
     function convertToAssets(uint256 shares) external view returns (uint256);

@@ -1,6 +1,21 @@
 import hardhatToolboxMochaEthers from '@nomicfoundation/hardhat-toolbox-mocha-ethers'
 import { defineConfig } from 'hardhat/config'
+import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+// Node loads the ignored testnet environment without an additional dotenv dependency.
+// Existing shell variables win, allowing CI secret stores to remain authoritative.
+try {
+  process.loadEnvFile(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../.env.amoy'
+    )
+  )
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error
+}
 
 const networks = {
   localhost: {
@@ -8,6 +23,21 @@ const networks = {
     chainType: 'l1',
     url: 'http://127.0.0.1:8545',
   },
+}
+
+if (process.env.AMOY_RPC_URL) {
+  const accounts = [
+    process.env.AMOY_DEPLOYER_PRIVATE_KEY,
+    process.env.AMOY_WALLET_A_PRIVATE_KEY,
+    process.env.AMOY_WALLET_B_PRIVATE_KEY,
+  ].filter(Boolean)
+  networks.amoy = {
+    type: 'http',
+    chainType: 'l1',
+    chainId: 80_002,
+    url: process.env.AMOY_RPC_URL,
+    accounts,
+  }
 }
 
 if (process.env.POLYGON_RPC_URL) {
@@ -35,4 +65,7 @@ export default defineConfig({
     artifacts: './artifacts',
   },
   networks,
+  verify: process.env.POLYGONSCAN_API_KEY
+    ? { etherscan: { apiKey: process.env.POLYGONSCAN_API_KEY } }
+    : undefined,
 })

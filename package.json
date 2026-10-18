@@ -14,7 +14,12 @@
     "build": "npm run build --workspaces --if-present",
     "contracts:node": "npm run node -w @lockedin-circle/contracts",
     "contracts:deploy": "npm run deploy:local -w @lockedin-circle/contracts",
+    "contracts:deploy:amoy": "npm run deploy:amoy -w @lockedin-circle/contracts",
+    "contracts:verify:amoy": "npm run verify:amoy -w @lockedin-circle/contracts",
+    "contracts:test:amoy": "npm run test:amoy -w @lockedin-circle/contracts",
+    "contracts:test:amoy:persistence": "npm run test:amoy:persistence -w @lockedin-circle/contracts",
     "dev": "npm run dev -w @lockedin-circle/web",
+    "dev:amoy": "npm run dev:amoy -w @lockedin-circle/web",
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"

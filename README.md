@@ -1,16 +1,17 @@
 # LockedIn Circle
 
-Phase 2A local/test prototype for personal and group savings vaults with a competitive early-exit market. It preserves the Nimiq Pay Mini App wallet connection and uses Nimiq Pay's separate injected EVM provider for contract ownership and signing.
+LockedIn Circle is a Nimiq Pay Mini App prototype for personal and group savings. Solidity contracts own the financial state; the React and TypeScript client prepares wallet transactions and reads contract state.
 
-The Nimiq and EVM addresses are separate identities and are displayed independently. Contract actions use the EVM address. Hardhat's unlocked signer is disabled unless the explicit development fallback is enabled.
+The Nimiq and EVM addresses are separate identities and are displayed independently. Only the connected EVM address owns vault positions and signs contract transactions.
 
 ## Requirements
 
 - Node.js 22.13 or later
 - npm
-- Nimiq Pay for native provider testing
+- Nimiq Pay for native-provider testing
+- A development EVM wallet for Polygon Amoy testing
 
-## Install and verify
+## Install and validate
 
 ```sh
 npm install
@@ -20,48 +21,49 @@ npm test
 npm run build
 ```
 
-## Run locally
+The optional Polygon-mainnet fork suite additionally requires `POLYGON_RPC_URL`:
 
-Use three terminals from the repository root.
+```sh
+npm run test:polygon-fork -w @lockedin-circle/contracts
+```
 
-1. Start the local EVM:
+## Local Hardhat development
 
-   ```sh
-   npm run contracts:node
-   ```
+Use three terminals from the repository root:
 
-2. Deploy mock USDT, `VaultFactory`, and `RewardPool`:
+```sh
+npm run contracts:node
+npm run contracts:deploy
+npm run dev
+```
 
-   ```sh
-   npm run contracts:deploy
-   ```
+Copy `.env.example` to the ignored `.env` and replace `VITE_FACTORY_ADDRESS` with the deployment output. Enable `VITE_ENABLE_HARDHAT_FALLBACK` only for local development. Hardhat accounts and their published keys must never receive real assets.
 
-3. Copy `.env.example` to `.env.local`, replace `VITE_FACTORY_ADDRESS` with the deployed factory address, and set `VITE_ENABLE_HARDHAT_FALLBACK=true` for local development only. Then start the frontend:
+## Persistent Polygon Amoy development
 
-   ```sh
-   npm run dev
-   ```
+Polygon Amoy uses chain ID `80002`. Because this project has no official Aave V3 deployment to use on Amoy, it deploys MockUSDT plus an isolated `MockYieldAdapter` for every Earn vault. It does not invent Aave addresses.
 
-The frontend defaults to Hardhat chain ID `0x7a69`. With the explicit fallback enabled it uses Hardhat's first unlocked account; otherwise contract actions require `window.ethereum` from Nimiq Pay. The deployer receives mock USDT for testing.
+Copy `.env.amoy.example` to the ignored `.env.amoy`, fill it with disposable Amoy-only credentials, and follow [the Amoy runbook](docs/AMOY_TESTNET.md). The deployment command writes public versioned manifests under `packages/contracts/deployments/amoy/`.
 
-In local fallback mode, the Wallet page can switch among Hardhat's unlocked test accounts. The selected account comes from the running Hardhat node, not from `.env`; `.env` only configures the RPC URL, expected chain, factory address, and whether the fallback is enabled. Never use Hardhat's published test keys for real funds.
-
-Open `http://localhost:5173` for the browser preview. To test the preserved Nimiq connection, put the phone and development computer on the same network and open the Vite network URL through Nimiq Pay's Mini App custom URL field.
+```sh
+npm run contracts:deploy:amoy
+npm run contracts:test:amoy
+npm run contracts:test:amoy:persistence
+npm run dev:amoy
+```
 
 ## Workspace
 
 - `apps/web`: React, TypeScript and Vite Mini App UI
-- `packages/contracts`: Hardhat 3 project, Solidity contracts, mocks and JavaScript tests
-- `docs/LOCKEDIN_SPEC.md`: Phase 1 workflow, permissions and security invariants
+- `packages/contracts`: Hardhat 3, Solidity contracts, adapters, mocks and tests
+- `docs/LOCKEDIN_SPEC.md`: workflow, permissions and security invariants
+- `docs/AMOY_TESTNET.md`: credential-safe Amoy deployment and validation runbook
 
 ## Current limits
 
-- Mock USDT and local Hardhat only
-- No Aave integration or yield adapter implementation
-- Early exits are full-position, pre-maturity sales only
-- No guardian recovery
-- No mainnet deployment configuration
-- No assertion that the Nimiq and EVM addresses belong to the same key or account
-- Only reviewed six-decimal, exact-transfer, non-rebasing USDT deployments are supported
-- Real-device Nimiq Pay EVM signing still requires device verification
-- Contracts are unaudited
+- Amoy uses MockUSDT and MockYieldAdapter; it does not claim real Aave integration.
+- Production Aave behavior is tested locally and optionally against a Polygon-mainnet fork.
+- Early exits are full-position, pre-maturity sales only.
+- Nimiq Pay Amoy support is not officially documented and requires a real-device probe.
+- No guardian recovery, borrowing, mainnet deployment or PostgreSQL indexer exists yet.
+- Contracts remain unaudited.

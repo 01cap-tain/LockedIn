@@ -79,6 +79,11 @@ function vaultType(isGroup: boolean): string {
 
 export function App() {
   const environment = getNimiqEnvironment();
+  const networkName = import.meta.env.VITE_NETWORK_NAME ?? "Local Hardhat";
+  const explorerBaseUrl = import.meta.env.VITE_BLOCK_EXPLORER_URL?.replace(
+    /\/$/,
+    ""
+  );
 
   // Nimiq identity and EVM ownership are intentionally separate. Nimiq Pay
   // identifies the Mini App user, while only the EVM signer can own or move
@@ -446,7 +451,7 @@ export function App() {
         </span>
         <code>
           {evmSession
-            ? `Chain ${evmSession.chainId}`
+            ? `${networkName} · ${evmSession.chainId}`
             : "Contract actions disabled"}
         </code>
       </div>
@@ -1086,9 +1091,20 @@ export function App() {
                       </small>
                       {item.vault && <code>{short(item.vault)}</code>}
                     </div>
-                    <code title={item.transactionHash}>
-                      {short(item.transactionHash)}
-                    </code>
+                    {explorerBaseUrl ? (
+                      <a
+                        href={`${explorerBaseUrl}/tx/${item.transactionHash}`}
+                        rel="noreferrer"
+                        target="_blank"
+                        title="Open transaction in the configured explorer"
+                      >
+                        {short(item.transactionHash)}
+                      </a>
+                    ) : (
+                      <code title={item.transactionHash}>
+                        {short(item.transactionHash)}
+                      </code>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1126,7 +1142,11 @@ export function App() {
             <div>
               <small>Network</small>
               <strong>{evmSession?.chainId ?? "Unavailable"}</strong>
-              <span>{evmSession?.source ?? "No signer selected"}</span>
+              <span>
+                {evmSession
+                  ? `${networkName} · ${evmSession.source}`
+                  : "No signer selected"}
+              </span>
             </div>
           </div>
           {evmSession?.source === "hardhat-development" &&
