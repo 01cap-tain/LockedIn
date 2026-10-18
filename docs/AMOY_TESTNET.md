@@ -4,7 +4,7 @@
 
 Amoy chain state is authoritative for vault balances, position ownership, deterministic discounts and settlement. Deployment manifests contain public metadata only. RPC credentials, API keys, private keys and mnemonics belong only in the ignored `.env.amoy` file or a CI secret store.
 
-Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL.
+Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL. The factory constructor deploys its RewardPool and EarlyExitMarket, so it is substantially more expensive than the two mock contracts. The deployment script checks a live gas-price-based balance budget before sending its first transaction; approximately 0.5 test POL is a sensible starting balance, but the script's current calculation is authoritative.
 
 ## Network
 
