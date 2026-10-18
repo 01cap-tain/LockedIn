@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -8,11 +8,11 @@ import { network } from "hardhat";
 
 const CHAIN_ID = 80_002;
 const TOKEN_DECIMALS = 6;
-const FIVE_PERCENT_RAY = 5n * 10n ** 25n;
-// The factory constructor also creates RewardPool and EarlyExitMarket. Reserve
-// enough for the complete deployment instead of allowing an RPC to surface an
-// opaque out-of-gas revert halfway through the sequence.
-const DEPLOYMENT_GAS_BUDGET = 12_000_000n;
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const prerequisitePath = path.resolve(
+  scriptDirectory,
+  "../deployments/amoy-prerequisites.json"
+);
 
 function requiredAddress(ethers, name) {
   const value = process.env[name];
@@ -72,27 +72,6 @@ const chain = await ethers.provider.getNetwork();
 if (Number(chain.chainId) !== CHAIN_ID)
   throw new Error(`Expected Amoy ${CHAIN_ID}, received ${chain.chainId}.`);
 
-const [deployerBalance, feeData] = await Promise.all([
-  ethers.provider.getBalance(await deployer.getAddress()),
-  ethers.provider.getFeeData(),
-]);
-const deploymentGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
-if (!deploymentGasPrice) {
-  throw new Error("The Amoy RPC did not return a usable gas price.");
-}
-const minimumDeploymentBalance = DEPLOYMENT_GAS_BUDGET * deploymentGasPrice;
-if (deployerBalance < minimumDeploymentBalance) {
-  throw new Error(
-    `The Amoy deployer is underfunded. Current balance: ${ethers.formatEther(
-      deployerBalance
-    )} POL; ` +
-      `minimum at the current gas price: ${ethers.formatEther(
-        minimumDeploymentBalance
-      )} POL. ` +
-      "Fund the disposable deployer with additional test POL and retry."
-  );
-}
-
 const riskReserve = requiredAddress(ethers, "AMOY_RISK_RESERVE_ADDRESS");
 const maintenanceTreasury = requiredAddress(
   ethers,
@@ -101,21 +80,42 @@ const maintenanceTreasury = requiredAddress(
 if (riskReserve === maintenanceTreasury)
   throw new Error("Test treasury addresses must be distinct.");
 
-console.log("1/3 Deploying MockUSDT...");
-const token = await ethers.deployContract("MockUSDT");
-await token.waitForDeployment();
-console.log(`MockUSDT confirmed at ${await token.getAddress()}.`);
-console.log("2/3 Deploying MockYieldAdapterFactory...");
-const mockYieldAdapterFactory = await ethers.deployContract(
+const prerequisite = JSON.parse(await readFile(prerequisitePath, "utf8"));
+if (prerequisite.chainId !== CHAIN_ID) {
+  throw new Error(
+    "Recovered Amoy prerequisite metadata has the wrong chain ID."
+  );
+}
+const tokenRecord = prerequisite.contracts.mockUsdt;
+const adapterFactoryRecord = prerequisite.contracts.mockYieldAdapterFactory;
+const token = await ethers.getContractAt("MockUSDT", tokenRecord.address);
+const mockYieldAdapterFactory = await ethers.getContractAt(
   "MockYieldAdapterFactory",
-  [await token.getAddress(), CHAIN_ID, FIVE_PERCENT_RAY]
+  adapterFactoryRecord.address
 );
-await mockYieldAdapterFactory.waitForDeployment();
+const [tokenCode, adapterCode, tokenDecimals, adapterAsset, adapterChainId] =
+  await Promise.all([
+    ethers.provider.getCode(tokenRecord.address),
+    ethers.provider.getCode(adapterFactoryRecord.address),
+    token.decimals(),
+    mockYieldAdapterFactory.asset(),
+    mockYieldAdapterFactory.expectedChainId(),
+  ]);
+if (
+  tokenCode === "0x" ||
+  adapterCode === "0x" ||
+  Number(tokenDecimals) !== TOKEN_DECIMALS ||
+  adapterAsset.toLowerCase() !== tokenRecord.address.toLowerCase() ||
+  Number(adapterChainId) !== CHAIN_ID
+) {
+  throw new Error("Recovered Amoy mock contracts failed on-chain validation.");
+}
+console.log(`Reusing confirmed MockUSDT at ${tokenRecord.address}.`);
 console.log(
-  `MockYieldAdapterFactory confirmed at ${await mockYieldAdapterFactory.getAddress()}.`
+  `Reusing confirmed MockYieldAdapterFactory at ${adapterFactoryRecord.address}.`
 );
-console.log("3/3 Deploying VaultFactory and its RewardPool/EarlyExitMarket...");
-const factory = await ethers.deployContract("VaultFactory", [
+
+const factoryArguments = [
   await token.getAddress(),
   riskReserve,
   maintenanceTreasury,
@@ -123,12 +123,47 @@ const factory = await ethers.deployContract("VaultFactory", [
   ethers.ZeroAddress,
   CHAIN_ID,
   await mockYieldAdapterFactory.getAddress(),
+];
+const factoryContract = await ethers.getContractFactory(
+  "VaultFactory",
+  deployer
+);
+const unsignedFactoryDeployment = await factoryContract.getDeployTransaction(
+  ...factoryArguments
+);
+const [deployerBalance, feeData] = await Promise.all([
+  ethers.provider.getBalance(await deployer.getAddress()),
+  ethers.provider.getFeeData(),
 ]);
+const deploymentGasPrice = feeData.gasPrice;
+if (!deploymentGasPrice) {
+  throw new Error("The Amoy RPC did not return a usable legacy gas price.");
+}
+const estimatedFactoryGas = await ethers.provider.estimateGas({
+  ...unsignedFactoryDeployment,
+  from: await deployer.getAddress(),
+});
+const factoryGasLimit = (estimatedFactoryGas * 120n) / 100n;
+const minimumDeploymentBalance = factoryGasLimit * deploymentGasPrice;
+if (deployerBalance < minimumDeploymentBalance) {
+  throw new Error(
+    `The Amoy deployer is underfunded for the remaining VaultFactory transaction. ` +
+      `Current balance: ${ethers.formatEther(deployerBalance)} POL; ` +
+      `required at the current gas price: ${ethers.formatEther(
+        minimumDeploymentBalance
+      )} POL. ` +
+      "Request more test POL or retry when Amoy gas is lower."
+  );
+}
+
+console.log("Deploying VaultFactory and its RewardPool/EarlyExitMarket...");
+const factory = await factoryContract.deploy(...factoryArguments, {
+  gasLimit: factoryGasLimit,
+  gasPrice: deploymentGasPrice,
+});
 await factory.waitForDeployment();
 console.log(`VaultFactory confirmed at ${await factory.getAddress()}.`);
 
-const tokenRecord = await deploymentRecord(token);
-const adapterFactoryRecord = await deploymentRecord(mockYieldAdapterFactory);
 const factoryRecord = await deploymentRecord(factory);
 const factoryReceipt = await factory.deploymentTransaction().wait();
 const rewardPool = await factory.rewardPool();
@@ -165,7 +200,6 @@ const manifest = {
   },
 };
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const outputDirectory = path.resolve(scriptDirectory, "../deployments/amoy");
 await mkdir(outputDirectory, { recursive: true });
 const version = `${timestamp.replace(/[:.]/g, "-")}-${commit.slice(0, 12)}`;

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "network": "polygon-amoy",
+  "chainId": 80002,
+  "sourceGitCommit": "8c555bb1bb4086f39d6870b9909cc7b6a95d15c7",
+  "contracts": {
+    "mockUsdt": {
+      "address": "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
+      "transactionHash": "0x5553897611b25d408ddadc970a1ba6383d3a5457665e6e1bc5bb29e309c14f7b",
+      "blockNumber": 50538011
+    },
+    "mockYieldAdapterFactory": {
+      "address": "0xC4faBc46347b9081ca95a8B9D8014C3394016c11",
+      "transactionHash": "0x8a1efeb749ec1ab6de0032bffeea9a756371de7b495138b4c440ecb77e28c85e",
+      "blockNumber": 50538014
+    }
+  }
+}
