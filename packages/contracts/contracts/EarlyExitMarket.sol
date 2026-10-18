@@ -14,6 +14,7 @@ interface IMarketVault {
     function maturity() external view returns (uint64);
     function createdAt() external view returns (uint64);
     function positionOwner(uint256 positionId) external view returns (address);
+    function lastDepositAt(uint256 positionId) external view returns (uint64);
     function marketPositionData(uint256 positionId)
         external
         view
@@ -42,7 +43,7 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 positionId;
         address seller;
         uint256 positionValue;
-        uint16 askingDiscountBps;
+        uint16 systemDiscountBps;
         uint64 expiresAt;
         bool active;
     }
@@ -95,10 +96,11 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 indexed positionId,
         address seller,
         uint256 positionValue,
-        uint16 askingDiscountBps,
+        uint16 systemDiscountBps,
         uint64 expiresAt
     );
     event ListingCancelled(uint256 indexed listingId);
+    event ListingExpired(uint256 indexed listingId);
     event OfferSubmitted(
         uint256 indexed listingId,
         uint256 indexed offerId,
@@ -145,23 +147,32 @@ contract EarlyExitMarket is ReentrancyGuard {
         maintenanceTreasury = maintenanceTreasury_;
     }
 
-    function createListing(address vault, uint256 positionId, uint16 askingDiscountBps, uint64 expiresAt)
+    function createListing(address vault, uint256 positionId, uint64 expiresAt)
         external
         returns (uint256 listingId)
     {
         if (!IVaultFactoryView(factory).isVault(vault)) revert InvalidVault();
-        _validateDiscount(askingDiscountBps);
         IMarketVault savingsVault = IMarketVault(vault);
         uint64 maturity = savingsVault.maturity();
         if (expiresAt <= block.timestamp || expiresAt > maturity) revert InvalidExpiration();
         if (savingsVault.positionOwner(positionId) != msg.sender) revert PositionOwnerOnly();
         if (positionSold[vault][positionId]) revert PositionAlreadySold();
-        if (activeListing[vault][positionId] != 0) revert ListingUnavailable();
+        uint256 previousListingIdPlusOne = activeListing[vault][positionId];
+        if (previousListingIdPlusOne != 0) {
+            Listing storage previousListing = listings[previousListingIdPlusOne - 1];
+            if (previousListing.active && previousListing.expiresAt <= block.timestamp) {
+                _closeListing(previousListing);
+                emit ListingExpired(previousListingIdPlusOne - 1);
+            } else {
+                revert ListingUnavailable();
+            }
+        }
 
         (address member,,,, uint256 lockedBalance, bool withdrawn,) = savingsVault.marketPositionData(positionId);
         if (member != msg.sender || lockedBalance == 0 || withdrawn || block.timestamp >= maturity) {
             revert PositionNotSaleable();
         }
+        uint16 systemDiscountBps = referenceDiscount(vault, positionId).discountBps;
 
         listingId = nextListingId++;
         listings[listingId] = Listing({
@@ -169,13 +180,13 @@ contract EarlyExitMarket is ReentrancyGuard {
             positionId: positionId,
             seller: msg.sender,
             positionValue: lockedBalance,
-            askingDiscountBps: askingDiscountBps,
+            systemDiscountBps: systemDiscountBps,
             expiresAt: expiresAt,
             active: true
         });
         activeListing[vault][positionId] = listingId + 1;
         emit ListingCreated(
-            listingId, vault, positionId, msg.sender, lockedBalance, askingDiscountBps, expiresAt
+            listingId, vault, positionId, msg.sender, lockedBalance, systemDiscountBps, expiresAt
         );
     }
 
@@ -193,7 +204,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     {
         Listing storage listing = _activeListing(listingId);
         _validateDiscount(discountBps);
-        if (discountBps > listing.askingDiscountBps) revert InvalidDiscount();
+        if (discountBps > listing.systemDiscountBps) revert InvalidDiscount();
         if (expiresAt <= block.timestamp || expiresAt > listing.expiresAt) revert InvalidExpiration();
         if (msg.sender == listing.seller) revert ProviderOnly();
 
@@ -271,7 +282,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     }
 
     function referenceDiscount(address vault, uint256 positionId)
-        external
+        public
         view
         returns (ReferenceDiscount memory result)
     {
@@ -296,9 +307,17 @@ contract EarlyExitMarket is ReentrancyGuard {
 
         uint256 elapsedDays = elapsed / 1 days;
         uint256 expectedDeposits = elapsedDays / 30 + 1;
+        uint256 frequencyPenalty;
         if (deposits < expectedDeposits) {
-            result.consistencyScore = uint16((expectedDeposits - deposits) * 75 / expectedDeposits);
+            frequencyPenalty = (expectedDeposits - deposits) * 50 / expectedDeposits;
         }
+        uint256 recencyPenalty;
+        uint64 lastDeposit = savingsVault.lastDepositAt(positionId);
+        if (lastDeposit != 0 && block.timestamp > uint256(lastDeposit) + 30 days) {
+            uint256 overdue = _min(30 days, block.timestamp - uint256(lastDeposit) - 30 days);
+            recencyPenalty = overdue * 25 / 30 days;
+        }
+        result.consistencyScore = uint16(frequencyPenalty + recencyPenalty);
 
         uint256 cappedValue = _min(STABLECOIN_SIZE_REFERENCE, lockedBalance);
         result.positionValueScore =

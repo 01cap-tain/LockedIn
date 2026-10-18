@@ -41,7 +41,18 @@ describe('EVM wallet connection', () => {
     const session = await connectEvmWallet({ provider, expectedChainId: '0x89' })
     expect(session.address).toBe(address)
     expect(session.chainId).toBe('0x89')
-    expect(session.source).toBe('nimiq-pay')
+    expect(session.source).toBe('injected-wallet')
+  })
+
+  it('can explicitly bypass an injected wallet for the development fallback', async () => {
+    const injected = providerWith(() => { throw new Error('Injected provider should not be called') })
+    await expect(connectEvmWallet({
+      provider: injected,
+      expectedChainId: '0x1',
+      allowDevelopmentFallback: true,
+      forceDevelopmentFallback: true,
+      developmentRpcUrl: 'http://127.0.0.1:1',
+    })).rejects.not.toMatchObject({ message: 'Injected provider should not be called' })
   })
 
   it('forwards account and chain changes and removes both listeners', () => {

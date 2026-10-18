@@ -38,8 +38,8 @@ describe('EarlyExitMarket', function () {
     await vault.deposit(0, 100n * UNIT)
   })
 
-  async function createListing(discount = 800, expiresAt = maturity) {
-    await market.createListing(await vault.getAddress(), 0, discount, expiresAt)
+  async function createListing(expiresAt = maturity) {
+    await market.createListing(await vault.getAddress(), 0, expiresAt)
     return 0n
   }
 
@@ -58,12 +58,37 @@ describe('EarlyExitMarket', function () {
   }
 
   it('enforces the 4.5% to 8% discount boundaries', async function () {
-    await expect(market.createListing(await vault.getAddress(), 0, 449, maturity)).to.be.revertedWithCustomError(market, 'InvalidDiscount')
-    await expect(market.createListing(await vault.getAddress(), 0, 801, maturity)).to.be.revertedWithCustomError(market, 'InvalidDiscount')
-    await (await market.createListing(await vault.getAddress(), 0, 450, maturity)).wait()
+    await (await market.createListing(await vault.getAddress(), 0, maturity)).wait()
 
     await expect(market.connect(providerOne).submitOffer(0, 449, maturity)).to.be.revertedWithCustomError(market, 'InvalidDiscount')
     await expect(market.connect(providerOne).submitOffer(0, 801, maturity)).to.be.revertedWithCustomError(market, 'InvalidDiscount')
+  })
+
+  it('sets the listing discount from the on-chain commitment model', async function () {
+    const expected = await market.referenceDiscount(await vault.getAddress(), 0)
+    await expect(market.createListing(await vault.getAddress(), 0, maturity))
+      .to.emit(market, 'ListingCreated')
+      .withArgs(0n, await vault.getAddress(), 0n, await saver.getAddress(), 90n * UNIT, expected.discountBps, maturity)
+    expect((await market.listings(0)).systemDiscountBps).to.equal(expected.discountBps)
+  })
+
+  it('raises the commitment penalty after missed saving periods and lowers it after a new deposit', async function () {
+    const now = BigInt(await networkHelpers.time.latest())
+    const longMaturity = now + 365n * 24n * 60n * 60n
+    await factory.createPersonalVault(100n * UNIT, longMaturity, 1_000)
+    const commitmentVault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(1))
+    await token.mint(await saver.getAddress(), 10n * UNIT)
+    await token.approve(await commitmentVault.getAddress(), 10n * UNIT)
+    await commitmentVault.deposit(0, 5n * UNIT)
+    const initial = await market.referenceDiscount(await commitmentVault.getAddress(), 0)
+
+    await networkHelpers.time.increase(61n * 24n * 60n * 60n)
+    const overdue = await market.referenceDiscount(await commitmentVault.getAddress(), 0)
+    expect(overdue.consistencyScore).to.be.greaterThan(initial.consistencyScore)
+
+    await commitmentVault.deposit(0, 5n * UNIT)
+    const resumed = await market.referenceDiscount(await commitmentVault.getAddress(), 0)
+    expect(resumed.consistencyScore).to.be.lessThan(overdue.consistencyScore)
   })
 
   it('calculates and distributes the 0.9% provider fee as 60/20/20', async function () {
@@ -123,7 +148,7 @@ describe('EarlyExitMarket', function () {
 
   it('rejects expired and cancelled listings and offers', async function () {
     const soon = BigInt(await networkHelpers.time.latest()) + 100n
-    await createListing(800, soon)
+    await createListing(soon)
     await submitOffer(0, providerOne, 500, soon)
     await networkHelpers.time.increaseTo(soon + 1n)
     await expect(market.acceptOffer(0, 0)).to.be.revertedWithCustomError(market, 'ListingUnavailable')
@@ -137,14 +162,32 @@ describe('EarlyExitMarket', function () {
     await token.mint(await saver.getAddress(), 10n * UNIT)
     await token.approve(await secondVault.getAddress(), 10n * UNIT)
     await secondVault.deposit(0, 10n * UNIT)
-    await market.createListing(await secondVault.getAddress(), 0, 800, nextExpiry)
+    await market.createListing(await secondVault.getAddress(), 0, nextExpiry)
     await market.cancelListing(1)
     await expect(market.connect(providerOne).submitOffer(1, 500, nextExpiry)).to.be.revertedWithCustomError(market, 'ListingUnavailable')
   })
 
+  it('allows a saver to relist after cancellation or expiry', async function () {
+    const now = BigInt(await networkHelpers.time.latest())
+    await createListing(now + 100n)
+    await market.cancelListing(0)
+    const firstRelistDiscount = (await market.referenceDiscount(await vault.getAddress(), 0)).discountBps
+    await expect(market.createListing(await vault.getAddress(), 0, now + 200n))
+      .to.emit(market, 'ListingCreated')
+      .withArgs(1n, await vault.getAddress(), 0n, await saver.getAddress(), 90n * UNIT, firstRelistDiscount, now + 200n)
+
+    await networkHelpers.time.increaseTo(now + 201n)
+    await expect(market.createListing(await vault.getAddress(), 0, now + 300n))
+      .to.emit(market, 'ListingExpired')
+      .withArgs(1n)
+    expect((await market.listings(1)).active).to.equal(false)
+    expect((await market.listings(2)).active).to.equal(true)
+    expect(await market.activeListing(await vault.getAddress(), 0)).to.equal(3n)
+  })
+
   it('rejects an expired offer while its listing remains active', async function () {
     const now = BigInt(await networkHelpers.time.latest())
-    await createListing(800, now + 1_000n)
+    await createListing(now + 1_000n)
     await submitOffer(0, providerOne, 500, now + 100n)
     await fundOffer(providerOne)
     await networkHelpers.time.increaseTo(now + 101n)
@@ -170,13 +213,13 @@ describe('EarlyExitMarket', function () {
     await market.acceptOffer(0, 0)
 
     await expect(
-      market.connect(providerOne).createListing(await vault.getAddress(), 0, 800, maturity),
+      market.connect(providerOne).createListing(await vault.getAddress(), 0, maturity),
     ).to.be.revertedWithCustomError(market, 'PositionAlreadySold')
     await expect(market.acceptOffer(0, 0)).to.be.revertedWithCustomError(market, 'ListingUnavailable')
   })
 
   it('prevents accepting a sale at or after maturity', async function () {
-    await createListing(800, maturity)
+    await createListing(maturity)
     await submitOffer(0, providerOne, 500, maturity)
     await fundOffer(providerOne)
     await networkHelpers.time.setNextBlockTimestamp(maturity)
@@ -185,7 +228,7 @@ describe('EarlyExitMarket', function () {
 
   it('supports competing offers and only transfers to the saver-selected provider', async function () {
     await createListing()
-    await submitOffer(0, providerOne, 650)
+    await submitOffer(0, providerOne, 500)
     await submitOffer(0, providerTwo, 475)
     await fundOffer(providerTwo, 475)
 
@@ -198,8 +241,8 @@ describe('EarlyExitMarket', function () {
 
   it('allows saver rejection and provider cancellation of individual offers', async function () {
     await createListing()
-    await submitOffer(0, providerOne, 650)
-    await submitOffer(0, providerTwo, 500)
+    await submitOffer(0, providerOne, 500)
+    await submitOffer(0, providerTwo, 475)
     await market.rejectOffer(0, 0)
     await market.connect(providerTwo).cancelOffer(0, 1)
     expect((await market.offers(0, 0)).active).to.equal(false)
@@ -229,7 +272,7 @@ describe('EarlyExitMarket', function () {
     await badToken.mint(await saver.getAddress(), 100n * UNIT)
     await badToken.approve(await badVault.getAddress(), 100n * UNIT)
     await badVault.deposit(0, 100n * UNIT)
-    await badMarket.createListing(await badVault.getAddress(), 0, 800, maturity)
+    await badMarket.createListing(await badVault.getAddress(), 0, maturity)
     await badMarket.connect(providerOne).submitOffer(0, 500, maturity)
     const sellerReceives = await badMarket.claimValue(90n * UNIT, 500)
     const fee = await badMarket.feeFor(sellerReceives)
@@ -262,7 +305,7 @@ describe('EarlyExitMarket', function () {
     await sellerContract.configure(await callbackVault.getAddress(), await callbackToken.getAddress(), await callbackMarket.getAddress())
     await callbackToken.mint(await sellerContract.getAddress(), 100n * UNIT)
     await sellerContract.deposit(1, 100n * UNIT)
-    await sellerContract.list(1, 800, maturity)
+    await sellerContract.list(1, maturity)
     await callbackMarket.connect(providerOne).submitOffer(0, 500, maturity)
     const sellerReceives = await callbackMarket.claimValue(90n * UNIT, 500)
     const fee = await callbackMarket.feeFor(sellerReceives)

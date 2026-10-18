@@ -57,14 +57,17 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 
 ## Phase 2A early-exit workflow
 
-1. Before maturity, the original saver lists their entire locked position with a maximum acceptable discount from 4.5% to 8% and an expiration no later than maturity.
-2. Liquidity providers submit competing offers within 4.5% to 8%. An offer's discount may not exceed the listing's asking discount.
+1. Before maturity, the original saver may list their entire locked position with an expiration no later than maturity. The contract calculates and freezes the listing discount from the saver’s on-chain commitment record; the saver cannot supply or override it.
+2. Liquidity providers submit competing offers within 4.5% to 8%. An offer's discount may not exceed the system-set listing discount, so a provider can only match it or improve the saver’s price.
 3. Submitting an offer grants the market token allowance for the calculated claim value plus the 0.9% provider fee. Tokens remain with the provider until acceptance.
 4. The saver may reject any offer, cancel an unaccepted listing, or accept one offer. The developer has no selection role.
 5. Acceptance pulls the claim value and fee from the selected provider, pays the saver, distributes the fee, and transfers the locked-position ownership in one transaction. Any failed step reverts the complete transaction.
 6. The original saver retains emergency withdrawal rights. The provider receives only the locked claim and may withdraw it at maturity.
 7. A sale permanently disqualifies the original position from rewards. It does not disqualify the whole group: remaining active members may activate an equally divided campaign at maturity if all of them completed.
 8. A position may be sold only once. Sales are prohibited at maturity, after locked withdrawal, when ownership changed, or when the locked balance changed after listing.
+9. Cancellation or expiration releases an unsold position for a new listing. Each relisting creates a new immutable listing record and leaves the previous attempt in event history.
+
+Personal and group listings share the same settlement rules. Clients identify the category from the originating vault's immutable `isGroup` value and may filter the market by category.
 
 ### Market fee
 
@@ -74,16 +77,16 @@ Nimiq Pay remains the Mini App host and supplies the connected Nimiq address. It
 - Maintenance treasury: the remaining fee, preserving all integer rounding dust.
 - All fee destinations are immutable. The reward share is recorded as protocol revenue and is not arbitrarily allocatable by a developer.
 
-### Reference discount v1
+### System discount v1
 
 The reference starts at 450 basis points and is capped at 800. It adds four on-chain scores:
 
 - Remaining time: up to 125 points, scaling linearly from zero to 365 remaining days.
 - Time-weighted progress lag: up to 100 points, comparing actual goal progress with elapsed-plan progress.
-- Deposit consistency: up to 75 points, comparing deposit count with one expected deposit per elapsed 30-day period.
+- Deposit commitment: up to 75 points. Up to 50 points measure deposit frequency against one expected deposit per elapsed 30-day period; up to 25 points measure how overdue the most recent deposit is after a 30-day grace period.
 - Current locked value: up to 50 points for positions below a 1,000 USDT reference size.
 
-The reference is informational. Providers choose their own valid discount and the saver chooses the offer.
+The resulting discount is enforced when a listing is created and frozen for that listing. Providers choose their own valid discount at or below the system rate, and the saver chooses whether to accept an offer. Relisting recalculates the rate from the then-current on-chain record.
 
 ## Permissions
 

@@ -44,6 +44,8 @@ Use three terminals from the repository root.
 
 The frontend defaults to Hardhat chain ID `0x7a69`. With the explicit fallback enabled it uses Hardhat's first unlocked account; otherwise contract actions require `window.ethereum` from Nimiq Pay. The deployer receives mock USDT for testing.
 
+In local fallback mode, the Wallet page can switch among Hardhat's unlocked test accounts. The selected account comes from the running Hardhat node, not from `.env`; `.env` only configures the RPC URL, expected chain, factory address, and whether the fallback is enabled. Never use Hardhat's published test keys for real funds.
+
 Open `http://localhost:5173` for the browser preview. To test the preserved Nimiq connection, put the phone and development computer on the same network and open the Vite network URL through Nimiq Pay's Mini App custom URL field.
 
 ## Workspace

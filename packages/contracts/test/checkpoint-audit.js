@@ -42,8 +42,8 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await selectedToken.connect(account).approve(spender, amount)
   }
 
-  async function sellPosition(vault, positionId = 0n, discountBps = 500) {
-    await market.connect(saver).createListing(await vault.getAddress(), positionId, 800, maturity)
+  async function sellPosition(vault, positionId = 0n, discountBps = 450) {
+    await market.connect(saver).createListing(await vault.getAddress(), positionId, maturity)
     const listingId = (await market.nextListingId()) - 1n
     await market.connect(provider).submitOffer(listingId, discountBps, maturity)
     const locked = (await vault.position(positionId)).lockedBalance
@@ -90,7 +90,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await fundAndApprove(saver, await vault.getAddress(), 101n * UNIT)
     await vault.deposit(0, 100n * UNIT)
     const expires = BigInt(await networkHelpers.time.latest()) + 100n
-    await market.createListing(await vault.getAddress(), 0, 800, expires)
+    await market.createListing(await vault.getAddress(), 0, expires)
 
     await expect(vault.deposit(0, UNIT)).to.be.revertedWithCustomError(vault, 'PositionListed')
     await networkHelpers.time.increaseTo(expires + 1n)
@@ -176,7 +176,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     const vault = await personalVault()
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
     await vault.deposit(0, 100n * UNIT)
-    await market.createListing(await vault.getAddress(), 0, 800, maturity)
+    await market.createListing(await vault.getAddress(), 0, maturity)
     await market.connect(provider).submitOffer(0, 500, maturity)
     const receipt = await market.claimValue(90n * UNIT, 500)
     const fee = await market.feeFor(receipt)
@@ -209,10 +209,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('fuzzes listing and sale settlement while preserving ownership and solvency invariants', async function () {
     const cases = [
-      { amount: 2n * UNIT, asking: 450, offer: 450, emergency: 1_000 },
-      { amount: 17n * UNIT + 13n, asking: 575, offer: 501, emergency: 1_200 },
-      { amount: 99n * UNIT, asking: 800, offer: 799, emergency: 1_500 },
-      { amount: 1_001n * UNIT + 99n, asking: 725, offer: 650, emergency: 1_333 },
+      { amount: 2n * UNIT, offer: 450, emergency: 1_000 },
+      { amount: 17n * UNIT + 13n, offer: 475, emergency: 1_200 },
+      { amount: 99n * UNIT, offer: 500, emergency: 1_500 },
+      { amount: 1_001n * UNIT + 99n, offer: 450, emergency: 1_333 },
     ]
 
     for (const entry of cases) {
@@ -220,7 +220,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await fundAndApprove(saver, await vault.getAddress(), entry.amount)
       await vault.deposit(0, entry.amount)
       const position = await vault.position(0)
-      await market.createListing(await vault.getAddress(), 0, entry.asking, maturity)
+      await market.createListing(await vault.getAddress(), 0, maturity)
       const listingId = (await market.nextListingId()) - 1n
       await market.connect(provider).submitOffer(listingId, entry.offer, maturity)
       const receipt = await market.claimValue(position.lockedBalance, entry.offer)
@@ -307,7 +307,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
     await fundAndApprove(saver, await feeVault.getAddress(), 100n * UNIT, feeToken)
     await feeVault.deposit(0, 100n * UNIT)
-    await feeMarket.createListing(await feeVault.getAddress(), 0, 800, maturity)
+    await feeMarket.createListing(await feeVault.getAddress(), 0, maturity)
     await feeMarket.connect(provider).submitOffer(0, 500, maturity)
     const receipt = await feeMarket.claimValue(90n * UNIT, 500)
     const fee = await feeMarket.feeFor(receipt)

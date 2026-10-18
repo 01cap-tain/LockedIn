@@ -1,6 +1,6 @@
 import { BrowserProvider, JsonRpcProvider, type Eip1193Provider, type Signer } from 'ethers'
 
-export type EvmWalletSource = 'nimiq-pay' | 'hardhat-development'
+export type EvmWalletSource = 'injected-wallet' | 'hardhat-development'
 
 export interface EvmWalletSession {
   address: string
@@ -29,6 +29,8 @@ interface ConnectOptions {
   expectedChainId?: string
   allowDevelopmentFallback?: boolean
   developmentRpcUrl?: string
+  developmentAccountIndex?: number
+  forceDevelopmentFallback?: boolean
 }
 
 function configuredChainId(): string {
@@ -51,7 +53,7 @@ function normalizeChainId(chainId: unknown): string {
 
 export async function connectEvmWallet(options: ConnectOptions = {}): Promise<EvmWalletSession> {
   const expectedChainId = (options.expectedChainId ?? configuredChainId()).toLowerCase()
-  const provider = options.provider ?? injectedProvider()
+  const provider = options.forceDevelopmentFallback ? undefined : options.provider ?? injectedProvider()
 
   if (provider) {
     try {
@@ -69,7 +71,7 @@ export async function connectEvmWallet(options: ConnectOptions = {}): Promise<Ev
 
       const browserProvider = new BrowserProvider(provider)
       const signer = await browserProvider.getSigner(accounts[0])
-      return { address: await signer.getAddress(), chainId, signer, source: 'nimiq-pay' }
+      return { address: await signer.getAddress(), chainId, signer, source: 'injected-wallet' }
     } catch (error) {
       if (error instanceof EvmWalletError) throw error
       if (providerErrorCode(error) === 4001) {
@@ -101,8 +103,14 @@ export async function connectEvmWallet(options: ConnectOptions = {}): Promise<Ev
   if (chainId !== expectedChainId) {
     throw new EvmWalletError('WRONG_NETWORK', `The Hardhat fallback is on ${chainId}, expected ${expectedChainId}.`)
   }
-  const signer = await jsonRpcProvider.getSigner(0)
+  const signer = await jsonRpcProvider.getSigner(options.developmentAccountIndex ?? 0)
   return { address: await signer.getAddress(), chainId, signer, source: 'hardhat-development' }
+}
+
+export async function listDevelopmentAccounts(rpcUrl = import.meta.env.VITE_HARDHAT_RPC_URL ?? 'http://127.0.0.1:8545'):
+Promise<string[]> {
+  const provider = new JsonRpcProvider(rpcUrl)
+  return (await provider.listAccounts()).map((signer) => signer.address)
 }
 
 export function watchEvmWallet(

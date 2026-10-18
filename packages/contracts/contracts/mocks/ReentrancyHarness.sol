@@ -161,11 +161,11 @@ contract ReentrantMarketSeller is ITokenReceiver {
         vault.deposit(positionId, amount);
     }
 
-    function list(uint256 positionId, uint16 discountBps, uint64 expiresAt) external {
+    function list(uint256 positionId, uint64 expiresAt) external {
         (bool success, bytes memory data) = market.call(
             abi.encodeWithSignature(
-                "createListing(address,uint256,uint16,uint64)",
-                address(vault), positionId, discountBps, expiresAt
+                "createListing(address,uint256,uint64)",
+                address(vault), positionId, expiresAt
             )
         );
         require(success, "listing failed");

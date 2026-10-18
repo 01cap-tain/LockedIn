@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 interface IEarlyExitMarket {
     function isPositionListed(address vault, uint256 positionId) external view returns (bool);
 
-    function createListing(address vault, uint256 positionId, uint16 askingDiscountBps, uint64 expiresAt)
+    function createListing(address vault, uint256 positionId, uint64 expiresAt)
         external
         returns (uint256 listingId);
 
