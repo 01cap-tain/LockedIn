@@ -18,7 +18,7 @@ const deployerAddress = await deployer.getAddress()
 const safetyNonce = await ethers.provider.getTransactionCount(deployerAddress)
 const predictedFactory = ethers.getCreateAddress({
   from: deployerAddress,
-  nonce: safetyNonce + 1,
+  nonce: safetyNonce + 2,
 })
 const safetyControllerContract = await ethers.deployContract('SafetyController', [
   predictedFactory,
@@ -30,6 +30,16 @@ const safetyControllerContract = await ethers.deployContract('SafetyController',
 ])
 await safetyControllerContract.waitForDeployment()
 
+const rewardPoolContract = await ethers.deployContract('RewardPool', [
+  await token.getAddress(),
+  predictedFactory,
+  7 * 24 * 60 * 60, // Test-only seven-day epochs.
+  24 * 60 * 60,
+  1n * 10n ** 6n,
+  24 * 60 * 60,
+])
+await rewardPoolContract.waitForDeployment()
+
 const factory = await ethers.deployContract('VaultFactory', [
   await token.getAddress(),
   await riskReserve.getAddress(),
@@ -39,6 +49,7 @@ const factory = await ethers.deployContract('VaultFactory', [
   31_337,
   ethers.ZeroAddress,
   await safetyControllerContract.getAddress(),
+  await rewardPoolContract.getAddress(),
 ])
 await factory.waitForDeployment()
 
@@ -79,6 +90,13 @@ await writeFile(
         earlyExitMarket,
         savingsVaultDeployer: vaultDeployer,
         safetyController,
+      },
+      rewardConfiguration: {
+        epochSeconds: 7 * 24 * 60 * 60,
+        registrationGraceSeconds: 24 * 60 * 60,
+        minimumRewardTarget: (1n * 10n ** 6n).toString(),
+        minimumSavingDurationSeconds: 24 * 60 * 60,
+        environment: 'test-only-local',
       },
     },
     null,

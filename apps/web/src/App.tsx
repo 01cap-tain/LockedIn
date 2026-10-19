@@ -710,7 +710,8 @@ export function App() {
                   <small>
                     Every listed participant receives an independent position.
                     Membership is fixed after creation. Cooperative exits and
-                    group rewards require at least four active members.
+                    group rewards require at least four active members. Rewards
+                    depend on funded protocol epochs and are variable, not guaranteed.
                   </small>
                 </label>
               )}

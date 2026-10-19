@@ -59,6 +59,7 @@ const targets = [
       manifest.chainId,
       contracts.mockYieldAdapterFactory.address,
       contracts.safetyController.address,
+      contracts.rewardPool.address,
     ],
   },
   {
@@ -67,6 +68,10 @@ const targets = [
     constructorArgs: [
       contracts.mockUsdt.address,
       contracts.vaultFactory.address,
+      config.rewards.epochSeconds,
+      config.rewards.registrationGraceSeconds,
+      config.rewards.minimumRewardTarget,
+      config.rewards.minimumSavingDurationSeconds,
     ],
   },
   {

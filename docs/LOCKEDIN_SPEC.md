@@ -63,6 +63,34 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 - Divides a valid campaign equally and requires an exactly divisible budget.
 - Separates campaign budgets, activated claims and non-distributable protocol revenue.
 - Lets recipients pull their rewards and provides no administrator allocation or withdrawal.
+- Snapshots qualifying completed groups and allocates early-exit revenue by immutable epoch rules; no administrator chooses a group or recipient.
+
+### Protocol-revenue epochs
+
+Sponsored vault funding and protocol-wide early-exit revenue are independent ledgers. Sponsored funding keeps the existing vault-specific activation path. The 60% RewardPool share of each early-exit fee is assigned automatically to `revenueEpoch = floor(block.timestamp / epochDuration)` when received.
+
+Production epochs are 30 days. The duration is immutable and may be shorter only in an explicitly labelled local or Amoy deployment. Each deployment also fixes a registration grace period, minimum per-member reward target and minimum saving duration; production minimums remain unset pending audit and economic review.
+
+A completed group registers permissionlessly for `completionEpoch = floor(maturity / epochDuration)`. Registration is allowed from maturity through, but not including, `epochEnd + registrationGrace`. The pool accepts only a factory-registered group for which `rewardsReady()` is true, `maturity - createdAt` meets the minimum duration, at least four members remain eligible, and every eligible member's immutable target meets the minimum. Registration snapshots the eligible original-member recipients and targets. A sold or cooperatively exited member is absent; a market buyer is never substituted. Emergency withdrawals and generated yield do not alter the snapshot.
+
+The deterministic completion weight is:
+
+```text
+member completed principal = immutable member target
+group completion weight = sum(member completed principal for snapshotted eligible members)
+```
+
+Using the capped-at-target amount prevents excess deposits, generated yield and repeated transfers from increasing weight. The per-member minimum target, minimum duration, four-member minimum, immutable membership and one registration per vault/epoch are the initial Sybil-resistance boundaries; they do not eliminate all coordination or identity risk.
+
+Epochs finalize chronologically. At or after `epochEnd + registrationGrace`, anyone may freeze the epoch's revenue and weight. Anyone may then allocate each registered group:
+
+```text
+group gross allocation = floor(epoch revenue * group weight / total epoch weight)
+reward per eligible member = floor(group gross allocation / eligible member count)
+group distributed amount = reward per member * eligible member count
+```
+
+The allocation caller cannot select or replace recipients. When the last group is allocated, `epoch revenue - sum(group distributed amount)` rolls into the next epoch. If an epoch has no qualifying registrations, all its revenue rolls into the next epoch. Sequential completion makes rollover deterministic and prevents a later epoch from finalizing before the earlier epoch's remainder is known. Claims remain pull-based, and total claimable rewards can never exceed received sponsored funding plus received protocol revenue.
 
 ### Yield interfaces
 
@@ -174,6 +202,9 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 | Fund a vault reward budget                      | Any token holder                                   |
 | Activate rewards                                | Any caller through an eligible vault               |
 | Claim a reward                                  | Reward recipient                                   |
+| Register a qualifying completed group           | Any address                                        |
+| Finalize an elapsed reward epoch                 | Any address, after epoch plus grace                 |
+| Allocate a finalized group's epoch share        | Any address                                        |
 | Pause risk-increasing actions                   | Immutable safety council                           |
 | Schedule unpause or cap changes                 | Immutable safety council                           |
 | Execute elapsed safety changes                  | Any address after the timelock                      |

@@ -729,6 +729,20 @@ contract SavingsVault is ReentrancyGuard {
         revert UnknownPosition();
     }
 
+    /// @notice Returns the immutable target paired with an eligible reward recipient.
+    /// @dev Protocol-revenue weight is capped at target, so yield and excess deposits
+    /// cannot increase a group's epoch allocation.
+    function rewardTargetAt(uint256 eligibleIndex) external view returns (uint256) {
+        uint256 count = _positions.length;
+        uint256 current;
+        for (uint256 i; i < count; ++i) {
+            if (!_rewardEligible(i)) continue;
+            if (current == eligibleIndex) return _positions[i].target;
+            ++current;
+        }
+        revert UnknownPosition();
+    }
+
     function marketPositionData(uint256 positionId)
         external
         view

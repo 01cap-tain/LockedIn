@@ -27,6 +27,8 @@ The two optional wallet private keys are needed only by `contracts:test:amoy`, w
 
 The Amoy safety council is deliberately the disposable deployer and is labelled `test-only-deployer` in the manifest. Its unpause/cap timelock is 24 hours. Testnet exposure caps are 1,000,000 mUSDT per position, 10,000,000 mUSDT per vault and 100,000,000 mUSDT protocol-wide. These high values are test configuration, not proposed production economics. Production safety authority must be a reviewed multisig, and production caps remain unset until audit and economic review.
 
+Amoy also uses explicitly test-only reward economics: one-day protocol-revenue epochs, a six-hour registration grace period, a 10 mUSDT minimum target per eligible member and a seven-day minimum saving duration. Production uses 30-day epochs, while its minimum target and duration remain unset pending audit and economic review.
+
 The Hardhat configuration reads `.env.amoy` using Node's built-in environment-file loader. Vite exposes only variables prefixed with `VITE_`; private key variables are never included in the browser bundle.
 
 ## Deploy and test

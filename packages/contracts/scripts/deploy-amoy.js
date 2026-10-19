@@ -14,6 +14,10 @@ const AMOY_SAFETY_TIMELOCK_SECONDS = 24 * 60 * 60;
 const AMOY_MAX_POSITION_PRINCIPAL = 1_000_000n * UNIT;
 const AMOY_MAX_VAULT_PRINCIPAL = 10_000_000n * UNIT;
 const AMOY_MAX_PROTOCOL_PRINCIPAL = 100_000_000n * UNIT;
+const AMOY_REWARD_EPOCH_SECONDS = 24 * 60 * 60;
+const AMOY_REWARD_GRACE_SECONDS = 6 * 60 * 60;
+const AMOY_MINIMUM_REWARD_TARGET = 10n * UNIT;
+const AMOY_MINIMUM_SAVING_DURATION = 7 * 24 * 60 * 60;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const prerequisitePath = path.resolve(
   scriptDirectory,
@@ -126,12 +130,12 @@ const safetyNonce = await ethers.provider.getTransactionCount(
   deployerAddress,
   "pending"
 );
-// SafetyController needs an immutable factory address, so the deployment binds it
-// to the very next CREATE address from this signer. The factory constructor checks
-// the reciprocal binding and rejects any mismatched controller.
+// SafetyController and RewardPool need an immutable factory address, so both bind
+// to the third CREATE address (after their own deployments). The factory constructor
+// checks both reciprocal bindings and rejects any mismatch.
 const predictedFactoryAddress = ethers.getCreateAddress({
   from: deployerAddress,
-  nonce: safetyNonce + 1,
+  nonce: safetyNonce + 2,
 });
 const safetyArguments = [
   predictedFactoryAddress,
@@ -147,6 +151,17 @@ const safetyContractFactory = await ethers.getContractFactory(
 );
 const unsignedSafetyDeployment =
   await safetyContractFactory.getDeployTransaction(...safetyArguments);
+const rewardArguments = [
+  await token.getAddress(),
+  predictedFactoryAddress,
+  AMOY_REWARD_EPOCH_SECONDS,
+  AMOY_REWARD_GRACE_SECONDS,
+  AMOY_MINIMUM_REWARD_TARGET,
+  AMOY_MINIMUM_SAVING_DURATION,
+];
+const rewardPoolFactory = await ethers.getContractFactory("RewardPool", deployer);
+const unsignedRewardDeployment =
+  await rewardPoolFactory.getDeployTransaction(...rewardArguments);
 
 const factoryArguments = [
   await token.getAddress(),
@@ -169,20 +184,27 @@ const deploymentGasPrice = feeData.gasPrice;
 if (!deploymentGasPrice) {
   throw new Error("The Amoy RPC did not return a usable legacy gas price.");
 }
-const estimatedSafetyGas = await ethers.provider.estimateGas({
-  ...unsignedSafetyDeployment,
-  from: deployerAddress,
-});
+const [estimatedSafetyGas, estimatedRewardGas] = await Promise.all([
+  ethers.provider.estimateGas({
+    ...unsignedSafetyDeployment,
+    from: deployerAddress,
+  }),
+  ethers.provider.estimateGas({
+    ...unsignedRewardDeployment,
+    from: deployerAddress,
+  }),
+]);
 const safetyGasLimit = (estimatedSafetyGas * 120n) / 100n;
+const rewardGasLimit = (estimatedRewardGas * 120n) / 100n;
 // The factory validates the controller's deployed bytecode, so its live gas
 // estimate is only possible after the controller exists. Reserve a conservative
 // testnet budget before sending the first transaction to avoid an orphaned setup.
 const factoryPreflightGasBudget = 12_000_000n;
 const minimumDeploymentBalance =
-  (safetyGasLimit + factoryPreflightGasBudget) * deploymentGasPrice;
+  (safetyGasLimit + rewardGasLimit + factoryPreflightGasBudget) * deploymentGasPrice;
 if (deployerBalance < minimumDeploymentBalance) {
   throw new Error(
-    `The Amoy deployer is underfunded for SafetyController plus VaultFactory. ` +
+    `The Amoy deployer is underfunded for SafetyController, RewardPool and VaultFactory. ` +
       `Current balance: ${ethers.formatEther(deployerBalance)} POL; ` +
       `required at the current gas price: ${ethers.formatEther(
         minimumDeploymentBalance
@@ -202,7 +224,16 @@ await safetyController.waitForDeployment();
 const safetyRecord = await deploymentRecord(safetyController);
 console.log(`SafetyController confirmed at ${safetyRecord.address}.`);
 
-factoryArguments.push(safetyRecord.address);
+console.log("Deploying the deterministic protocol RewardPool...");
+const rewardPoolContract = await rewardPoolFactory.deploy(...rewardArguments, {
+  gasLimit: rewardGasLimit,
+  gasPrice: deploymentGasPrice,
+});
+await rewardPoolContract.waitForDeployment();
+const rewardPoolRecord = await deploymentRecord(rewardPoolContract);
+console.log(`RewardPool confirmed at ${rewardPoolRecord.address}.`);
+
+factoryArguments.push(safetyRecord.address, rewardPoolRecord.address);
 const unsignedFactoryDeployment = await factoryContract.getDeployTransaction(
   ...factoryArguments
 );
@@ -213,7 +244,7 @@ const estimatedFactoryGas = await ethers.provider.estimateGas({
 const factoryGasLimit = (estimatedFactoryGas * 120n) / 100n;
 if ((await ethers.provider.getBalance(deployerAddress)) < factoryGasLimit * deploymentGasPrice) {
   throw new Error(
-    "SafetyController was confirmed, but the deployer no longer has enough POL for VaultFactory. " +
+    "SafetyController and RewardPool were confirmed, but the deployer no longer has enough POL for VaultFactory. " +
       `The controller is bound to ${predictedFactoryAddress}; fund the same deployer before retrying with recovery tooling.`
   );
 }
@@ -234,11 +265,14 @@ if (factoryRecord.address.toLowerCase() !== predictedFactoryAddress.toLowerCase(
 }
 const factoryReceipt = await factory.deploymentTransaction().wait();
 const rewardPool = await factory.rewardPool();
+if (rewardPool.toLowerCase() !== rewardPoolRecord.address.toLowerCase()) {
+  throw new Error("Factory reported an unexpected RewardPool address.");
+}
 const earlyExitMarket = await factory.earlyExitMarket();
 const vaultDeployer = await factory.vaultDeployer();
 const timestamp = new Date().toISOString();
 const manifest = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   network: "polygon-amoy",
   chainId: CHAIN_ID,
   explorer: "https://amoy.polygonscan.com",
@@ -250,11 +284,7 @@ const manifest = {
     mockYieldAdapterFactory: adapterFactoryRecord,
     safetyController: safetyRecord,
     vaultFactory: factoryRecord,
-    rewardPool: {
-      address: rewardPool,
-      transactionHash: factoryRecord.transactionHash,
-      blockNumber: factoryReceipt.blockNumber,
-    },
+    rewardPool: rewardPoolRecord,
     earlyExitMarket: {
       address: earlyExitMarket,
       transactionHash: factoryRecord.transactionHash,
@@ -278,6 +308,13 @@ const manifest = {
       maxPositionPrincipal: AMOY_MAX_POSITION_PRINCIPAL.toString(),
       maxVaultPrincipal: AMOY_MAX_VAULT_PRINCIPAL.toString(),
       maxProtocolPrincipal: AMOY_MAX_PROTOCOL_PRINCIPAL.toString(),
+    },
+    rewards: {
+      epochSeconds: AMOY_REWARD_EPOCH_SECONDS,
+      registrationGraceSeconds: AMOY_REWARD_GRACE_SECONDS,
+      minimumRewardTarget: AMOY_MINIMUM_REWARD_TARGET.toString(),
+      minimumSavingDurationSeconds: AMOY_MINIMUM_SAVING_DURATION,
+      environment: "test-only-amoy",
     },
   },
 };

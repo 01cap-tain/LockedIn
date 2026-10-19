@@ -55,7 +55,8 @@ contract VaultFactory {
         IAToken aToken_,
         uint256 deploymentChainId_,
         IYieldAdapterFactory testYieldAdapterFactory_,
-        SafetyController safetyController_
+        SafetyController safetyController_,
+        RewardPool rewardPool_
     ) {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
@@ -81,6 +82,10 @@ contract VaultFactory {
             address(safetyController_).code.length == 0 ||
             safetyController_.factory() != address(this)
         ) revert InvalidConfiguration();
+        if (
+            address(rewardPool_) == address(0) || address(rewardPool_).code.length == 0 ||
+            rewardPool_.factory() != address(this) || rewardPool_.asset() != asset_
+        ) revert InvalidConfiguration();
         asset = asset_;
         aavePool = aavePool_;
         aToken = aToken_;
@@ -88,7 +93,7 @@ contract VaultFactory {
         testYieldAdapterFactory = testYieldAdapterFactory_;
         vaultDeployer = new SavingsVaultDeployer();
         safetyController = safetyController_;
-        rewardPool = new RewardPool(asset_, address(this));
+        rewardPool = rewardPool_;
         earlyExitMarket = new EarlyExitMarket(
             asset_,
             rewardPool,
