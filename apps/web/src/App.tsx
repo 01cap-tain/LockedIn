@@ -88,6 +88,8 @@ export function App() {
   );
   const mockTokenFaucetEnabled =
     import.meta.env.VITE_ENABLE_MOCK_TOKEN_FAUCET === "true";
+  const developmentFallbackEnabled =
+    import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === "true";
   const deploymentReady = import.meta.env.VITE_DEPLOYMENT_READY !== "false";
 
   // Nimiq identity and EVM ownership are intentionally separate. Nimiq Pay
@@ -235,6 +237,9 @@ export function App() {
             ? getInjectedEvmProvider()
             : undefined,
         developmentAccountIndex,
+        // The main connect action is always an injected wallet. A local
+        // unlocked signer requires the explicit development action below.
+        allowDevelopmentFallback: false,
         forceDevelopmentFallback: developmentAccountIndex !== undefined,
       });
       setEvm({ status: "connected", session });
@@ -1228,6 +1233,17 @@ export function App() {
                   using a private key in `.env`.
                 </small>
               </label>
+            )}
+          {developmentFallbackEnabled &&
+            evmSession?.source !== "hardhat-development" && (
+              <button
+                className="secondary"
+                disabled={transaction.status === "pending"}
+                onClick={() => void connectEvm(0)}
+                type="button"
+              >
+                Use explicit local test account
+              </button>
             )}
         </section>
       )}

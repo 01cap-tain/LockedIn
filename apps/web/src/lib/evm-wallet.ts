@@ -1,141 +1,203 @@
-import { BrowserProvider, JsonRpcProvider, type Eip1193Provider, type Signer } from 'ethers'
+import {
+  BrowserProvider,
+  JsonRpcProvider,
+  type Eip1193Provider,
+  type Signer,
+} from "ethers";
 
-export type EvmWalletSource = 'injected-wallet' | 'hardhat-development'
+export type EvmWalletSource = "injected-wallet" | "hardhat-development";
 
 export interface EvmWalletSession {
-  address: string
-  chainId: string
-  signer: Signer
-  source: EvmWalletSource
+  address: string;
+  chainId: string;
+  signer: Signer;
+  source: EvmWalletSource;
 }
 
 export interface Eip1193EventsProvider extends Eip1193Provider {
-  on?: (event: string, listener: (...args: unknown[]) => void) => void
-  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (
+    event: string,
+    listener: (...args: unknown[]) => void
+  ) => void;
 }
 
 export class EvmWalletError extends Error {
   constructor(
-    readonly code: 'MISSING_PROVIDER' | 'CONNECTION_REJECTED' | 'WRONG_NETWORK' | 'CONNECTION_FAILED',
+    readonly code:
+      | "MISSING_PROVIDER"
+      | "CONNECTION_REJECTED"
+      | "WRONG_NETWORK"
+      | "CONNECTION_FAILED",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions
   ) {
-    super(message, options)
+    super(message, options);
   }
 }
 
 interface ConnectOptions {
-  provider?: Eip1193EventsProvider
-  expectedChainId?: string
-  allowDevelopmentFallback?: boolean
-  developmentRpcUrl?: string
-  developmentAccountIndex?: number
-  forceDevelopmentFallback?: boolean
+  provider?: Eip1193EventsProvider;
+  expectedChainId?: string;
+  allowDevelopmentFallback?: boolean;
+  developmentRpcUrl?: string;
+  developmentAccountIndex?: number;
+  forceDevelopmentFallback?: boolean;
 }
 
 function configuredChainId(): string {
-  return (import.meta.env.VITE_EVM_CHAIN_ID ?? '0x7a69').toLowerCase()
+  return (import.meta.env.VITE_EVM_CHAIN_ID ?? "0x7a69").toLowerCase();
 }
 
 function injectedProvider(): Eip1193EventsProvider | undefined {
-  return typeof window === 'undefined' ? undefined : window.ethereum
+  return typeof window === "undefined" ? undefined : window.ethereum;
 }
 
 function providerErrorCode(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
-  return typeof error.code === 'number' ? error.code : undefined
+  if (typeof error !== "object" || error === null || !("code" in error))
+    return undefined;
+  return typeof error.code === "number" ? error.code : undefined;
 }
 
 function normalizeChainId(chainId: unknown): string {
-  if (typeof chainId !== 'string') throw new EvmWalletError('CONNECTION_FAILED', 'The EVM provider returned an invalid network.')
-  return chainId.toLowerCase()
+  if (typeof chainId !== "string")
+    throw new EvmWalletError(
+      "CONNECTION_FAILED",
+      "The EVM provider returned an invalid network."
+    );
+  return chainId.toLowerCase();
 }
 
-export async function connectEvmWallet(options: ConnectOptions = {}): Promise<EvmWalletSession> {
-  const expectedChainId = (options.expectedChainId ?? configuredChainId()).toLowerCase()
-  const provider = options.forceDevelopmentFallback ? undefined : options.provider ?? injectedProvider()
+export async function connectEvmWallet(
+  options: ConnectOptions = {}
+): Promise<EvmWalletSession> {
+  const expectedChainId = (
+    options.expectedChainId ?? configuredChainId()
+  ).toLowerCase();
+  const provider = options.forceDevelopmentFallback
+    ? undefined
+    : options.provider ?? injectedProvider();
 
   if (provider) {
     try {
-      const accounts = await provider.request({ method: 'eth_requestAccounts' })
-      const chainId = normalizeChainId(await provider.request({ method: 'eth_chainId' }))
+      const accounts = await provider.request({
+        method: "eth_requestAccounts",
+      });
+      const chainId = normalizeChainId(
+        await provider.request({ method: "eth_chainId" })
+      );
       if (chainId !== expectedChainId) {
         throw new EvmWalletError(
-          'WRONG_NETWORK',
-          `Switch the EVM wallet to chain ${expectedChainId}; the connected chain is ${chainId}.`,
-        )
+          "WRONG_NETWORK",
+          `Switch the EVM wallet to chain ${expectedChainId}; the connected chain is ${chainId}.`
+        );
       }
-      if (!Array.isArray(accounts) || typeof accounts[0] !== 'string') {
-        throw new EvmWalletError('CONNECTION_FAILED', 'The EVM wallet did not disclose an account.')
+      if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
+        throw new EvmWalletError(
+          "CONNECTION_FAILED",
+          "The EVM wallet did not disclose an account."
+        );
       }
 
-      const browserProvider = new BrowserProvider(provider)
-      const signer = await browserProvider.getSigner(accounts[0])
-      return { address: await signer.getAddress(), chainId, signer, source: 'injected-wallet' }
+      const browserProvider = new BrowserProvider(provider);
+      const signer = await browserProvider.getSigner(accounts[0]);
+      return {
+        address: await signer.getAddress(),
+        chainId,
+        signer,
+        source: "injected-wallet",
+      };
     } catch (error) {
-      if (error instanceof EvmWalletError) throw error
+      if (error instanceof EvmWalletError) throw error;
       if (providerErrorCode(error) === 4001) {
-        throw new EvmWalletError('CONNECTION_REJECTED', 'EVM wallet access was rejected.', { cause: error })
+        throw new EvmWalletError(
+          "CONNECTION_REJECTED",
+          "EVM wallet access was rejected.",
+          { cause: error }
+        );
       }
       throw new EvmWalletError(
-        'CONNECTION_FAILED',
-        error instanceof Error ? error.message : 'The EVM wallet connection failed.',
-        { cause: error },
-      )
+        "CONNECTION_FAILED",
+        error instanceof Error
+          ? error.message
+          : "The EVM wallet connection failed.",
+        { cause: error }
+      );
     }
   }
 
-  const allowFallback = options.allowDevelopmentFallback
-    ?? import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === 'true'
+  const allowFallback =
+    options.allowDevelopmentFallback ??
+    import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === "true";
   if (!allowFallback) {
     throw new EvmWalletError(
-      'MISSING_PROVIDER',
-      'No supported EVM provider is available. Open the app inside Nimiq Pay.',
-    )
+      "MISSING_PROVIDER",
+      "No injected EVM wallet is available. Enable MetaMask in this browser or open the app inside Nimiq Pay."
+    );
   }
 
-  const rpcUrl = options.developmentRpcUrl
-    ?? import.meta.env.VITE_HARDHAT_RPC_URL
-    ?? 'http://127.0.0.1:8545'
-  const jsonRpcProvider = new JsonRpcProvider(rpcUrl)
-  const network = await jsonRpcProvider.getNetwork()
-  const chainId = `0x${network.chainId.toString(16)}`
+  const rpcUrl =
+    options.developmentRpcUrl ??
+    import.meta.env.VITE_HARDHAT_RPC_URL ??
+    "http://127.0.0.1:8545";
+  const jsonRpcProvider = new JsonRpcProvider(rpcUrl);
+  const network = await jsonRpcProvider.getNetwork();
+  const chainId = `0x${network.chainId.toString(16)}`;
   if (chainId !== expectedChainId) {
-    throw new EvmWalletError('WRONG_NETWORK', `The Hardhat fallback is on ${chainId}, expected ${expectedChainId}.`)
+    throw new EvmWalletError(
+      "WRONG_NETWORK",
+      `The Hardhat fallback is on ${chainId}, expected ${expectedChainId}.`
+    );
   }
-  const signer = await jsonRpcProvider.getSigner(options.developmentAccountIndex ?? 0)
-  return { address: await signer.getAddress(), chainId, signer, source: 'hardhat-development' }
+  const signer = await jsonRpcProvider.getSigner(
+    options.developmentAccountIndex ?? 0
+  );
+  return {
+    address: await signer.getAddress(),
+    chainId,
+    signer,
+    source: "hardhat-development",
+  };
 }
 
-export async function listDevelopmentAccounts(rpcUrl = import.meta.env.VITE_HARDHAT_RPC_URL ?? 'http://127.0.0.1:8545'):
-Promise<string[]> {
-  const provider = new JsonRpcProvider(rpcUrl)
-  return (await provider.listAccounts()).map((signer) => signer.address)
+export async function listDevelopmentAccounts(
+  rpcUrl = import.meta.env.VITE_HARDHAT_RPC_URL ?? "http://127.0.0.1:8545"
+): Promise<string[]> {
+  const provider = new JsonRpcProvider(rpcUrl);
+  return (await provider.listAccounts()).map((signer) => signer.address);
 }
 
 export function watchEvmWallet(
   provider: Eip1193EventsProvider,
-  handlers: { onAccountsChanged: (accounts: string[]) => void; onChainChanged: (chainId: string) => void },
+  handlers: {
+    onAccountsChanged: (accounts: string[]) => void;
+    onChainChanged: (chainId: string) => void;
+  }
 ): () => void {
   const accountsListener = (...args: unknown[]) => {
-    const accounts = args[0]
-    handlers.onAccountsChanged(Array.isArray(accounts) ? accounts.filter((item): item is string => typeof item === 'string') : [])
-  }
-  const chainListener = (...args: unknown[]) => handlers.onChainChanged(normalizeChainId(args[0]))
-  provider.on?.('accountsChanged', accountsListener)
-  provider.on?.('chainChanged', chainListener)
+    const accounts = args[0];
+    handlers.onAccountsChanged(
+      Array.isArray(accounts)
+        ? accounts.filter((item): item is string => typeof item === "string")
+        : []
+    );
+  };
+  const chainListener = (...args: unknown[]) =>
+    handlers.onChainChanged(normalizeChainId(args[0]));
+  provider.on?.("accountsChanged", accountsListener);
+  provider.on?.("chainChanged", chainListener);
   return () => {
-    provider.removeListener?.('accountsChanged', accountsListener)
-    provider.removeListener?.('chainChanged', chainListener)
-  }
+    provider.removeListener?.("accountsChanged", accountsListener);
+    provider.removeListener?.("chainChanged", chainListener);
+  };
 }
 
 export function getInjectedEvmProvider(): Eip1193EventsProvider | undefined {
-  return injectedProvider()
+  return injectedProvider();
 }
 
 declare global {
   interface Window {
-    ethereum?: Eip1193EventsProvider
+    ethereum?: Eip1193EventsProvider;
   }
 }
