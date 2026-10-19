@@ -8,6 +8,8 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
+import {ReserveConfiguration} from "@aave/core-v3/contracts/protocol/libraries/configuration/ReserveConfiguration.sol";
 
 import {IAaveYieldAdapter} from "./interfaces/IAaveYieldAdapter.sol";
 
@@ -15,6 +17,7 @@ import {IAaveYieldAdapter} from "./interfaces/IAaveYieldAdapter.sol";
 /// @dev One factory binds one vault exactly once; all subsequent value movement is vault-only.
 contract AaveYieldAdapter is IAaveYieldAdapter, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
 
     error FactoryOnly();
     error VaultOnly();
@@ -85,6 +88,27 @@ contract AaveYieldAdapter is IAaveYieldAdapter, ReentrancyGuard {
 
     function currentLiquidityRate() external view returns (uint256) {
         return pool.getReserveData(address(underlying)).currentLiquidityRate;
+    }
+
+    function reserveStatus()
+        external
+        view
+        returns (
+            bool active,
+            bool frozen,
+            bool paused,
+            uint256 supplyCap,
+            uint256 currentSupply,
+            uint256 availableLiquidity
+        )
+    {
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(underlying));
+        active = reserve.configuration.getActive();
+        frozen = reserve.configuration.getFrozen();
+        paused = reserve.configuration.getPaused();
+        supplyCap = reserve.configuration.getSupplyCap();
+        currentSupply = receiptToken.totalSupply();
+        availableLiquidity = underlying.balanceOf(address(receiptToken));
     }
 
     function deposit(uint256 amount) external onlyVault nonReentrant returns (uint256 shares) {

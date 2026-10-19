@@ -21,5 +21,10 @@ forkDescribe('Polygon Aave configuration (optional fork)', function () {
     expect(await adapter.asset()).to.equal(polygonAaveConfig.usdt)
     expect(await adapter.aavePool()).to.equal(polygonAaveConfig.pool)
     expect(await adapter.aToken()).to.equal(polygonAaveConfig.aUsdt)
+    const reserve = await adapter.reserveStatus()
+    expect(reserve.active).to.equal(true)
+    expect(reserve.currentSupply).to.be.greaterThan(0n)
+    // This is a live observation, not a promise that future redemptions succeed.
+    expect(reserve.availableLiquidity).to.be.greaterThanOrEqual(0n)
   })
 })

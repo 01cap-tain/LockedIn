@@ -4,7 +4,7 @@
 
 Amoy chain state is authoritative for vault balances, position ownership, deterministic discounts and settlement. Deployment manifests contain public metadata only. RPC credentials, API keys, private keys and mnemonics belong only in the ignored `.env.amoy` file or a CI secret store.
 
-Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL. The deployment creates a standalone SafetyController followed by the factory, whose constructor creates its RewardPool and EarlyExitMarket, so it is substantially more expensive than the two mock contracts. The deployment script checks a live gas-price-based balance budget before sending its first transaction; approximately 0.5 test POL is a sensible starting balance, but the script's current calculation is authoritative.
+Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL. The deployment creates standalone SafetyController and RewardPool contracts followed by the factory, whose constructor creates its EarlyExitMarket and SavingsVaultDeployer, so it is substantially more expensive than the two mock contracts. The deployment script checks a live gas-price-based balance budget before sending its first transaction; approximately 0.5 test POL is a sensible starting balance, but the script's current calculation is authoritative.
 
 ## Network
 
@@ -38,11 +38,12 @@ npm run build -w @lockedin-circle/contracts
 npm run contracts:deploy:amoy
 ```
 
-The deployer writes a timestamped manifest and `packages/contracts/deployments/amoy/latest.json`. Amoy-mode Vite reads the public factory address directly from that manifest; no address is copied into source code or `.env.amoy`. Before deployment, `dev:amoy` may still be used to test MetaMask connection, but it disables all contract actions and displays a deployment-pending notice. Restart Vite after deployment, then run:
+The deployer writes a timestamped manifest and `packages/contracts/deployments/amoy/latest.json`. It records protocol version, deployment ID, deployment block, contract addresses, transaction hashes and source commit. Amoy-mode Vite reads the public graph directly from that manifest; no address is copied into source code or `.env.amoy`. The app enables writes only after matching that graph to the connected chain. A stale schema or identity mismatch blocks contract controls. Before deployment, `dev:amoy` may still be used to test MetaMask connection, but it disables all contract actions. Restart Vite after deployment, then run:
 
 ```powershell
 npm run contracts:test:amoy
 npm run contracts:test:amoy:persistence
+npm run contracts:inspect:amoy
 npm run dev:amoy
 ```
 

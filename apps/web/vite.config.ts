@@ -6,7 +6,16 @@ import { defineConfig } from "vite";
 interface AmoyManifest {
   schemaVersion: number;
   chainId: number;
-  contracts: { vaultFactory: { address: string; blockNumber: number } };
+  protocolVersion: string;
+  deploymentId: string;
+  deploymentBlock: number;
+  contracts: {
+    mockUsdt: { address: string };
+    vaultFactory: { address: string; blockNumber: number };
+    earlyExitMarket: { address: string };
+    rewardPool: { address: string };
+    safetyController: { address: string };
+  };
   factoryConfiguration: { yieldAdapter: string };
 }
 
@@ -31,14 +40,24 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     throw new Error("The latest Amoy deployment manifest is not valid JSON.");
   }
   if (
-    manifest.schemaVersion < 2 ||
+    manifest.schemaVersion < 5 ||
     manifest.chainId !== 80_002 ||
+    !manifest.protocolVersion ||
+    !manifest.deploymentId ||
+    !manifest.deploymentBlock ||
+    !manifest.contracts?.mockUsdt?.address ||
     !manifest.contracts?.vaultFactory?.address ||
+    !manifest.contracts?.earlyExitMarket?.address ||
+    !manifest.contracts?.rewardPool?.address ||
+    !manifest.contracts?.safetyController?.address ||
     !manifest.factoryConfiguration?.yieldAdapter
   ) {
-    throw new Error(
-      "The latest Amoy deployment is incompatible. Redeploy the cooperative-exit contracts."
-    );
+    return {
+      "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("false"),
+      "import.meta.env.VITE_DEPLOYMENT_BLOCK_REASON": JSON.stringify(
+        "The Amoy manifest predates deployment-identity verification. Deploy the current contracts before enabling transactions."
+      ),
+    };
   }
 
   return {
@@ -52,6 +71,13 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     "import.meta.env.VITE_YIELD_ADAPTER_KIND": JSON.stringify(
       manifest.factoryConfiguration.yieldAdapter
     ),
+    "import.meta.env.VITE_EXPECTED_CHAIN_ID": JSON.stringify(String(manifest.chainId)),
+    "import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION": JSON.stringify(manifest.protocolVersion),
+    "import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID": JSON.stringify(manifest.deploymentId),
+    "import.meta.env.VITE_EXPECTED_ASSET_ADDRESS": JSON.stringify(manifest.contracts.mockUsdt.address),
+    "import.meta.env.VITE_EXPECTED_MARKET_ADDRESS": JSON.stringify(manifest.contracts.earlyExitMarket.address),
+    "import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS": JSON.stringify(manifest.contracts.rewardPool.address),
+    "import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS": JSON.stringify(manifest.contracts.safetyController.address),
   };
 }
 
@@ -62,5 +88,19 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: true,
     port: 5173,
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // Wallet and chain libraries change independently from application UI.
+        // Stable vendor chunks keep route changes small and cacheable.
+        manualChunks(id) {
+          if (id.includes("node_modules/ethers")) return "evm-vendor";
+          if (id.includes("node_modules/@nimiq")) return "nimiq-vendor";
+          if (id.includes("node_modules/react")) return "react-vendor";
+          return undefined;
+        },
+      },
+    },
   },
 }));

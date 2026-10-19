@@ -122,6 +122,40 @@ describe('LockedIn Circle Phase 2B', function () {
     expect(await adapter.vault()).to.equal(await earn.getAddress())
   })
 
+  it('binds an immutable deployment fingerprint to the complete protocol graph', async function () {
+    const version = await factory.PROTOCOL_VERSION()
+    const expected = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ['string', 'uint256', 'address', 'address', 'address', 'address', 'address'],
+        [
+          version,
+          31_337,
+          await factory.getAddress(),
+          await factory.asset(),
+          await factory.earlyExitMarket(),
+          await factory.rewardPool(),
+          await factory.safetyController(),
+        ]
+      )
+    )
+    expect(await factory.deploymentChainId()).to.equal(31_337n)
+    expect(await factory.deploymentId()).to.equal(expected)
+  })
+
+  it('rejects a factory configured for a different chain', async function () {
+    await expect(
+      deployFactory(ethers, [
+        await token.getAddress(),
+        await riskReserve.getAddress(),
+        await maintenanceTreasury.getAddress(),
+        await pool.getAddress(),
+        await aToken.getAddress(),
+        137,
+        ethers.ZeroAddress,
+      ], await riskReserve.getAddress())
+    ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
+  })
+
   it('never supplies emergency funds to Aave and disables collateral use', async function () {
     const vault = await createVault(1, 100n * UNIT, 1_200)
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
@@ -393,6 +427,25 @@ describe('LockedIn Circle Phase 2B', function () {
     await pool.setLiquidityRate((35n * RAY) / 1_000n)
     const vault = await createVault()
     expect(await vault.currentLiquidityRate()).to.equal((35n * RAY) / 1_000n)
+  })
+
+  it('exposes live Aave reserve controls without granting protocol authority', async function () {
+    const vault = await createVault()
+    const adapter = await ethers.getContractAt(
+      'AaveYieldAdapter',
+      await vault.yieldAdapter()
+    )
+    let status = await adapter.reserveStatus()
+    expect(status.active).to.equal(true)
+    expect(status.frozen).to.equal(false)
+    expect(status.paused).to.equal(false)
+    expect(status.supplyCap).to.equal(1_000_000n)
+
+    await pool.setFrozen(true)
+    await pool.setPaused(true)
+    status = await adapter.reserveStatus()
+    expect(status.frozen).to.equal(true)
+    expect(status.paused).to.equal(true)
   })
 })
 

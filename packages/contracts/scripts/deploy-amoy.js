@@ -270,11 +270,16 @@ if (rewardPool.toLowerCase() !== rewardPoolRecord.address.toLowerCase()) {
 }
 const earlyExitMarket = await factory.earlyExitMarket();
 const vaultDeployer = await factory.vaultDeployer();
+const protocolVersion = await factory.PROTOCOL_VERSION();
+const deploymentId = await factory.deploymentId();
 const timestamp = new Date().toISOString();
 const manifest = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   network: "polygon-amoy",
   chainId: CHAIN_ID,
+  protocolVersion,
+  deploymentId,
+  deploymentBlock: factoryRecord.blockNumber,
   explorer: "https://amoy.polygonscan.com",
   gitCommit: commit,
   deploymentTimestamp: timestamp,
@@ -330,6 +335,7 @@ await writeFile(path.join(outputDirectory, "latest.json"), contents);
 
 console.log(`Amoy deployment recorded as ${version}.`);
 console.log(`VaultFactory: ${factoryRecord.address}`);
+console.log(`Deployment ID: ${deploymentId}`);
 console.log(`SafetyController: ${safetyRecord.address} (TEST-ONLY authority)`);
 console.log(
   `Explorer: https://amoy.polygonscan.com/address/${factoryRecord.address}`

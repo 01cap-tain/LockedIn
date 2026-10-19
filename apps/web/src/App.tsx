@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   acceptGroupInvitation,
@@ -28,6 +28,7 @@ import {
   revokeGroupExitApproval,
   withdrawEmergency,
   withdrawLocked,
+  verifyDeployment,
   type ActivityItem,
   type CompletedTrade,
   type CreateVaultInput,
@@ -35,6 +36,7 @@ import {
   type GroupExitRequestSnapshot,
   type VaultSnapshot,
   type VaultSummary,
+  type DeploymentVerification,
 } from "./lib/contracts";
 import {
   connectEvmWallet,
@@ -50,7 +52,7 @@ import {
   type WalletConnection,
 } from "./lib/nimiq";
 
-type AppRoute = "vaults" | "position" | "market" | "activity" | "wallet";
+type AppRoute = "vaults" | "position" | "market" | "rewards" | "activity" | "wallet";
 type NimiqState =
   | { status: "idle" | "connecting" }
   | { status: "connected"; wallet: WalletConnection }
@@ -62,6 +64,10 @@ type EvmState =
 type TransactionState =
   | { status: "idle" }
   | { status: "pending" | "success" | "error"; message: string };
+type DeploymentState =
+  | { status: "idle" | "checking" }
+  | { status: "valid"; value: DeploymentVerification }
+  | { status: "error"; message: string };
 type ListingFilter = "all" | "personal" | "group" | "mine";
 type MarketView = "listings" | "recent";
 type HistoryView = "trades" | "events";
@@ -70,9 +76,25 @@ const routes: Array<{ id: AppRoute; label: string }> = [
   { id: "vaults", label: "Create" },
   { id: "position", label: "My vaults" },
   { id: "market", label: "Early exit" },
+  { id: "rewards", label: "Rewards" },
   { id: "activity", label: "History" },
   { id: "wallet", label: "Wallet" },
 ];
+
+// These screens are deliberately separate chunks: market and history reads can
+// be RPC-heavy, and group management is unnecessary for personal vaults.
+const MarketRoute = lazy(() =>
+  import("./routes/MarketRoute").then((module) => ({ default: module.MarketRoute }))
+);
+const ActivityRoute = lazy(() =>
+  import("./routes/ActivityRoute").then((module) => ({ default: module.ActivityRoute }))
+);
+const RewardsRoute = lazy(() =>
+  import("./routes/RewardsRoute").then((module) => ({ default: module.RewardsRoute }))
+);
+const GroupManagementRoute = lazy(() =>
+  import("./routes/GroupManagementRoute").then((module) => ({ default: module.GroupManagementRoute }))
+);
 
 function routeFromHash(): AppRoute {
   const value = window.location.hash.replace(/^#\/?/, "");
@@ -119,6 +141,9 @@ export function App() {
   const [transaction, setTransaction] = useState<TransactionState>({
     status: "idle",
   });
+  const [deployment, setDeployment] = useState<DeploymentState>({
+    status: "idle",
+  });
   const [mode, setMode] = useState<"personal" | "group">("personal");
   const [yieldMode, setYieldMode] = useState<"safe" | "earn">("safe");
   const [earnRiskAccepted, setEarnRiskAccepted] = useState(false);
@@ -155,7 +180,17 @@ export function App() {
     (member) => member.member.toLowerCase() === connectedAddress
   );
   const actionsDisabled =
-    !deploymentReady || !evmSession || transaction.status === "pending";
+    !deploymentReady ||
+    !evmSession ||
+    deployment.status !== "valid" ||
+    transaction.status === "pending";
+  // A safety pause blocks only risk-increasing operations. Withdrawals,
+  // cancellations and already-authorized exits intentionally remain usable.
+  const riskActionsDisabled =
+    actionsDisabled ||
+    (deployment.status === "valid" && deployment.value.paused);
+  const deploymentBlocked =
+    !deploymentReady || deployment.status === "error";
   const progress = snapshot
     ? Math.min(
         100,
@@ -285,6 +320,7 @@ export function App() {
   async function connectEvm(developmentAccountIndex?: number): Promise<void> {
     clearPortfolio();
     setEvm({ status: "connecting" });
+    setDeployment({ status: deploymentReady ? "checking" : "idle" });
     try {
       const session = await connectEvmWallet({
         // Supplying an index is an explicit local-only action. Production
@@ -302,12 +338,18 @@ export function App() {
         allowDevelopmentFallback: false,
         forceDevelopmentFallback: developmentAccountIndex !== undefined,
       });
+      if (deploymentReady) {
+        const verified = await verifyDeployment(session.signer);
+        setDeployment({ status: "valid", value: verified });
+      }
       setEvm({ status: "connected", session });
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "EVM connection failed.";
+      setDeployment({ status: "error", message });
       setEvm({
         status: "error",
-        message:
-          error instanceof Error ? error.message : "EVM connection failed.",
+        message,
       });
     }
   }
@@ -579,14 +621,41 @@ export function App() {
       </div>
       {!deploymentReady && (
         <div className="notice" role="status">
-          <strong>Amoy deployment pending.</strong> Wallet connection is
-          available, but contract actions remain disabled until{" "}
-          <code>npm run contracts:deploy:amoy</code> creates the deployment
-          manifest. Restart this server after deployment.
+          <strong>Deployment verification unavailable.</strong>{" "}
+          {import.meta.env.VITE_DEPLOYMENT_BLOCK_REASON ??
+            "Wallet connection is available, but contract actions remain disabled until a current deployment manifest is installed."}
+        </div>
+      )}
+      {deployment.status === "error" && (
+        <div className="notice error" role="alert">
+          <strong>Contract deployment mismatch.</strong>
+          <span>{deployment.message}</span>
+        </div>
+      )}
+      {deployment.status === "valid" && deployment.value.paused && (
+        <div className="notice error" role="alert">
+          <strong>Protocol safety pause is active.</strong>
+          <span>
+            New vaults, deposits and market purchases are blocked. Principal
+            withdrawals, listing cancellation and safe exit completion remain available.
+          </span>
         </div>
       )}
 
-      {route === "vaults" && (
+      {deploymentBlocked && route !== "wallet" && (
+        <section className="route-page">
+          <article className="panel narrow-panel empty-state" role="alert">
+            <h2>Contract actions are blocked</h2>
+            <p>
+              Connect to the deployment recorded by the current manifest. No
+              transaction will be prepared while its chain or contract identity is stale.
+            </p>
+            <a className="primary" href="#/wallet">Review wallet connection</a>
+          </article>
+        </section>
+      )}
+
+      {!deploymentBlocked && route === "vaults" && (
         <section className="route-page">
           <article className="panel narrow-panel">
             <div className="panel-heading">
@@ -718,7 +787,7 @@ export function App() {
               <button
                 className="primary full-width"
                 disabled={
-                  actionsDisabled || (yieldMode === "earn" && !earnRiskAccepted)
+                  riskActionsDisabled || (yieldMode === "earn" && !earnRiskAccepted)
                 }
                 type="submit"
               >
@@ -729,7 +798,7 @@ export function App() {
         </section>
       )}
 
-      {route === "position" && (
+      {!deploymentBlocked && route === "position" && (
         <section className="route-page dashboard-grid">
           <aside className="panel vault-sidebar">
             <div className="section-title">
@@ -829,9 +898,11 @@ export function App() {
                   </span>
                 </div>
                 {snapshot.isGroup && snapshot.groupLifecycle !== "active" && (
+                  <Suspense fallback={<RouteLoading label="Loading group controls" />}>
+                  <GroupManagementRoute>
                   <GroupInvitationPanel
                     clock={clock}
-                    disabled={actionsDisabled}
+                    disabled={riskActionsDisabled}
                     snapshot={snapshot}
                     onAccept={() =>
                       void transactAndRefresh(
@@ -867,6 +938,8 @@ export function App() {
                       )
                     }
                   />
+                  </GroupManagementRoute>
+                  </Suspense>
                 )}
                 {snapshot.isOriginalMember && snapshot.ownsLockedPosition && (
                   <>
@@ -986,6 +1059,26 @@ export function App() {
                     </span>
                   </div>
                 )}
+                {snapshot.ownsLockedPosition && snapshot.aaveSafety && (
+                  <div className={snapshot.aaveSafety.withdrawalTemporarilyUnavailable ? "notice error" : "notice"}>
+                    <strong>Aave reserve status</strong>
+                    <span>
+                      {snapshot.aaveSafety.active ? "Active" : "Inactive"} ·{" "}
+                      {snapshot.aaveSafety.frozen ? "Frozen" : "Not frozen"} ·{" "}
+                      {snapshot.aaveSafety.paused ? "Paused" : "Not paused"}.{" "}
+                      Available withdrawal liquidity: {snapshot.aaveSafety.availableLiquidity} USDT.
+                      Supply: {snapshot.aaveSafety.currentSupply} USDT
+                      {snapshot.aaveSafety.supplyCap === "0"
+                        ? " with no configured cap."
+                        : ` against a ${snapshot.aaveSafety.supplyCap} USDT cap.`}
+                    </span>
+                    <small>
+                      Variable APY is not guaranteed. Earn mode carries Aave smart-contract,
+                      USDT stablecoin and temporary liquidity risk. LockedIn Circle never
+                      borrows against your funds and never enables them as collateral.
+                    </small>
+                  </div>
+                )}
                 {snapshot.ownsLockedPosition && (
                   <div className="maturity-action">
                   <div>
@@ -1051,7 +1144,7 @@ export function App() {
                         value={depositAmount}
                       />
                     </label>
-                    <button className="primary" disabled={actionsDisabled}>
+                    <button className="primary" disabled={riskActionsDisabled}>
                       Deposit
                     </button>
                   </form>
@@ -1096,6 +1189,8 @@ export function App() {
                   snapshot.groupLifecycle === "active" &&
                   snapshot.ownsLockedPosition &&
                   connectedMember && (
+                  <Suspense fallback={<RouteLoading label="Loading group exit controls" />}>
+                  <GroupManagementRoute>
                   <GroupExitPanel
                     activeMemberCount={
                       snapshot.members.filter(
@@ -1185,6 +1280,8 @@ export function App() {
                       )
                     }
                   />
+                  </GroupManagementRoute>
+                  </Suspense>
                 )}
                 {snapshot.isGroup && snapshot.ownsLockedPosition && (
                   <div className="members">
@@ -1268,8 +1365,9 @@ export function App() {
         </section>
       )}
 
-      {route === "market" && (
-        <section className="route-page">
+      {!deploymentBlocked && route === "market" && (
+        <Suspense fallback={<RouteLoading label="Loading market" />}>
+        <MarketRoute>
           <div className="panel view-switch" aria-label="Market view">
             <button
               className={marketView === "listings" ? "active" : ""}
@@ -1296,7 +1394,7 @@ export function App() {
               </div>
               <button
                 className="icon-button"
-                disabled={actionsDisabled}
+                disabled={riskActionsDisabled}
                 onClick={() => void refreshPortfolio()}
                 title="Refresh"
               >
@@ -1368,7 +1466,7 @@ export function App() {
                 claim={projectedSaverPayout}
                 fee={projectedFee}
                 minimumPayout={minimumPayout}
-                disabled={actionsDisabled}
+                disabled={riskActionsDisabled}
                 onExpiration={setExitExpiration}
                 onMinimumPayout={setMinimumPayout}
                 onSubmit={() =>
@@ -1394,6 +1492,7 @@ export function App() {
                 entry={exitState!}
                 connectedAddress={connectedAddress}
                 disabled={actionsDisabled}
+                fundDisabled={riskActionsDisabled}
                 onCancel={() =>
                   void transactAndRefresh(
                     "Cancelling listing…",
@@ -1454,11 +1553,13 @@ export function App() {
               />
             </article>
           )}
-        </section>
+        </MarketRoute>
+        </Suspense>
       )}
 
-      {route === "activity" && (
-        <section className="route-page">
+      {!deploymentBlocked && route === "activity" && (
+        <Suspense fallback={<RouteLoading label="Loading history" />}>
+        <ActivityRoute>
           <div className="panel view-switch" aria-label="History view">
             <button
               className={historyView === "trades" ? "active" : ""}
@@ -1597,7 +1698,14 @@ export function App() {
             )}
           </article>
           )}
-        </section>
+        </ActivityRoute>
+        </Suspense>
+      )}
+
+      {!deploymentBlocked && route === "rewards" && (
+        <Suspense fallback={<RouteLoading label="Loading rewards" />}>
+          <RewardsRoute />
+        </Suspense>
       )}
 
       {route === "wallet" && (
@@ -1701,11 +1809,23 @@ export function App() {
         >
           <span>{transaction.status}</span>
           <p>{transaction.message}</p>
+          {transaction.status === "error" && evmSession && deployment.status === "valid" && (
+            <button
+              className="secondary compact"
+              onClick={() => void refreshPortfolio()}
+              type="button"
+            >
+              Retry chain reads
+            </button>
+          )}
         </div>
       )}
       <footer>
-        Local/test deployment · Mock USDT · Mock yield adapter · Not Aave · No
-        guardian recovery · Unaudited
+        {networkName} · {mockTokenFaucetEnabled ? "Mock USDT" : "USDT"} ·{" "}
+        {usesMockYieldAdapter
+          ? "Mock yield adapter · Not Aave"
+          : "Aave V3 Earn adapter"}{" "}
+        · No guardian recovery · Unaudited
       </footer>
     </main>
   );
@@ -1867,6 +1987,15 @@ function WalletChip({ label, address }: { label: string; address: string }) {
     </div>
   );
 }
+
+function RouteLoading({ label }: { label: string }) {
+  return (
+    <section className="route-page" aria-busy="true" aria-live="polite">
+      <div className="panel empty-state">{label}…</div>
+    </section>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
@@ -2293,12 +2422,14 @@ function ListingDetail({
   entry,
   connectedAddress,
   disabled,
+  fundDisabled,
   onCancel,
   onFund,
 }: {
   entry: ExitListingSnapshot;
   connectedAddress?: string;
   disabled: boolean;
+  fundDisabled: boolean;
   onCancel: () => void;
   onFund: () => void;
 }) {
@@ -2390,7 +2521,7 @@ function ListingDetail({
         {!isSeller && listing.active && (
           <button
             className="primary"
-            disabled={disabled || belowFloor}
+            disabled={fundDisabled || belowFloor}
             onClick={onFund}
           >
             Fund at system price

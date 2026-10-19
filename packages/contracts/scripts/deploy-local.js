@@ -68,6 +68,8 @@ const rewardPool = await factory.rewardPool()
 const earlyExitMarket = await factory.earlyExitMarket()
 const vaultDeployer = await factory.vaultDeployer()
 const safetyController = await safetyControllerContract.getAddress()
+const protocolVersion = await factory.PROTOCOL_VERSION()
+const deploymentId = await factory.deploymentId()
 const starterBalance = 1_000_000n * 10n ** 6n
 await (await token.mint(await deployer.getAddress(), starterBalance)).wait()
 const tokenRecord = await deploymentRecord(token)
@@ -97,9 +99,12 @@ await writeFile(
   path.join(outputDirectory, 'latest.json'),
   `${JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 5,
       network: 'hardhat-localhost',
       chainId: 31_337,
+      protocolVersion,
+      deploymentId,
+      deploymentBlock: factoryRecord.blockNumber,
       explorer: 'http://127.0.0.1:8545',
       deploymentTimestamp: new Date().toISOString(),
       contracts: {

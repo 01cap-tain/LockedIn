@@ -15,6 +15,8 @@
     "smoke:local": "hardhat run scripts/smoke-local.js --network localhost --no-compile",
     "deploy:amoy": "hardhat run scripts/deploy-amoy.js --network amoy --no-compile",
     "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile"
+    ,"inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile"
+    ,"prepare:polygon": "node scripts/prepare-polygon-mainnet.js"
   },
   "dependencies": {
     "@aave-dao/aave-address-book": "^4.74.1",

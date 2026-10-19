@@ -17,6 +17,8 @@
     "contracts:smoke": "npm run smoke:local -w @lockedin-circle/contracts",
     "contracts:deploy:amoy": "npm run deploy:amoy -w @lockedin-circle/contracts",
     "contracts:verify:amoy": "npm run verify:amoy -w @lockedin-circle/contracts",
+    "contracts:inspect:amoy": "npm run inspect:amoy -w @lockedin-circle/contracts",
+    "contracts:prepare:polygon": "npm run prepare:polygon -w @lockedin-circle/contracts",
     "contracts:test:amoy": "npm run test:amoy -w @lockedin-circle/contracts",
     "contracts:test:amoy:persistence": "npm run test:amoy:persistence -w @lockedin-circle/contracts",
     "dev": "npm run dev -w @lockedin-circle/web",

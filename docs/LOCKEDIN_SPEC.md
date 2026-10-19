@@ -116,7 +116,13 @@ An early-exit sale transfers the fixed share balance and all future yield or los
 
 At maturity, the adapter redeems the position shares. The vault clears shares and withdrawal state only after receiving the exact USDT amount. If Aave reverts or lacks liquidity, the transaction reverts, the position remains intact, and the owner may retry. Phase 2B has no custom withdrawal queue.
 
-The displayed Aave liquidity rate is variable and is never represented as guaranteed interest or capital safety.
+The displayed Aave liquidity rate is variable and is never represented as guaranteed interest or capital safety. For the production adapter, the client also reads reserve active/frozen/paused flags, the configured supply cap, current aToken supply and immediately available underlying liquidity. This status is advisory and cannot override Aave. An inactive or paused reserve, or liquidity below the connected position's current value, is shown as temporarily unavailable. Earn disclosures name smart-contract, stablecoin and liquidity risk; the adapter never borrows and disables collateral use after every supply.
+
+## Deployment identity
+
+Every factory rejects construction unless `block.chainid` equals its immutable configured chain ID. It exposes a protocol version and `deploymentId = keccak256(abi.encode(version, chainId, factory, asset, market, rewardPool, safetyController))`. A versioned manifest records those values and the factory deployment block. Before enabling writes, the client verifies the wallet chain, factory bytecode, protocol version, deployment ID, accepted token, market, reward pool and safety controller against that manifest. Any mismatch is a blocking error rather than a warning. The client reads the safety controller independently so a pause blocks risk-increasing actions without hiding withdrawals or cancellation.
+
+The manifest is public metadata, not authority. It never contains RPC credentials, private keys or mnemonics. Production Polygon preparation is read-only until reviewed safety-multisig, reserve, treasury, exposure and reward-policy values are explicitly supplied; no mainnet deployment is part of this phase.
 
 ## Cooperative group exits
 
@@ -244,3 +250,4 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - The factory accepts only tokens reporting six decimals. Exact balance-delta checks reject fee-on-transfer tokens.
 - Negative rebases are unsupported. Solvency checks block later outflows after an external balance reduction but cannot restore removed tokens; production requires reviewed non-rebasing USDT.
 - Contracts are unaudited and intended for local Hardhat or explicitly configured test environments only.
+- A deployment is usable only when its on-chain identity matches the versioned manifest exactly.

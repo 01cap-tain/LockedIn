@@ -52,8 +52,17 @@ Copy `.env.amoy.example` to the ignored `.env.amoy`, fill it with disposable Amo
 npm run contracts:deploy:amoy
 npm run contracts:test:amoy
 npm run contracts:test:amoy:persistence
+npm run contracts:inspect:amoy
 npm run dev:amoy
 ```
+
+The browser verifies the connected chain and the manifest's complete deployment
+identity before enabling contract writes. A mismatched or stale manifest is a
+hard blocker. Polygon-mainnet preparation is read-only: copy
+`.env.polygon.example`, provide reviewed public governance/cap values and an RPC
+in the environment, then run `npm run contracts:prepare:polygon`. That command
+validates the maintained Aave address-book entries and never owns a signer or
+broadcasts a transaction.
 
 ## Workspace
 

@@ -17,6 +17,8 @@ import {SafetyController} from "./SafetyController.sol";
 /// @notice Deploys immutable Safe or Earn savings vaults and records membership indexes.
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
+    /// @notice Human-readable release family included in the immutable deployment fingerprint.
+    string public constant PROTOCOL_VERSION = "lockedin-circle/0.5.0";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 
@@ -30,6 +32,7 @@ contract VaultFactory {
     IPool public immutable aavePool;
     IAToken public immutable aToken;
     uint256 public immutable deploymentChainId;
+    bytes32 public immutable deploymentId;
     IYieldAdapterFactory public immutable testYieldAdapterFactory;
     SavingsVaultDeployer public immutable vaultDeployer;
     SafetyController public immutable safetyController;
@@ -60,6 +63,7 @@ contract VaultFactory {
     ) {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
+            block.chainid != deploymentChainId_ ||
             riskReserve_ == address(0) || maintenanceTreasury_ == address(0) ||
             riskReserve_ == maintenanceTreasury_ || riskReserve_ == address(asset_) ||
             maintenanceTreasury_ == address(asset_) || riskReserve_ == address(this) ||
@@ -101,6 +105,20 @@ contract VaultFactory {
             riskReserve_,
             maintenanceTreasury_,
             safetyController
+        );
+        // This fingerprint binds the frontend manifest to this exact protocol graph.
+        // A contract at the right address on the wrong chain, or a manifest mixing
+        // deployments, therefore cannot silently enable transaction controls.
+        deploymentId = keccak256(
+            abi.encode(
+                PROTOCOL_VERSION,
+                block.chainid,
+                address(this),
+                address(asset_),
+                address(earlyExitMarket),
+                address(rewardPool_),
+                address(safetyController_)
+            )
         );
     }
 

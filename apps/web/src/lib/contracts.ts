@@ -17,6 +17,9 @@ import {
 // Solidity, while this module only prepares inputs and presents chain results.
 
 const factoryAbi = [
+  "function PROTOCOL_VERSION() view returns (string)",
+  "function deploymentId() view returns (bytes32)",
+  "function deploymentChainId() view returns (uint256)",
   "function asset() view returns (address)",
   "function createPersonalVault(uint256 target,uint64 maturity,uint16 emergencyBps,uint8 mode) returns (address)",
   "function createGroupVault(address[] members,uint256[] targets,uint16[] emergencyBps,uint64 maturity,uint8 mode) returns (address)",
@@ -24,7 +27,17 @@ const factoryAbi = [
   "function vaultAt(uint256 index) view returns (address)",
   "function vaultsOf(address member) view returns (address[])",
   "function earlyExitMarket() view returns (address)",
+  "function rewardPool() view returns (address)",
+  "function safetyController() view returns (address)",
   "event VaultCreated(address indexed vault,address indexed creator,bool indexed isGroup,uint8 mode,address yieldAdapter,uint64 maturity)",
+] as const;
+
+const safetyControllerAbi = [
+  "function paused() view returns (bool)",
+] as const;
+
+const aaveAdapterAbi = [
+  "function reserveStatus() view returns (bool active,bool frozen,bool paused,uint256 supplyCap,uint256 currentSupply,uint256 availableLiquidity)",
 ] as const;
 
 const vaultAbi = [
@@ -144,6 +157,7 @@ export interface VaultSnapshot {
   vaultMode: "safe" | "earn";
   yieldAdapter: string;
   variableApyPercent: number | null;
+  aaveSafety: AaveSafetySnapshot | null;
   emergencyPercent: number;
   goalComplete: boolean;
   lockedWithdrawn: boolean;
@@ -161,6 +175,54 @@ export interface VaultSnapshot {
   connectedInvitationAccepted: boolean;
   connectedInvitationDeclined: boolean;
   members: VaultMemberSnapshot[];
+}
+
+export interface AaveSafetySnapshot {
+  active: boolean;
+  frozen: boolean;
+  paused: boolean;
+  supplyCap: string;
+  currentSupply: string;
+  availableLiquidity: string;
+  withdrawalTemporarilyUnavailable: boolean;
+}
+
+export interface DeploymentVerification {
+  protocolVersion: string;
+  deploymentId: string;
+  chainId: bigint;
+  asset: string;
+  market: string;
+  rewardPool: string;
+  safetyController: string;
+  paused: boolean;
+}
+
+export type ExpectedDeployment = Partial<
+  Omit<DeploymentVerification, "paused" | "chainId">
+> & { chainId?: bigint };
+
+/** Pure comparison used by both connection gating and unit tests. */
+export function assertDeploymentMatches(
+  actual: Omit<DeploymentVerification, "paused">,
+  expected: ExpectedDeployment
+): void {
+  const mismatch = (label: string, value: string, wanted?: string) => {
+    if (wanted && value.toLowerCase() !== wanted.toLowerCase())
+      throw new Error(
+        `Deployment mismatch: ${label} is ${value}, expected ${wanted}. Contract actions remain disabled.`
+      );
+  };
+  if (expected.chainId !== undefined && actual.chainId !== expected.chainId)
+    throw new Error(
+      `Deployment mismatch: wallet chain ${actual.chainId} does not match manifest chain ${expected.chainId}.`
+    );
+  mismatch("protocol version", actual.protocolVersion, expected.protocolVersion);
+  mismatch("deployment ID", actual.deploymentId, expected.deploymentId);
+  mismatch("asset", actual.asset, expected.asset);
+  mismatch("market", actual.market, expected.market);
+  mismatch("reward pool", actual.rewardPool, expected.rewardPool);
+  mismatch("safety controller", actual.safetyController, expected.safetyController);
 }
 
 export interface VaultMemberSnapshot {
@@ -294,6 +356,77 @@ async function assertFactoryDeployment(signer: Signer): Promise<void> {
       "No VaultFactory contract exists at the configured address on this network. Redeploy it and restart the app."
     );
   }
+}
+
+/**
+ * Verifies the wallet against the versioned deployment manifest before the UI
+ * enables writes. This prevents a valid-looking address on the wrong chain, or
+ * a mixed set of contracts, from being treated as the intended protocol.
+ */
+export async function verifyDeployment(
+  signer: Signer
+): Promise<DeploymentVerification> {
+  await assertFactoryDeployment(signer);
+  const provider = signer.provider;
+  if (!provider) throw new Error("The EVM signer has no readable provider.");
+  const factory = factoryFor(signer);
+  const network = await provider.getNetwork();
+  const [protocolVersion, deploymentId, chainId, asset, market, rewardPool, safetyController] =
+    await Promise.all([
+      factory.getFunction("PROTOCOL_VERSION")(),
+      factory.getFunction("deploymentId")(),
+      factory.getFunction("deploymentChainId")(),
+      factory.getFunction("asset")(),
+      factory.getFunction("earlyExitMarket")(),
+      factory.getFunction("rewardPool")(),
+      factory.getFunction("safetyController")(),
+    ]);
+  const expected = {
+    chainId: import.meta.env.VITE_EXPECTED_CHAIN_ID,
+    protocolVersion: import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION,
+    deploymentId: import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID,
+    asset: import.meta.env.VITE_EXPECTED_ASSET_ADDRESS,
+    market: import.meta.env.VITE_EXPECTED_MARKET_ADDRESS,
+    rewardPool: import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS,
+    safetyController: import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS,
+  };
+  if (network.chainId !== BigInt(chainId))
+    throw new Error(`Deployment mismatch: wallet chain ${network.chainId} does not match factory chain ${chainId}.`);
+  assertDeploymentMatches(
+    {
+      protocolVersion: String(protocolVersion),
+      deploymentId: String(deploymentId),
+      chainId: network.chainId,
+      asset: String(asset),
+      market: String(market),
+      rewardPool: String(rewardPool),
+      safetyController: String(safetyController),
+    },
+    {
+      chainId: expected.chainId ? BigInt(expected.chainId) : undefined,
+      protocolVersion: expected.protocolVersion,
+      deploymentId: expected.deploymentId,
+      asset: expected.asset,
+      market: expected.market,
+      rewardPool: expected.rewardPool,
+      safetyController: expected.safetyController,
+    }
+  );
+  for (const [label, address] of [["asset", asset], ["market", market], ["reward pool", rewardPool], ["safety controller", safetyController]] as const) {
+    if ((await provider.getCode(String(address))) === "0x")
+      throw new Error(`Deployment mismatch: ${label} has no contract bytecode.`);
+  }
+  const safety = new Contract(String(safetyController), safetyControllerAbi, signer);
+  return {
+    protocolVersion: String(protocolVersion),
+    deploymentId: String(deploymentId),
+    chainId: BigInt(chainId),
+    asset: getAddress(String(asset)),
+    market: getAddress(String(market)),
+    rewardPool: getAddress(String(rewardPool)),
+    safetyController: getAddress(String(safetyController)),
+    paused: Boolean(await safety.getFunction("paused")()),
+  };
 }
 
 async function marketFor(signer: Signer): Promise<Contract> {
@@ -543,6 +676,37 @@ export async function loadVault(
       };
     })
   );
+  let aaveSafety: AaveSafetySnapshot | null = null;
+  if (
+    Number(mode) === 1 &&
+    import.meta.env.VITE_YIELD_ADAPTER_KIND !== "MockYieldAdapter"
+  ) {
+    try {
+      const adapter = new Contract(
+        String(yieldAdapter),
+        aaveAdapterAbi,
+        signer
+      );
+      const reserve = await adapter.getFunction("reserveStatus")();
+      const availableLiquidity = BigInt(reserve.availableLiquidity);
+      aaveSafety = {
+        active: Boolean(reserve.active),
+        frozen: Boolean(reserve.frozen),
+        paused: Boolean(reserve.paused),
+        supplyCap: BigInt(reserve.supplyCap).toString(),
+        currentSupply: formatUnits(reserve.currentSupply, USDT_DECIMALS),
+        availableLiquidity: formatUnits(availableLiquidity, USDT_DECIMALS),
+        withdrawalTemporarilyUnavailable:
+          !reserve.active ||
+          reserve.paused ||
+          availableLiquidity < BigInt(currentValue),
+      };
+    } catch {
+      // A mock adapter intentionally does not pretend to expose Aave reserve
+      // health. Unknown live status stays explicit rather than being shown safe.
+      aaveSafety = null;
+    }
+  }
   return {
     address: vaultAddress,
     signerAddress,
@@ -561,6 +725,7 @@ export async function loadVault(
     vaultMode: Number(mode) === 1 ? "earn" : "safe",
     yieldAdapter: getAddress(yieldAdapter),
     variableApyPercent: Number(mode) === 1 ? rayRateToApy(liquidityRate) : null,
+    aaveSafety,
     emergencyPercent: Number(stored.emergencyBps) / 100,
     goalComplete: completed,
     lockedWithdrawn: stored.lockedWithdrawn,

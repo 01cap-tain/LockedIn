@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
+import {ReserveConfiguration} from "@aave/core-v3/contracts/protocol/libraries/configuration/ReserveConfiguration.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -53,6 +54,7 @@ contract WrongDecimalsAToken is ERC20 {
 
 contract MockAavePool {
     using SafeERC20 for IERC20;
+    using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
 
     IERC20 public immutable asset;
     MockAToken public immutable aToken;
@@ -61,6 +63,7 @@ contract MockAavePool {
     bool public failWithdrawals;
     uint128 public liquidityRate;
     mapping(address user => bool enabled) public collateralEnabled;
+    DataTypes.ReserveConfigurationMap private _configuration;
 
     error InvalidAsset();
     error ReservePaused();
@@ -70,10 +73,34 @@ contract MockAavePool {
     constructor(IERC20 asset_, MockAToken aToken_) {
         asset = asset_;
         aToken = aToken_;
+        DataTypes.ReserveConfigurationMap memory configuration;
+        configuration.setActive(true);
+        configuration.setSupplyCap(1_000_000);
+        _configuration = configuration;
     }
 
-    function setPaused(bool value) external { paused = value; }
-    function setFrozen(bool value) external { frozen = value; }
+    function setPaused(bool value) external {
+        paused = value;
+        DataTypes.ReserveConfigurationMap memory configuration = _configuration;
+        configuration.setPaused(value);
+        _configuration = configuration;
+    }
+    function setFrozen(bool value) external {
+        frozen = value;
+        DataTypes.ReserveConfigurationMap memory configuration = _configuration;
+        configuration.setFrozen(value);
+        _configuration = configuration;
+    }
+    function setActive(bool value) external {
+        DataTypes.ReserveConfigurationMap memory configuration = _configuration;
+        configuration.setActive(value);
+        _configuration = configuration;
+    }
+    function setSupplyCap(uint256 value) external {
+        DataTypes.ReserveConfigurationMap memory configuration = _configuration;
+        configuration.setSupplyCap(value);
+        _configuration = configuration;
+    }
     function setFailWithdrawals(bool value) external { failWithdrawals = value; }
     function setLiquidityRate(uint128 value) external { liquidityRate = value; }
 
@@ -103,5 +130,6 @@ contract MockAavePool {
         if (suppliedAsset != address(asset)) revert InvalidAsset();
         reserve.currentLiquidityRate = liquidityRate;
         reserve.aTokenAddress = address(aToken);
+        reserve.configuration = _configuration;
     }
 }
