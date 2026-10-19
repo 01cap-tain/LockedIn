@@ -17,10 +17,10 @@ const { ethers } = await network.create('localhost')
 const [creator, memberTwo, memberThree, memberFour, memberFive] = await ethers.getSigners()
 const members = [creator, memberTwo, memberThree, memberFour, memberFive]
 const addresses = await Promise.all(members.map((member) => member.getAddress()))
-const token = await ethers.getContractAt('MockUSDT', deployment.contracts.mockUsdt)
+const token = await ethers.getContractAt('MockUSDT', deployment.contracts.mockUsdt.address)
 const factory = await ethers.getContractAt(
   'VaultFactory',
-  deployment.contracts.vaultFactory,
+  deployment.contracts.vaultFactory.address,
   creator
 )
 const latestBlock = await ethers.provider.getBlock('latest')

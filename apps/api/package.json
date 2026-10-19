@@ -1,0 +1,26 @@
+{
+  "name": "@lockedin-circle/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "migrate": "tsx src/migrate.ts",
+    "index": "tsx src/run-indexer.ts",
+    "test": "node --env-file-if-exists=../../.env ../../node_modules/vitest/vitest.mjs run src --pool=threads --maxWorkers=1",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "ethers": "6.17.0",
+    "fastify": "^5.12.7",
+    "pg": "^8.23.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15"
+  }
+}

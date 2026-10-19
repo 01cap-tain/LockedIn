@@ -21,6 +21,9 @@
     "contracts:test:amoy:persistence": "npm run test:amoy:persistence -w @lockedin-circle/contracts",
     "dev": "npm run dev -w @lockedin-circle/web",
     "dev:amoy": "npm run dev:amoy -w @lockedin-circle/web",
+    "api:dev": "npm run dev -w @lockedin-circle/api",
+    "api:migrate": "npm run migrate -w @lockedin-circle/api",
+    "api:index": "npm run index -w @lockedin-circle/api",
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"

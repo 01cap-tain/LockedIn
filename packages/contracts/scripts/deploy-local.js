@@ -6,6 +6,17 @@ import { fileURLToPath } from 'node:url'
 const { ethers } = await network.create('localhost')
 const [deployer, riskReserve, maintenanceTreasury] = await ethers.getSigners()
 
+async function deploymentRecord(contract) {
+  const transaction = contract.deploymentTransaction()
+  if (!transaction) throw new Error('Missing deployment transaction.')
+  const receipt = await transaction.wait()
+  return {
+    address: await contract.getAddress(),
+    transactionHash: transaction.hash,
+    blockNumber: receipt.blockNumber,
+  }
+}
+
 const token = await ethers.deployContract('MockUSDT')
 await token.waitForDeployment()
 const aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
@@ -59,6 +70,10 @@ const vaultDeployer = await factory.vaultDeployer()
 const safetyController = await safetyControllerContract.getAddress()
 const starterBalance = 1_000_000n * 10n ** 6n
 await (await token.mint(await deployer.getAddress(), starterBalance)).wait()
+const tokenRecord = await deploymentRecord(token)
+const factoryRecord = await deploymentRecord(factory)
+const rewardPoolRecord = await deploymentRecord(rewardPoolContract)
+const safetyControllerRecord = await deploymentRecord(safetyControllerContract)
 
 console.log(`Deployer: ${await deployer.getAddress()}`)
 console.log(`Mock USDT: ${await token.getAddress()}`)
@@ -82,14 +97,26 @@ await writeFile(
   path.join(outputDirectory, 'latest.json'),
   `${JSON.stringify(
     {
+      schemaVersion: 1,
+      network: 'hardhat-localhost',
       chainId: 31_337,
+      explorer: 'http://127.0.0.1:8545',
+      deploymentTimestamp: new Date().toISOString(),
       contracts: {
-        mockUsdt: await token.getAddress(),
-        vaultFactory: await factory.getAddress(),
-        rewardPool,
-        earlyExitMarket,
-        savingsVaultDeployer: vaultDeployer,
-        safetyController,
+        mockUsdt: tokenRecord,
+        vaultFactory: factoryRecord,
+        rewardPool: rewardPoolRecord,
+        earlyExitMarket: {
+          address: earlyExitMarket,
+          transactionHash: factoryRecord.transactionHash,
+          blockNumber: factoryRecord.blockNumber,
+        },
+        savingsVaultDeployer: {
+          address: vaultDeployer,
+          transactionHash: factoryRecord.transactionHash,
+          blockNumber: factoryRecord.blockNumber,
+        },
+        safetyController: safetyControllerRecord,
       },
       rewardConfiguration: {
         epochSeconds: 7 * 24 * 60 * 60,

@@ -61,6 +61,7 @@ npm run dev:amoy
 - `packages/contracts`: Hardhat 3, Solidity contracts, adapters, mocks and tests
 - `docs/LOCKEDIN_SPEC.md`: workflow, permissions and security invariants
 - `docs/AMOY_TESTNET.md`: credential-safe Amoy deployment and validation runbook
+- `docs/INDEXER.md`: read-only PostgreSQL indexer, APIs and wallet-authenticated notifications
 
 ## Current limits
 
@@ -69,5 +70,5 @@ npm run dev:amoy
 - Early exits are full-position, pre-maturity sales only.
 - Cooperative group exits use a 24-hour window and require unanimous N-1 approval from active members who have each saved at least 25% of their target. Completion still requires completed active-member goals and at least four active members; market exits retain the system discount and fee.
 - Nimiq Pay Amoy support is not officially documented and requires a real-device probe.
-- No guardian recovery, borrowing, mainnet deployment or PostgreSQL indexer exists yet.
+- No guardian recovery, borrowing or mainnet deployment exists. The PostgreSQL service is a read-only event projection and never has financial authority.
 - Contracts remain unaudited.
