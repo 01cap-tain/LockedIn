@@ -29,6 +29,25 @@ The optional Polygon-mainnet fork suite additionally requires `POLYGON_RPC_URL`:
 npm run test:polygon-fork -w @lockedin-circle/contracts
 ```
 
+## NIM funding simulation
+
+Nimiq Pay's documented Mini App interface does not currently expose a general
+NIM/Polygon-USDT swap API. The frontend therefore keeps swap orchestration
+behind a provider-neutral adapter and supplies a deterministic simulator for
+local and Amoy UI testing only. It never moves, mints or reports real assets.
+
+Set these values only in an ignored local/test environment file:
+
+```sh
+VITE_ENABLE_MOCK_SWAPS=true
+VITE_SWAP_ENVIRONMENT=local
+VITE_SWAP_NIMIQ_NETWORK=testnet
+```
+
+The simulator is disabled for mainnet configuration and all production builds.
+See [the feasibility report](docs/NIM_SWAP_FEASIBILITY.md) for the inspected
+official surfaces and the boundary that a future production adapter must meet.
+
 ## Local Hardhat development
 
 Use three terminals from the repository root:

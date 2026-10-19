@@ -855,6 +855,26 @@ export async function loadMockUsdtBalance(signer: Signer): Promise<string> {
   return formatUnits(balance, USDT_DECIMALS);
 }
 
+export async function loadUsdtBalance(signer: Signer): Promise<string> {
+  return formatUnits(await loadUsdtBalanceUnits(signer), USDT_DECIMALS);
+}
+
+/** Returns the connected wallet's vault-asset balance in six-decimal base units. */
+export async function loadUsdtBalanceUnits(signer: Signer): Promise<bigint> {
+  const token = new Contract(
+    await factoryFor(signer).getFunction("asset")(),
+    tokenAbi,
+    signer
+  );
+  const [decimals, balance] = await Promise.all([
+    token.getFunction("decimals")(),
+    token.getFunction("balanceOf")(await signer.getAddress()),
+  ]);
+  if (Number(decimals) !== USDT_DECIMALS)
+    throw new Error("The configured vault asset is not six-decimal USDT-compatible.");
+  return BigInt(balance);
+}
+
 export async function requestMockUsdt(
   signer: Signer,
   value = "250"
@@ -1238,7 +1258,8 @@ export async function createExitListing(
 // independently recalculates and validates all values in the settlement transaction.
 export async function fundExitListing(
   signer: Signer,
-  listingId: bigint
+  listingId: bigint,
+  maximumTotalPayment?: bigint
 ): Promise<void> {
   const market = await marketFor(signer);
   const listing = await market.getFunction("listings")(listingId);
@@ -1252,6 +1273,11 @@ export async function fundExitListing(
     reference.discountBps
   );
   const providerFee: bigint = await market.getFunction("feeFor")(saverPayout);
+  const totalPayment = saverPayout + providerFee;
+  if (!listing.active || Number(listing.expiresAt) * 1_000 <= Date.now())
+    throw new Error("The listing is no longer available. Converted USDT remains in your wallet.");
+  if (maximumTotalPayment !== undefined && totalPayment > maximumTotalPayment)
+    throw new Error("The live listing price increased after the swap. Converted USDT remains in your wallet.");
   const token = new Contract(
     await factoryFor(signer).getFunction("asset")(),
     tokenAbi,
@@ -1261,7 +1287,7 @@ export async function fundExitListing(
   await (
     await token.getFunction("approve")(
       await market.getAddress(),
-      saverPayout + providerFee,
+      totalPayment,
       overrides
     )
   ).wait();

@@ -21,6 +21,8 @@ import {
   loadExitMarket,
   loadGroupExitRequests,
   loadMockUsdtBalance,
+  loadUsdtBalance,
+  loadUsdtBalanceUnits,
   loadVault,
   loadVaultsForSigner,
   requestMockUsdt,
@@ -38,6 +40,10 @@ import {
   type VaultSummary,
   type DeploymentVerification,
 } from "./lib/contracts";
+import { loadNimBalance } from "./lib/nim-balance";
+import { NimSwapFlow } from "./components/NimSwapFlow";
+import { createConfiguredMockSwapAdapter } from "./swap/mock-swap-adapter";
+import { formatAssetAmount, parseAssetAmount } from "./swap/amounts";
 import {
   connectEvmWallet,
   getInjectedEvmProvider,
@@ -169,12 +175,33 @@ export function App() {
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [developmentAccounts, setDevelopmentAccounts] = useState<string[]>([]);
   const [mockTokenBalance, setMockTokenBalance] = useState<string | null>(null);
+  const [nimBalanceLuna, setNimBalanceLuna] = useState<bigint | null>(null);
+  const [depositAsset, setDepositAsset] = useState<"usdt" | "nim">("usdt");
+  const [receiveAsset, setReceiveAsset] = useState<"usdt" | "nim">("usdt");
+  const [purchaseAsset, setPurchaseAsset] = useState<"usdt" | "nim">("usdt");
   const [groupExitRequests, setGroupExitRequests] = useState<
     GroupExitRequestSnapshot[]
   >([]);
   const [clock, setClock] = useState(Date.now());
+  const mockSwapAdapter = useMemo(() => {
+    try {
+      return createConfiguredMockSwapAdapter();
+    } catch {
+      return null;
+    }
+  }, []);
 
   const evmSession = evm.status === "connected" ? evm.session : null;
+  const nimiqWallet = nimiq.status === "connected" ? nimiq.wallet : null;
+  const polygonSwapNetwork = evmSession?.chainId === "0x13882"
+    ? "polygon-amoy" as const
+    : evmSession?.chainId === "0x7a69"
+      ? "local" as const
+      : "polygon" as const;
+  const swapAdapter =
+    nimiq.status === "connected" && nimiq.wallet.network === "testnet"
+      ? mockSwapAdapter
+      : null;
   const connectedAddress = evmSession?.address.toLowerCase();
   const connectedMember = snapshot?.members.find(
     (member) => member.member.toLowerCase() === connectedAddress
@@ -308,7 +335,9 @@ export function App() {
   async function connectNimiq(): Promise<void> {
     setNimiq({ status: "connecting" });
     try {
-      setNimiq({ status: "connected", wallet: await connectNimiqWallet() });
+      const wallet = await connectNimiqWallet();
+      setNimiq({ status: "connected", wallet });
+      setNimBalanceLuna(await loadNimBalance(wallet.address));
     } catch (error) {
       setNimiq({
         status: "error",
@@ -376,9 +405,7 @@ export function App() {
           session.signer,
           nextVaults.map((vault) => vault.address)
         ),
-        mockTokenFaucetEnabled
-          ? loadMockUsdtBalance(session.signer)
-          : Promise.resolve(null),
+        loadUsdtBalance(session.signer),
       ]);
     if (listingsResult.status === "fulfilled")
       setListings(listingsResult.value);
@@ -536,6 +563,28 @@ export function App() {
         message: describeContractError(error),
       });
     }
+  }
+
+  // The reverse swap must use the amount actually delivered by the vault, not
+  // an earlier UI estimate that may have changed with Earn-vault yield.
+  async function withdrawMaturedPositionForSwap(): Promise<bigint> {
+    if (!snapshot)
+      throw new Error("Open a vault position before withdrawing.");
+    const session = requireSession();
+    const before = await loadUsdtBalanceUnits(session.signer);
+    await withdrawLocked(session.signer, snapshot.address, snapshot.positionId);
+    const after = await loadUsdtBalanceUnits(session.signer);
+    if (after <= before) {
+      throw new Error(
+        "The withdrawal confirmed, but no USDT balance increase could be verified."
+      );
+    }
+    await refreshPortfolio(session);
+    setTransaction({
+      status: "success",
+      message: "Maturity withdrawal confirmed in the connected wallet.",
+    });
+    return after - before;
   }
 
   function requestTestFunds(): void {
@@ -1081,20 +1130,39 @@ export function App() {
                 )}
                 {snapshot.ownsLockedPosition && (
                   <div className="maturity-action">
-                  <div>
-                    <strong>Maturity withdrawal</strong>
-                    <span>
-                      {Date.now() >= snapshot.maturity.getTime()
-                        ? "Available now."
-                        : `Available ${snapshot.maturity.toLocaleString()}.`}
-                    </span>
-                    {withdrawalNeedsRetry && (
-                      <small>
-                        Redemption failed without burning your shares. You can
-                        retry safely.
-                      </small>
-                    )}
+                    <div>
+                      <strong>Maturity withdrawal</strong>
+                      <span>
+                        {Date.now() >= snapshot.maturity.getTime()
+                          ? "Available now."
+                          : `Available ${snapshot.maturity.toLocaleString()}.`}
+                      </span>
+                      {withdrawalNeedsRetry && (
+                        <small>
+                          Redemption failed without burning your shares. You can
+                          retry safely.
+                        </small>
+                      )}
+                    </div>
+                    <div className="segmented" aria-label="Withdrawal asset">
+                      <button
+                        className={receiveAsset === "usdt" ? "active" : ""}
+                        onClick={() => setReceiveAsset("usdt")}
+                        type="button"
+                      >
+                        Receive as USDT
+                      </button>
+                      <button
+                        className={receiveAsset === "nim" ? "active" : ""}
+                        onClick={() => setReceiveAsset("nim")}
+                        type="button"
+                      >
+                        Receive as NIM
+                      </button>
+                    </div>
                   </div>
+                )}
+                {snapshot.ownsLockedPosition && receiveAsset === "usdt" && (
                   <button
                     className="secondary"
                     disabled={
@@ -1107,16 +1175,60 @@ export function App() {
                     {withdrawalNeedsRetry
                       ? "Retry redemption"
                       : snapshot.lockedWithdrawn
-                      ? "Withdrawn"
-                      : "Withdraw position"}
+                        ? "Withdrawn"
+                        : "Withdraw position as USDT"}
                   </button>
-                  </div>
+                )}
+                {snapshot.ownsLockedPosition &&
+                  receiveAsset === "nim" &&
+                  nimiqWallet &&
+                  evmSession && (
+                  <NimSwapFlow
+                    adapter={swapAdapter}
+                    flowKey={`withdraw:${snapshot.address}:${snapshot.positionId}:${evmSession.address}`}
+                    kind="WITHDRAW_AS_NIM"
+                    nimiqAddress={nimiqWallet.address}
+                    polygonAddress={evmSession.address}
+                    nimiqNetwork={
+                      nimiqWallet.network === "testnet" ? "testnet" : "mainnet"
+                    }
+                    polygonNetwork={polygonSwapNetwork}
+                    nimBalanceLuna={nimBalanceLuna}
+                    usdtBalance={mockTokenBalance}
+                    withdrawalUsdtAmount={parseAssetAmount(
+                      snapshot.currentValue,
+                      6
+                    )}
+                    onContractAction={withdrawMaturedPositionForSwap}
+                    contractActionLabel="Withdraw USDT from vault"
+                  />
                 )}
                 <div className="action-grid">
                   {snapshot.ownsLockedPosition &&
                     snapshot.isOriginalMember &&
                     (!snapshot.isGroup || snapshot.groupLifecycle === "active") && (
-                  <form
+                      <div className="funding-action">
+                        <div
+                          className="segmented"
+                          aria-label="Deposit funding asset"
+                        >
+                          <button
+                            className={depositAsset === "nim" ? "active" : ""}
+                            onClick={() => setDepositAsset("nim")}
+                            type="button"
+                          >
+                            Save with NIM
+                          </button>
+                          <button
+                            className={depositAsset === "usdt" ? "active" : ""}
+                            onClick={() => setDepositAsset("usdt")}
+                            type="button"
+                          >
+                            Save with USDT
+                          </button>
+                        </div>
+                        {depositAsset === "usdt" ? (
+                          <form
                     onSubmit={(event) => {
                       event.preventDefault();
                       void transactAndRefresh(
@@ -1131,7 +1243,7 @@ export function App() {
                         "Deposit confirmed."
                       );
                     }}
-                  >
+                          >
                     <label>
                       <span>Deposit mUSDT</span>
                       <input
@@ -1147,8 +1259,42 @@ export function App() {
                     <button className="primary" disabled={riskActionsDisabled}>
                       Deposit
                     </button>
-                  </form>
-                  )}
+                          </form>
+                        ) : nimiqWallet && evmSession ? (
+                          <NimSwapFlow
+                      adapter={swapAdapter}
+                      flowKey={`save:${snapshot.address}:${snapshot.positionId}:${evmSession.address}`}
+                      kind="SAVE_WITH_NIM"
+                      nimiqAddress={nimiqWallet.address}
+                      polygonAddress={evmSession.address}
+                      nimiqNetwork={
+                        nimiqWallet.network === "testnet"
+                          ? "testnet"
+                          : "mainnet"
+                      }
+                      polygonNetwork={polygonSwapNetwork}
+                      nimBalanceLuna={nimBalanceLuna}
+                      usdtBalance={mockTokenBalance}
+                      onContractAction={(readyAmount) =>
+                        depositToVault(
+                          requireSession().signer,
+                          snapshot.address,
+                          snapshot.positionId,
+                          formatAssetAmount(readyAmount!, 6)
+                        )
+                      }
+                      contractActionLabel="Deposit ready USDT into vault"
+                          />
+                        ) : (
+                          <div className="notice">
+                            <span>
+                              Connect both Nimiq Pay and an EVM wallet to save
+                              with NIM.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   {snapshot.isOriginalMember &&
                     Number(snapshot.emergencyBalance) > 0 && (
                   <form
@@ -1488,11 +1634,28 @@ export function App() {
                 }
               />
             ) : selectedListing ? (
-              <ListingDetail
+              <>
+                <div className="segmented" aria-label="Claim payment asset">
+                  <button
+                    className={purchaseAsset === "nim" ? "active" : ""}
+                    onClick={() => setPurchaseAsset("nim")}
+                    type="button"
+                  >
+                    Pay with NIM
+                  </button>
+                  <button
+                    className={purchaseAsset === "usdt" ? "active" : ""}
+                    onClick={() => setPurchaseAsset("usdt")}
+                    type="button"
+                  >
+                    Pay with USDT
+                  </button>
+                </div>
+                <ListingDetail
                 entry={exitState!}
                 connectedAddress={connectedAddress}
                 disabled={actionsDisabled}
-                fundDisabled={riskActionsDisabled}
+                fundDisabled={riskActionsDisabled || purchaseAsset === "nim"}
                 onCancel={() =>
                   void transactAndRefresh(
                     "Cancelling listing…",
@@ -1515,7 +1678,42 @@ export function App() {
                     "Listing funded and locked claim transferred."
                   )
                 }
-              />
+                />
+                {purchaseAsset === "nim" &&
+                selectedListing.seller.toLowerCase() !== connectedAddress &&
+                nimiqWallet && evmSession && (
+                  <NimSwapFlow
+                  adapter={swapAdapter}
+                  flowKey={`purchase:${selectedListing.id}:${evmSession.address}`}
+                  kind="PURCHASE_WITH_NIM"
+                  nimiqAddress={nimiqWallet.address}
+                  polygonAddress={evmSession.address}
+                  nimiqNetwork={
+                    nimiqWallet.network === "testnet" ? "testnet" : "mainnet"
+                  }
+                  polygonNetwork={polygonSwapNetwork}
+                  nimBalanceLuna={nimBalanceLuna}
+                  usdtBalance={mockTokenBalance}
+                  exactUsdtRequired={parseAssetAmount(
+                    selectedListing.currentTotalProviderPaid,
+                    6
+                  )}
+                  onContractAction={async () => {
+                    const maximum = parseAssetAmount(
+                      selectedListing.currentTotalProviderPaid,
+                      6
+                    );
+                    await fundExitListing(
+                      requireSession().signer,
+                      selectedListing.id,
+                      maximum
+                    );
+                    await refreshPortfolio();
+                  }}
+                  contractActionLabel="Refresh listing and purchase claim"
+                  />
+                )}
+              </>
             ) : (
               <div className="empty-state">
                 Select a listing, or open one of your vaults to request an early
