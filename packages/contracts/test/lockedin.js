@@ -8,6 +8,8 @@ describe('LockedIn Circle Phase 1', function () {
   let networkHelpers
   let creator
   let memberTwo
+  let memberThree
+  let memberFour
   let outsider
   let riskReserve
   let maintenanceTreasury
@@ -17,7 +19,15 @@ describe('LockedIn Circle Phase 1', function () {
 
   beforeEach(async function () {
     ;({ ethers, networkHelpers } = await network.create())
-    ;[creator, memberTwo, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
+    ;[
+      creator,
+      memberTwo,
+      memberThree,
+      memberFour,
+      outsider,
+      riskReserve,
+      maintenanceTreasury,
+    ] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
     factory = await ethers.deployContract('VaultFactory', [
       await token.getAddress(),
@@ -114,10 +124,23 @@ describe('LockedIn Circle Phase 1', function () {
   })
 
   it('activates equal group rewards only after every member completes', async function () {
-    const vault = await groupVault()
-    await fundAndApprove(creator, await vault.getAddress(), 100n * UNIT)
-    await fundAndApprove(memberTwo, await vault.getAddress(), 100n * UNIT)
-    await vault.deposit(0, 100n * UNIT)
+    const groupMembers = [creator, memberTwo, memberThree, memberFour]
+    const addresses = await Promise.all(groupMembers.map((member) => member.getAddress()))
+    await factory.createGroupVault(
+      addresses,
+      addresses.map(() => 100n * UNIT),
+      addresses.map(() => 1_000),
+      maturity,
+      0,
+    )
+    const vault = await ethers.getContractAt(
+      'SavingsVault',
+      await factory.vaultAt((await factory.vaultCount()) - 1n),
+    )
+    for (const [index, member] of groupMembers.entries()) {
+      await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
+      if (index === 0) await vault.deposit(index, 100n * UNIT)
+    }
 
     const pool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     await token.mint(await outsider.getAddress(), 20n * UNIT)
@@ -125,11 +148,13 @@ describe('LockedIn Circle Phase 1', function () {
     await pool.connect(outsider).fundVault(await vault.getAddress(), 20n * UNIT)
     await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsNotReady')
 
-    await vault.connect(memberTwo).deposit(1, 100n * UNIT)
+    for (let index = 1; index < groupMembers.length; index += 1) {
+      await vault.connect(groupMembers[index]).deposit(index, 100n * UNIT)
+    }
     await networkHelpers.time.increaseTo(maturity)
     await vault.activateRewards()
-    expect(await pool.claimable(await creator.getAddress())).to.equal(10n * UNIT)
-    expect(await pool.claimable(await memberTwo.getAddress())).to.equal(10n * UNIT)
+    expect(await pool.claimable(await creator.getAddress())).to.equal(5n * UNIT)
+    expect(await pool.claimable(await memberTwo.getAddress())).to.equal(5n * UNIT)
     expect(await pool.rewardEligible(await vault.getAddress(), await creator.getAddress())).to.equal(true)
     await expect(pool.connect(outsider).activateRewards()).to.be.revertedWithCustomError(pool, 'VaultNotRegistered')
     await expect(vault.activateRewards()).to.revert(ethers)

@@ -67,6 +67,11 @@ const targets = [
       config.maintenanceTreasury,
     ],
   },
+  {
+    name: 'SavingsVaultDeployer',
+    address: contracts.savingsVaultDeployer.address,
+    constructorArgs: [],
+  },
 ]
 
 for (const target of targets) {

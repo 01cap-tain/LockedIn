@@ -4,6 +4,8 @@ LockedIn Circle is a Nimiq Pay Mini App prototype for personal and group savings
 
 The Nimiq and EVM addresses are separate identities and are displayed independently. Only the connected EVM address owns vault positions and signs contract transactions.
 
+Group vaults retain one isolated position per member. They are not Nimiq multisig or shared-custody wallets. Before maturity, a group member can request a fee-free cooperative exit; every other active Polygon EVM member must approve on-chain within seven days. Cancellation or expiry enables the deterministic Early-Exit Market fallback.
+
 ## Requirements
 
 - Node.js 22.13 or later
@@ -34,6 +36,7 @@ Use three terminals from the repository root:
 ```sh
 npm run contracts:node
 npm run contracts:deploy
+npm run contracts:smoke
 npm run dev
 ```
 
@@ -64,6 +67,7 @@ npm run dev:amoy
 - Amoy uses MockUSDT and MockYieldAdapter; it does not claim real Aave integration.
 - Production Aave behavior is tested locally and optionally against a Polygon-mainnet fork.
 - Early exits are full-position, pre-maturity sales only.
+- Cooperative group exits require unanimous N-1 approval, completed active-member goals and at least four active members; market exits retain the system discount and fee.
 - Nimiq Pay Amoy support is not officially documented and requires a real-device probe.
 - No guardian recovery, borrowing, mainnet deployment or PostgreSQL indexer exists yet.
 - Contracts remain unaudited.

@@ -15,3 +15,4 @@ artifacts/
 cache/
 coverage-contracts/
 packages/contracts/types/
+packages/contracts/deployments/local/

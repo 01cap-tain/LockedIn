@@ -7,6 +7,7 @@ import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
 import {RewardPool} from "./RewardPool.sol";
 import {SavingsVault} from "./SavingsVault.sol";
+import {SavingsVaultDeployer} from "./SavingsVaultDeployer.sol";
 import {EarlyExitMarket} from "./EarlyExitMarket.sol";
 import {AaveYieldAdapter} from "./AaveYieldAdapter.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
@@ -28,6 +29,7 @@ contract VaultFactory {
     IAToken public immutable aToken;
     uint256 public immutable deploymentChainId;
     IYieldAdapterFactory public immutable testYieldAdapterFactory;
+    SavingsVaultDeployer public immutable vaultDeployer;
 
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
@@ -75,6 +77,7 @@ contract VaultFactory {
         aToken = aToken_;
         deploymentChainId = deploymentChainId_;
         testYieldAdapterFactory = testYieldAdapterFactory_;
+        vaultDeployer = new SavingsVaultDeployer();
         rewardPool = new RewardPool(asset_, address(this));
         earlyExitMarket = new EarlyExitMarket(
             asset_, rewardPool, address(this), riskReserve_, maintenanceTreasury_
@@ -152,7 +155,7 @@ contract VaultFactory {
                 );
             }
         }
-        SavingsVault deployed = new SavingsVault(
+        vault = vaultDeployer.deployVault(
             asset,
             rewardPool,
             maturity,
@@ -164,7 +167,6 @@ contract VaultFactory {
             targets,
             emergencyBps
         );
-        vault = address(deployed);
         // Binding is a one-time factory operation; after this point only the vault can
         // supply or redeem adapter assets.
         if (mode == SavingsVault.VaultMode.Earn) adapter.bindVault(vault);

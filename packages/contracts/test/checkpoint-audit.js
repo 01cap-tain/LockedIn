@@ -8,6 +8,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   let networkHelpers
   let saver
   let memberTwo
+  let memberThree
+  let memberFour
+  let memberFive
   let provider
   let outsider
   let riskReserve
@@ -20,7 +23,17 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   beforeEach(async function () {
     ;({ ethers, networkHelpers } = await network.create())
-    ;[saver, memberTwo, provider, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
+    ;[
+      saver,
+      memberTwo,
+      memberThree,
+      memberFour,
+      memberFive,
+      provider,
+      outsider,
+      riskReserve,
+      maintenanceTreasury,
+    ] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
     factory = await ethers.deployContract('VaultFactory', [
       await token.getAddress(),
@@ -106,20 +119,27 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   })
 
   it('revokes reward eligibility on sale while preserving the remaining active group campaign', async function () {
-    const members = [await saver.getAddress(), await memberTwo.getAddress()]
-    await factory.createGroupVault(members, [100n * UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0)
+    const groupMembers = [saver, memberTwo, memberThree, memberFour, memberFive]
+    const members = await Promise.all(groupMembers.map((member) => member.getAddress()))
+    await factory.createGroupVault(
+      members,
+      members.map(() => 100n * UNIT),
+      members.map(() => 1_000),
+      maturity,
+      0,
+    )
     const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
-    await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
-    await fundAndApprove(memberTwo, await vault.getAddress(), 100n * UNIT)
-    await vault.deposit(0, 100n * UNIT)
-    await vault.connect(memberTwo).deposit(1, 100n * UNIT)
+    for (const [index, member] of groupMembers.entries()) {
+      await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
+      await vault.connect(member).deposit(index, 100n * UNIT)
+    }
 
     await fundAndApprove(outsider, await rewardPool.getAddress(), 20n * UNIT)
     await rewardPool.connect(outsider).fundVault(await vault.getAddress(), 20n * UNIT)
     await sellPosition(vault)
 
     expect(await vault.rewardDisqualified(0)).to.equal(true)
-    expect(await vault.rewardEligibleCount()).to.equal(1n)
+    expect(await vault.rewardEligibleCount()).to.equal(4n)
     expect(await vault.rewardsReady()).to.equal(false)
     await networkHelpers.time.increaseTo(maturity)
     expect(await vault.rewardsReady()).to.equal(true)
@@ -127,7 +147,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await rewardPool.rewardEligible(await vault.getAddress(), await saver.getAddress())).to.equal(false)
     expect(await rewardPool.claimable(await saver.getAddress())).to.equal(0n)
     expect(await rewardPool.rewardEligible(await vault.getAddress(), await memberTwo.getAddress())).to.equal(true)
-    expect(await rewardPool.claimable(await memberTwo.getAddress())).to.equal(20n * UNIT)
+    expect(await rewardPool.claimable(await memberTwo.getAddress())).to.equal(5n * UNIT)
   })
 
   it('does not let emergency withdrawals change reward eligibility or goal completion', async function () {

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   cancelExitListing,
+  cancelGroupExit,
+  completeGroupExit,
   createExitListing,
   createVault,
   depositToVault,
@@ -11,15 +13,20 @@ import {
   loadExitListing,
   fundExitListing,
   loadExitMarket,
+  loadGroupExitRequests,
   loadMockUsdtBalance,
   loadVault,
   loadVaultsForSigner,
   requestMockUsdt,
+  requestGroupExit,
+  approveGroupExit,
+  revokeGroupExitApproval,
   withdrawEmergency,
   withdrawLocked,
   type ActivityItem,
   type CreateVaultInput,
   type ExitListingSnapshot,
+  type GroupExitRequestSnapshot,
   type VaultSnapshot,
   type VaultSummary,
 } from "./lib/contracts";
@@ -88,6 +95,9 @@ export function App() {
   );
   const mockTokenFaucetEnabled =
     import.meta.env.VITE_ENABLE_MOCK_TOKEN_FAUCET === "true";
+  const usesMockYieldAdapter =
+    import.meta.env.VITE_YIELD_ADAPTER_KIND === "MockYieldAdapter" ||
+    mockTokenFaucetEnabled;
   const developmentFallbackEnabled =
     import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === "true";
   const deploymentReady = import.meta.env.VITE_DEPLOYMENT_READY !== "false";
@@ -121,9 +131,16 @@ export function App() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [developmentAccounts, setDevelopmentAccounts] = useState<string[]>([]);
   const [mockTokenBalance, setMockTokenBalance] = useState<string | null>(null);
+  const [groupExitRequests, setGroupExitRequests] = useState<
+    GroupExitRequestSnapshot[]
+  >([]);
+  const [clock, setClock] = useState(Date.now());
 
   const evmSession = evm.status === "connected" ? evm.session : null;
   const connectedAddress = evmSession?.address.toLowerCase();
+  const connectedMember = snapshot?.members.find(
+    (member) => member.member.toLowerCase() === connectedAddress
+  );
   const actionsDisabled =
     !deploymentReady || !evmSession || transaction.status === "pending";
   const progress = snapshot
@@ -168,6 +185,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     // Account and network changes invalidate every address-scoped query. Clear
     // the previous portfolio before reconnecting so one wallet never sees
     // another wallet's cached positions in the interface.
@@ -208,6 +230,7 @@ export function App() {
     setExitState(null);
     setActivity([]);
     setMockTokenBalance(null);
+    setGroupExitRequests([]);
   }
 
   async function connectNimiq(): Promise<void> {
@@ -289,9 +312,13 @@ export function App() {
     session = requireSession()
   ): Promise<void> {
     const next = await loadVault(session.signer, address);
-    const nextExit = await loadExitMarket(session.signer, next);
+    const [nextExit, nextGroupExits] = await Promise.all([
+      loadExitMarket(session.signer, next),
+      loadGroupExitRequests(session.signer, address),
+    ]);
     setSnapshot(next);
     setExitState(nextExit);
+    setGroupExitRequests(nextGroupExits);
     // Start at the current system payout. The saver may lower this protection
     // floor, but neither the saver nor a provider can choose the discount.
     const defaultFloor =
@@ -546,7 +573,9 @@ export function App() {
                 >
                   <strong>Earn</strong>
                   <span>
-                    Supplied to Aave V3. Variable yield and protocol risk.
+                    {usesMockYieldAdapter
+                      ? "Uses a simulated testnet yield adapter. Not Aave."
+                      : "Supplied to Aave V3. Variable yield and protocol risk."}
                   </span>
                 </button>
               </fieldset>
@@ -601,10 +630,9 @@ export function App() {
                     type="checkbox"
                   />
                   <span>
-                    I understand Aave yield is variable and not guaranteed,
-                    withdrawals can temporarily fail, and smart-contract or
-                    protocol losses are possible. Emergency funds remain outside
-                    Aave.
+                    {usesMockYieldAdapter
+                      ? "I understand this test deployment simulates yield and does not supply funds to Aave. Emergency funds remain in the vault."
+                      : "I understand Aave yield is variable and not guaranteed, withdrawals can temporarily fail, and smart-contract or protocol losses are possible. Emergency funds remain outside Aave."}
                   </span>
                 </label>
               )}
@@ -619,7 +647,8 @@ export function App() {
                   />
                   <small>
                     Every listed participant receives an independent position.
-                    Membership is fixed after creation.
+                    Membership is fixed after creation. Cooperative exits and
+                    group rewards require at least four active members.
                   </small>
                 </label>
               )}
@@ -706,7 +735,9 @@ export function App() {
                     </span>
                     <span className={`tag ${snapshot.vaultMode}`}>
                       {snapshot.vaultMode === "earn"
-                        ? "Earn · Aave V3"
+                        ? usesMockYieldAdapter
+                          ? "Earn · mock adapter"
+                          : "Earn · Aave V3"
                         : "Safe · no yield"}
                     </span>
                     <h2>
@@ -753,21 +784,46 @@ export function App() {
                     value={`${snapshot.currentValue} mUSDT`}
                   />
                   <Metric
-                    label="Variable APY"
+                    label={
+                      usesMockYieldAdapter
+                        ? "Simulated rate signal"
+                        : "Variable APY"
+                    }
                     value={
                       snapshot.variableApyPercent === null
                         ? "No yield"
-                        : `${snapshot.variableApyPercent.toFixed(
-                            2
-                          )}% · not guaranteed`
+                        : `${snapshot.variableApyPercent.toFixed(2)}% · ${
+                            usesMockYieldAdapter
+                              ? "test value"
+                              : "not guaranteed"
+                          }`
                     }
                   />
                   <Metric
-                    label="Aave supply"
+                    label={
+                      usesMockYieldAdapter
+                        ? "Test yield adapter"
+                        : "Aave supply"
+                    }
                     value={
-                      snapshot.vaultMode === "earn"
-                        ? `Active · ${short(snapshot.yieldAdapter)}`
-                        : "Not used"
+                      snapshot.vaultMode === "earn" ? (
+                        explorerBaseUrl ? (
+                          <a
+                            href={`${explorerBaseUrl}/address/${snapshot.yieldAdapter}`}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {usesMockYieldAdapter ? "Mock" : "Active"} ·{" "}
+                            {short(snapshot.yieldAdapter)}
+                          </a>
+                        ) : (
+                          `${
+                            usesMockYieldAdapter ? "Mock" : "Active"
+                          } · ${short(snapshot.yieldAdapter)}`
+                        )
+                      ) : (
+                        "Not used"
+                      )
                     }
                   />
                   <Metric
@@ -777,11 +833,15 @@ export function App() {
                 </div>
                 {snapshot.vaultMode === "earn" && (
                   <div className="notice">
-                    <strong>Variable Aave position</strong>
+                    <strong>
+                      {usesMockYieldAdapter
+                        ? "Simulated testnet yield position"
+                        : "Variable Aave position"}
+                    </strong>
                     <span>
-                      Only the locked portion earns. Yield is not guaranteed and
-                      redemption depends on Aave liquidity and protocol
-                      conditions.
+                      {usesMockYieldAdapter
+                        ? "The locked portion is held by an isolated MockYieldAdapter. It gains simulated yield only when extra mUSDT is explicitly funded into that adapter; no tokens are sent to Aave."
+                        : "Only the locked portion earns. Yield is not guaranteed and redemption depends on Aave liquidity and protocol conditions."}
                     </span>
                   </div>
                 )}
@@ -882,6 +942,82 @@ export function App() {
                     </button>
                   </form>
                 </div>
+                {snapshot.isGroup && connectedMember && (
+                  <GroupExitPanel
+                    activeMemberCount={
+                      snapshot.members.filter(
+                        (member) => member.status === "active"
+                      ).length
+                    }
+                    clock={clock}
+                    connectedAddress={connectedAddress ?? ""}
+                    connectedMemberStatus={connectedMember.status}
+                    disabled={actionsDisabled}
+                    requests={groupExitRequests}
+                    onApprove={(requestId) =>
+                      void transactAndRefresh(
+                        "Approving group exit…",
+                        () =>
+                          approveGroupExit(
+                            requireSession().signer,
+                            snapshot.address,
+                            requestId
+                          ),
+                        "Group-exit approval recorded."
+                      )
+                    }
+                    onCancel={(requestId) =>
+                      void transactAndRefresh(
+                        "Cancelling group exit…",
+                        () =>
+                          cancelGroupExit(
+                            requireSession().signer,
+                            snapshot.address,
+                            requestId
+                          ),
+                        "Group-exit request cancelled."
+                      )
+                    }
+                    onComplete={(requestId) =>
+                      void transactAndRefresh(
+                        "Withdrawing authorized group position…",
+                        () =>
+                          completeGroupExit(
+                            requireSession().signer,
+                            snapshot.address,
+                            requestId
+                          ),
+                        "Cooperative group exit completed."
+                      )
+                    }
+                    onMarket={() => {
+                      window.location.hash = "/market";
+                    }}
+                    onRequest={() =>
+                      void transactAndRefresh(
+                        "Requesting unanimous group approval…",
+                        () =>
+                          requestGroupExit(
+                            requireSession().signer,
+                            snapshot.address
+                          ),
+                        "Seven-day group-exit request created."
+                      )
+                    }
+                    onRevoke={(requestId) =>
+                      void transactAndRefresh(
+                        "Revoking group-exit approval…",
+                        () =>
+                          revokeGroupExitApproval(
+                            requireSession().signer,
+                            snapshot.address,
+                            requestId
+                          ),
+                        "Group-exit approval revoked."
+                      )
+                    }
+                  />
+                )}
                 {snapshot.isGroup && (
                   <div className="members">
                     <div className="section-title">
@@ -931,8 +1067,12 @@ export function App() {
                                   : "status-pill"
                               }
                             >
-                              {member.rewardDisqualified
-                                ? "Exited"
+                              {member.status === "cooperative-exit"
+                                ? "Cooperative exit"
+                                : member.status === "market-exit"
+                                ? "Market exit"
+                                : member.status === "matured"
+                                ? "Matured"
                                 : member.goalComplete
                                 ? "Complete"
                                 : `${memberProgress.toFixed(0)}%`}
@@ -1258,8 +1398,8 @@ export function App() {
         </div>
       )}
       <footer>
-        Local/test deployment · Mock USDT · Mock Aave · No guardian recovery ·
-        Unaudited
+        Local/test deployment · Mock USDT · Mock yield adapter · Not Aave · No
+        guardian recovery · Unaudited
       </footer>
     </main>
   );
@@ -1276,12 +1416,183 @@ function WalletChip({ label, address }: { label: string; address: string }) {
     </div>
   );
 }
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <small>{label}</small>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function expiryCountdown(expiresAt: Date, clock: number): string {
+  const remaining = Math.max(0, expiresAt.getTime() - clock);
+  if (remaining === 0) return "Expired";
+  const totalSeconds = Math.floor(remaining / 1_000);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${days}d ${hours}h ${minutes}m ${seconds}s remaining`;
+}
+
+function GroupExitPanel({
+  requests,
+  activeMemberCount,
+  connectedAddress,
+  connectedMemberStatus,
+  clock,
+  disabled,
+  onRequest,
+  onApprove,
+  onRevoke,
+  onCancel,
+  onComplete,
+  onMarket,
+}: {
+  requests: GroupExitRequestSnapshot[];
+  activeMemberCount: number;
+  connectedAddress: string;
+  connectedMemberStatus: VaultSnapshot["members"][number]["status"];
+  clock: number;
+  disabled: boolean;
+  onRequest: () => void;
+  onApprove: (requestId: bigint) => void;
+  onRevoke: (requestId: bigint) => void;
+  onCancel: (requestId: bigint) => void;
+  onComplete: (requestId: bigint) => void;
+  onMarket: () => void;
+}) {
+  const ownUnresolved = requests.some(
+    (request) =>
+      request.requester.toLowerCase() === connectedAddress &&
+      (request.status === "pending" || request.status === "authorized")
+  );
+
+  return (
+    <section className="group-exit-panel">
+      <div className="section-title">
+        <div>
+          <h3>Cooperative group exit</h3>
+          <p>
+            Unlock your own claim without a discount after every other active
+            member approves and all active goals are complete.
+            {activeMemberCount < 4 && (
+              <> Early unlock is disabled below four active members.</>
+            )}
+          </p>
+        </div>
+        <button
+          className="secondary"
+          disabled={
+            disabled ||
+            connectedMemberStatus !== "active" ||
+            ownUnresolved ||
+            activeMemberCount < 4
+          }
+          onClick={onRequest}
+          type="button"
+        >
+          Request group exit
+        </button>
+      </div>
+
+      {requests.length === 0 ? (
+        <div className="empty-mini">No group-exit requests yet.</div>
+      ) : (
+        <div className="group-exit-list">
+          {requests.map((request) => {
+            const isRequester =
+              request.requester.toLowerCase() === connectedAddress;
+            const canVote =
+              request.status === "pending" &&
+              !isRequester &&
+              connectedMemberStatus === "active";
+            return (
+              <article
+                className="group-exit-request"
+                key={request.id.toString()}
+              >
+                <div>
+                  <span className={`listing-status ${request.status}`}>
+                    {request.status}
+                  </span>
+                  <strong>
+                    Request #{request.id.toString()} ·{" "}
+                    {short(request.requester)}
+                  </strong>
+                  <small>
+                    {request.completedApprovals}/{request.requiredApprovals}{" "}
+                    approvals · {expiryCountdown(request.expiresAt, clock)}
+                  </small>
+                </div>
+                <div className="group-exit-actions">
+                  {canVote && !request.connectedMemberApproved && (
+                    <button
+                      className="primary"
+                      disabled={disabled}
+                      onClick={() => onApprove(request.id)}
+                      type="button"
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {canVote && request.connectedMemberApproved && (
+                    <button
+                      className="secondary"
+                      disabled={disabled}
+                      onClick={() => onRevoke(request.id)}
+                      type="button"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                  {isRequester && request.status === "pending" && (
+                    <button
+                      className="secondary"
+                      disabled={disabled}
+                      onClick={() => onCancel(request.id)}
+                      type="button"
+                    >
+                      Cancel request
+                    </button>
+                  )}
+                  {isRequester && request.status === "authorized" && (
+                    <button
+                      className="primary"
+                      disabled={disabled}
+                      onClick={() => onComplete(request.id)}
+                      type="button"
+                    >
+                      Withdraw my locked claim
+                    </button>
+                  )}
+                  {isRequester &&
+                    (request.status === "cancelled" ||
+                      request.status === "expired") && (
+                      <button
+                        className="secondary"
+                        disabled={disabled}
+                        onClick={onMarket}
+                        type="button"
+                      >
+                        Continue to Early-Exit Market
+                      </button>
+                    )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <div className="warning compact">
+        <strong>Market fallback</strong>
+        <span>
+          After cancellation or expiry, the market is available—but it applies
+          the contract-calculated 4.5%–8% discount and separate provider fee.
+        </span>
+      </div>
+    </section>
   );
 }
 
@@ -1335,7 +1646,7 @@ function ListingComposer({
           </div>
           <p>
             Settlement recalculates this rate from remaining time, savings
-            commitment, and Aave liquidity risk.
+            commitment, and adapter liquidity risk.
           </p>
           <div className="score-row">
             <span>Time +{pricing.remainingTimePenalty} bps</span>

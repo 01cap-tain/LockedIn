@@ -4,8 +4,10 @@ import path from "node:path";
 import { defineConfig } from "vite";
 
 interface AmoyManifest {
+  schemaVersion: number;
   chainId: number;
   contracts: { vaultFactory: { address: string; blockNumber: number } };
+  factoryConfiguration: { yieldAdapter: string };
 }
 
 function amoyFactoryDefinition(mode: string): Record<string, string> {
@@ -29,10 +31,14 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     throw new Error("The latest Amoy deployment manifest is not valid JSON.");
   }
   if (
+    manifest.schemaVersion < 2 ||
     manifest.chainId !== 80_002 ||
-    !manifest.contracts?.vaultFactory?.address
+    !manifest.contracts?.vaultFactory?.address ||
+    !manifest.factoryConfiguration?.yieldAdapter
   ) {
-    throw new Error("The latest Amoy deployment manifest is invalid.");
+    throw new Error(
+      "The latest Amoy deployment is incompatible. Redeploy the cooperative-exit contracts."
+    );
   }
 
   return {
@@ -42,6 +48,9 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     ),
     "import.meta.env.VITE_CONTRACT_START_BLOCK": JSON.stringify(
       String(manifest.contracts.vaultFactory.blockNumber)
+    ),
+    "import.meta.env.VITE_YIELD_ADAPTER_KIND": JSON.stringify(
+      manifest.factoryConfiguration.yieldAdapter
     ),
   };
 }

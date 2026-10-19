@@ -14,6 +14,7 @@
     "build": "npm run build --workspaces --if-present",
     "contracts:node": "npm run node -w @lockedin-circle/contracts",
     "contracts:deploy": "npm run deploy:local -w @lockedin-circle/contracts",
+    "contracts:smoke": "npm run smoke:local -w @lockedin-circle/contracts",
     "contracts:deploy:amoy": "npm run deploy:amoy -w @lockedin-circle/contracts",
     "contracts:verify:amoy": "npm run verify:amoy -w @lockedin-circle/contracts",
     "contracts:test:amoy": "npm run test:amoy -w @lockedin-circle/contracts",

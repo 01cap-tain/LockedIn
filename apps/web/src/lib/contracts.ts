@@ -33,6 +33,7 @@ const vaultAbi = [
   "function memberAt(uint256 positionId) view returns (address)",
   "function positionOwner(uint256 positionId) view returns (address)",
   "function rewardDisqualified(uint256 positionId) view returns (bool)",
+  "function memberStatus(uint256 positionId) view returns (uint8)",
   "function positionOf(address member) view returns (uint256)",
   "function position(uint256 positionId) view returns (address member,uint256 target,uint256 deposited,uint256 emergencyBalance,uint256 lockedBalance,uint256 lockedShares,uint16 emergencyBps,bool lockedWithdrawn)",
   "function positionValue(uint256 positionId) view returns (uint256)",
@@ -42,11 +43,30 @@ const vaultAbi = [
   "function deposit(uint256 positionId,uint256 amount)",
   "function withdrawEmergency(uint256 positionId,uint256 amount)",
   "function withdrawLocked(uint256 positionId)",
+  "function requestGroupExit() returns (uint256)",
+  "function approveGroupExit(uint256 requestId)",
+  "function revokeGroupExitApproval(uint256 requestId)",
+  "function cancelGroupExit(uint256 requestId)",
+  "function expireGroupExit(uint256 requestId)",
+  "function completeGroupExit(uint256 requestId)",
+  "function currentGroupExitRequest(uint256 positionId) view returns (uint256)",
+  "function groupExitRequests(uint256 requestId) view returns (uint256 positionId,address requester,uint64 createdAt,uint64 expiresAt,uint32 requiredApprovals,uint32 completedApprovals,uint8 status)",
+  "function groupExitApproval(uint256 requestId,address member) view returns (bool)",
+  "function groupExitApprovalProgress(uint256 requestId) view returns (uint32 required,uint32 completed)",
+  "function activeMemberCount() view returns (uint256)",
   "event Deposited(uint256 indexed positionId,address indexed member,uint256 amount,uint256 emergencyAmount,uint256 lockedAmount)",
   "event EmergencyWithdrawn(uint256 indexed positionId,address indexed member,uint256 amount)",
   "event LockedWithdrawn(uint256 indexed positionId,address indexed owner,uint256 amount)",
   "event PositionTransferred(uint256 indexed positionId,address indexed previousOwner,address indexed newOwner)",
   "event RewardEligibilityRevoked(uint256 indexed positionId,address indexed member)",
+  "event GroupExitRequested(uint256 indexed requestId,uint256 indexed positionId,address indexed requester,uint64 expiresAt)",
+  "event GroupExitApproved(uint256 indexed requestId,address indexed approver)",
+  "event GroupExitApprovalRevoked(uint256 indexed requestId,address indexed approver)",
+  "event GroupExitCancelled(uint256 indexed requestId,address indexed requester)",
+  "event GroupExitExpired(uint256 indexed requestId)",
+  "event GroupExitAuthorized(uint256 indexed requestId,uint32 requiredApprovals,uint32 completedApprovals)",
+  "event GroupExitCompleted(uint256 indexed requestId,uint256 indexed positionId,address indexed requester,uint256 amount)",
+  "event GroupMemberStatusChanged(uint256 indexed positionId,address indexed member,uint8 previousStatus,uint8 newStatus)",
 ] as const;
 
 const tokenAbi = [
@@ -74,6 +94,8 @@ const marketAbi = [
 ] as const;
 
 const USDT_DECIMALS = 6;
+const POLYGON_AMOY_CHAIN_ID = 80_002n;
+const AMOY_MIN_PRIORITY_FEE = parseUnits("25", "gwei");
 
 export interface CreateVaultInput {
   groupMode: "personal" | "group";
@@ -118,6 +140,18 @@ export interface VaultMemberSnapshot {
   goalComplete: boolean;
   rewardDisqualified: boolean;
   lockedWithdrawn: boolean;
+  status: "active" | "cooperative-exit" | "market-exit" | "matured";
+}
+
+export interface GroupExitRequestSnapshot {
+  id: bigint;
+  positionId: bigint;
+  requester: string;
+  expiresAt: Date;
+  requiredApprovals: number;
+  completedApprovals: number;
+  connectedMemberApproved: boolean;
+  status: "pending" | "authorized" | "cancelled" | "expired" | "completed";
 }
 
 export interface VaultSummary {
@@ -209,6 +243,59 @@ function amount(value: string): bigint {
   return parsed;
 }
 
+function memberStatusLabel(status: bigint): VaultMemberSnapshot["status"] {
+  if (status === 1n) return "cooperative-exit";
+  if (status === 2n) return "market-exit";
+  if (status === 3n) return "matured";
+  return "active";
+}
+
+function groupExitStatusLabel(
+  status: bigint,
+  expiresAt: Date
+): GroupExitRequestSnapshot["status"] {
+  if (status === 2n) return "authorized";
+  if (status === 3n) return "cancelled";
+  if (status === 4n || (status === 1n && expiresAt.getTime() <= Date.now()))
+    return "expired";
+  if (status === 5n) return "completed";
+  return "pending";
+}
+
+/**
+ * Amoy validators currently reject the low priority fee returned by some RPC
+ * providers. Use the chain's enforced floor and derive a max fee from the live
+ * base fee. Other networks keep their wallet/provider-selected fee policy.
+ */
+async function transactionOverrides(
+  signer: Signer
+): Promise<Record<string, bigint>> {
+  const provider = signer.provider;
+  if (!provider) return {};
+
+  const network = await provider.getNetwork();
+  if (network.chainId !== POLYGON_AMOY_CHAIN_ID) return {};
+
+  const [feeData, latestBlock] = await Promise.all([
+    provider.getFeeData(),
+    provider.getBlock("latest"),
+  ]);
+  const reportedPriority = feeData.maxPriorityFeePerGas ?? 0n;
+  const maxPriorityFeePerGas =
+    reportedPriority > AMOY_MIN_PRIORITY_FEE
+      ? reportedPriority
+      : AMOY_MIN_PRIORITY_FEE;
+  const baseFee = latestBlock?.baseFeePerGas ?? feeData.gasPrice ?? 0n;
+  const calculatedMaxFee = baseFee * 2n + maxPriorityFeePerGas;
+  const reportedMaxFee = feeData.maxFeePerGas ?? 0n;
+
+  return {
+    maxPriorityFeePerGas,
+    maxFeePerGas:
+      reportedMaxFee > calculatedMaxFee ? reportedMaxFee : calculatedMaxFee,
+  };
+}
+
 export async function createVault(
   signer: Signer,
   input: CreateVaultInput
@@ -224,6 +311,7 @@ export async function createVault(
     throw new Error("Maturity must be in the future.");
   const emergencyBps = input.emergencyPercent * 100;
   const yieldMode = input.yieldMode === "earn" ? 1 : 0;
+  const overrides = await transactionOverrides(signer);
 
   if (input.groupMode === "personal") {
     await (
@@ -231,7 +319,8 @@ export async function createVault(
         target,
         maturity,
         emergencyBps,
-        yieldMode
+        yieldMode,
+        overrides
       )
     ).wait();
   } else {
@@ -250,7 +339,8 @@ export async function createVault(
         members.map(() => target),
         members.map(() => emergencyBps),
         maturity,
-        yieldMode
+        yieldMode,
+        overrides
       )
     ).wait();
   }
@@ -295,11 +385,13 @@ export async function loadVault(
   const members: VaultMemberSnapshot[] = await Promise.all(
     Array.from({ length: Number(memberCount) }, async (_, index) => {
       const memberPosition = await vault.getFunction("position")(index);
-      const [owner, memberComplete, rewardDisqualified] = await Promise.all([
-        vault.getFunction("positionOwner")(index),
-        vault.getFunction("goalComplete")(index),
-        vault.getFunction("rewardDisqualified")(index),
-      ]);
+      const [owner, memberComplete, rewardDisqualified, status] =
+        await Promise.all([
+          vault.getFunction("positionOwner")(index),
+          vault.getFunction("goalComplete")(index),
+          vault.getFunction("rewardDisqualified")(index),
+          vault.getFunction("memberStatus")(index),
+        ]);
       const memberValue: bigint = await vault.getFunction("positionValue")(
         index
       );
@@ -318,6 +410,7 @@ export async function loadVault(
         goalComplete: memberComplete,
         rewardDisqualified,
         lockedWithdrawn: memberPosition.lockedWithdrawn,
+        status: memberStatusLabel(status),
       };
     })
   );
@@ -385,10 +478,17 @@ export async function depositToVault(
     signer
   );
   const parsed = amount(value);
+  const overrides = await transactionOverrides(signer);
   await (
-    await token.getFunction("approve")(await vault.getAddress(), parsed)
+    await token.getFunction("approve")(
+      await vault.getAddress(),
+      parsed,
+      overrides
+    )
   ).wait();
-  await (await vault.getFunction("deposit")(positionId, parsed)).wait();
+  await (
+    await vault.getFunction("deposit")(positionId, parsed, overrides)
+  ).wait();
 }
 
 export async function loadMockUsdtBalance(signer: Signer): Promise<string> {
@@ -424,8 +524,13 @@ export async function requestMockUsdt(
   if (symbol !== "mUSDT" || Number(decimals) !== USDT_DECIMALS) {
     throw new Error("Mock-token minting is unavailable for this deployment.");
   }
+  const overrides = await transactionOverrides(signer);
   await (
-    await token.getFunction("mint")(await signer.getAddress(), amount(value))
+    await token.getFunction("mint")(
+      await signer.getAddress(),
+      amount(value),
+      overrides
+    )
   ).wait();
 }
 
@@ -436,8 +541,13 @@ export async function withdrawEmergency(
   value: string
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const overrides = await transactionOverrides(signer);
   await (
-    await vault.getFunction("withdrawEmergency")(positionId, amount(value))
+    await vault.getFunction("withdrawEmergency")(
+      positionId,
+      amount(value),
+      overrides
+    )
   ).wait();
 }
 
@@ -447,7 +557,128 @@ export async function withdrawLocked(
   positionId: bigint
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
-  await (await vault.getFunction("withdrawLocked")(positionId)).wait();
+  const overrides = await transactionOverrides(signer);
+  await (
+    await vault.getFunction("withdrawLocked")(positionId, overrides)
+  ).wait();
+}
+
+/** Loads each member's latest cooperative request directly from vault state. */
+export async function loadGroupExitRequests(
+  signer: Signer,
+  vaultAddress: string
+): Promise<GroupExitRequestSnapshot[]> {
+  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  if (!(await vault.getFunction("isGroup")())) return [];
+  const [memberCount, connectedAddress] = await Promise.all([
+    vault.getFunction("memberCount")(),
+    signer.getAddress(),
+  ]);
+  const requestIds = await Promise.all(
+    Array.from({ length: Number(memberCount) }, async (_, positionId) => {
+      const requestIdPlusOne: bigint = await vault.getFunction(
+        "currentGroupExitRequest"
+      )(positionId);
+      return requestIdPlusOne === 0n ? null : requestIdPlusOne - 1n;
+    })
+  );
+
+  return Promise.all(
+    requestIds
+      .filter((requestId): requestId is bigint => requestId !== null)
+      .map(async (requestId) => {
+        const request = await vault.getFunction("groupExitRequests")(requestId);
+        const [progress, connectedMemberApproved] = await Promise.all([
+          vault.getFunction("groupExitApprovalProgress")(requestId),
+          vault.getFunction("groupExitApproval")(requestId, connectedAddress),
+        ]);
+        const expiresAt = new Date(Number(request.expiresAt) * 1_000);
+        return {
+          id: requestId,
+          positionId: request.positionId,
+          requester: getAddress(request.requester),
+          expiresAt,
+          requiredApprovals: Number(progress.required),
+          completedApprovals: Number(progress.completed),
+          connectedMemberApproved,
+          status: groupExitStatusLabel(request.status, expiresAt),
+        };
+      })
+  );
+}
+
+async function sendGroupExitTransaction(
+  signer: Signer,
+  vaultAddress: string,
+  functionName: string,
+  requestId?: bigint
+): Promise<void> {
+  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const overrides = await transactionOverrides(signer);
+  const transaction =
+    requestId === undefined
+      ? await vault.getFunction(functionName)(overrides)
+      : await vault.getFunction(functionName)(requestId, overrides);
+  await transaction.wait();
+}
+
+export async function requestGroupExit(
+  signer: Signer,
+  vaultAddress: string
+): Promise<void> {
+  await sendGroupExitTransaction(signer, vaultAddress, "requestGroupExit");
+}
+
+export async function approveGroupExit(
+  signer: Signer,
+  vaultAddress: string,
+  requestId: bigint
+): Promise<void> {
+  await sendGroupExitTransaction(
+    signer,
+    vaultAddress,
+    "approveGroupExit",
+    requestId
+  );
+}
+
+export async function revokeGroupExitApproval(
+  signer: Signer,
+  vaultAddress: string,
+  requestId: bigint
+): Promise<void> {
+  await sendGroupExitTransaction(
+    signer,
+    vaultAddress,
+    "revokeGroupExitApproval",
+    requestId
+  );
+}
+
+export async function cancelGroupExit(
+  signer: Signer,
+  vaultAddress: string,
+  requestId: bigint
+): Promise<void> {
+  await sendGroupExitTransaction(
+    signer,
+    vaultAddress,
+    "cancelGroupExit",
+    requestId
+  );
+}
+
+export async function completeGroupExit(
+  signer: Signer,
+  vaultAddress: string,
+  requestId: bigint
+): Promise<void> {
+  await sendGroupExitTransaction(
+    signer,
+    vaultAddress,
+    "completeGroupExit",
+    requestId
+  );
 }
 
 function rayRateToApy(rate: bigint): number {
@@ -592,12 +823,14 @@ export async function createExitListing(
   const market = await marketFor(signer);
   const expiration = BigInt(Math.floor(new Date(expiresAt).getTime() / 1_000));
   const payoutFloor = amount(minimumPayout);
+  const overrides = await transactionOverrides(signer);
   await (
     await market.getFunction("createListing")(
       vault.address,
       vault.positionId,
       expiration,
-      payoutFloor
+      payoutFloor,
+      overrides
     )
   ).wait();
 }
@@ -625,13 +858,15 @@ export async function fundExitListing(
     tokenAbi,
     signer
   );
+  const overrides = await transactionOverrides(signer);
   await (
     await token.getFunction("approve")(
       await market.getAddress(),
-      saverPayout + providerFee
+      saverPayout + providerFee,
+      overrides
     )
   ).wait();
-  await (await market.getFunction("fundListing")(listingId)).wait();
+  await (await market.getFunction("fundListing")(listingId, overrides)).wait();
 }
 
 export async function cancelExitListing(
@@ -639,7 +874,10 @@ export async function cancelExitListing(
   listingId: bigint
 ): Promise<void> {
   const market = await marketFor(signer);
-  await (await market.getFunction("cancelListing")(listingId)).wait();
+  const overrides = await transactionOverrides(signer);
+  await (
+    await market.getFunction("cancelListing")(listingId, overrides)
+  ).wait();
 }
 
 function parsedEvent(log: Log, abi: readonly string[]) {
@@ -758,6 +996,57 @@ export async function loadActivity(
           log,
           "Reward eligibility ended",
           shortAddress(event.args.member),
+          vault
+        );
+      if (event.name === "GroupExitRequested")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} requested`,
+          `Expires ${new Date(
+            Number(event.args.expiresAt) * 1_000
+          ).toLocaleString()}`,
+          vault
+        );
+      if (event.name === "GroupExitApproved")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} approved`,
+          shortAddress(event.args.approver),
+          vault
+        );
+      if (event.name === "GroupExitApprovalRevoked")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} approval revoked`,
+          shortAddress(event.args.approver),
+          vault
+        );
+      if (event.name === "GroupExitCancelled")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} cancelled`,
+          "The saver may use the Early-Exit Market.",
+          vault
+        );
+      if (event.name === "GroupExitExpired")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} expired`,
+          "The saver may use the Early-Exit Market.",
+          vault
+        );
+      if (event.name === "GroupExitAuthorized")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} authorized`,
+          `${event.args.completedApprovals.toString()}/${event.args.requiredApprovals.toString()} approvals`,
+          vault
+        );
+      if (event.name === "GroupExitCompleted")
+        push(
+          log,
+          `Group exit #${event.args.requestId.toString()} completed`,
+          `${formatUnits(event.args.amount, USDT_DECIMALS)} mUSDT withdrawn`,
           vault
         );
     }

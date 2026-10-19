@@ -2,9 +2,9 @@
 
 ## Scope
 
-Phase 1 established savings-vault accounting with a USDT-compatible ERC-20. Phase 2A adds EVM ownership through Nimiq Pay and deterministic full-position early exits. Phase 2B adds immutable Safe and Earn vault modes, with Earn vaults using isolated Aave V3 adapters and share-based yield accounting. Guardian recovery, borrowing, performance fees and production deployment remain out of scope.
+Phase 1 established savings-vault accounting with a USDT-compatible ERC-20. Phase 2A adds EVM ownership through Nimiq Pay and deterministic full-position early exits. Phase 2B adds immutable Safe and Earn vault modes, with Earn vaults using isolated Aave V3 adapters and share-based yield accounting. Cooperative group exits add unanimous, contract-controlled approval without shared custody. Guardian recovery, borrowing, performance fees and production deployment remain out of scope.
 
-Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-1193 provider supplies the EVM account that owns vault positions. The interface displays both addresses. An unlocked Hardhat account is available only through the explicit local-development fallback.
+Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-1193 provider supplies the EVM account that owns vault positions and signs group approvals. The interface displays both addresses. Native Nimiq addresses are not Polygon signers, group vaults are not Nimiq multisig wallets, and no shared-custody wallet is introduced. An unlocked Hardhat account is available only through the explicit local-development fallback.
 
 ## Savings workflow
 
@@ -14,7 +14,7 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 4. Each deposit uses integer basis points: `emergency = amount * emergencyBps / 10_000`; all rounding remainder enters the locked balance.
 5. A member may withdraw their emergency balance at any time. This never reduces cumulative deposits or reverses goal completion.
 6. At or after maturity, the current position owner may withdraw its locked claim exactly once.
-7. Incomplete positions recover their funds but are not reward-eligible. A sold position is inactive and permanently reward-disqualified. Group rewards require every remaining active member to have reached the target.
+7. Incomplete positions recover their funds but are not reward-eligible. A market-sold or cooperatively exited position is inactive and permanently reward-disqualified. Group rewards require at least four eligible members and completion by every eligible member.
 8. Anyone may trigger reward activation at or after maturity when the vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded for that vault.
 
 ## Contract responsibilities
@@ -22,7 +22,7 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 ### VaultFactory
 
 - Holds immutable accepted-token and `RewardPool` references.
-- Deploys non-upgradeable personal and group vaults.
+- Uses an immutable, factory-only `SavingsVaultDeployer` to deploy non-upgradeable personal and group vaults while keeping runtime bytecode below the EVM size limit.
 - Creates a dedicated adapter for each Earn vault.
 - Validates creation parameters and records vault and member indexes.
 - Registers only factory-created vaults with the reward pool.
@@ -36,6 +36,8 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 - Keeps emergency withdrawal rights with the original saver after an early exit.
 - Allows only the immutable factory-created market to transfer position ownership.
 - Freezes deposits while a non-expired listing is active.
+- Records cooperative requests, Polygon-account approvals, revocations, expiry and final authorization on-chain.
+- Releases a cooperative exit only to the requesting member and never moves that member's emergency balance.
 - Tracks liabilities and rejects non-exact token transfer deltas.
 - Uses checks-effects-interactions, `SafeERC20` and `ReentrancyGuard` on value-moving operations.
 - Exposes no administrator, developer withdrawal, pause, target-editing or maturity-editing function.
@@ -75,13 +77,28 @@ At maturity, the adapter redeems the position shares. The vault clears shares an
 
 The displayed Aave liquidity rate is variable and is never represented as guaranteed interest or capital safety.
 
+## Cooperative group exits
+
+1. An active member with a funded group position may open one unresolved request. The request expires exactly seven days after creation.
+2. A request is unavailable while that position has an active Early-Exit Market listing. Deposits are frozen while a cooperative request is pending or authorized.
+3. Every other currently active member must approve from the Polygon EVM address recorded as their member address. The requester cannot self-approve; non-members, exited members, position buyers, factories, treasuries and deployers have no approval power.
+4. An approver may revoke only while the request is pending. The last required approval records an irreversible `Authorized` state.
+5. Authorization alone does not release funds. Before maturity, completion also requires every currently active member to have reached their goal and at least four active members at the start of completion.
+6. The requester completes the authorized exit and receives only their live locked-position value, including attributable Earn yield or loss. Emergency funds remain separately withdrawable by the original member.
+7. Cooperative completion charges no market discount and no provider fee. It marks the requester as `CooperativeExit`, removes approval power and permanently revokes reward eligibility.
+8. A pending request may be cancelled by its requester. Expired requests may be finalized by anyone or lazily finalized when the requester creates a market listing. Cancellation or expiry enables the existing market fallback.
+9. If an exit leaves fewer than four active members, additional cooperative early unlocks and group rewards are disabled. Every position owner retains their independent maturity withdrawal.
+10. `Active`, `CooperativeExit`, `MarketExit` and `Matured` are member-status records. A market buyer receives only position ownership; the original immutable member identity is never replaced.
+
+The vault emits `GroupExitRequested`, `GroupExitApproved`, `GroupExitApprovalRevoked`, `GroupExitCancelled`, `GroupExitExpired`, `GroupExitAuthorized`, `GroupExitCompleted` and `GroupMemberStatusChanged`. A future PostgreSQL service may index these events but cannot approve, price or settle an exit.
+
 ### Polygon configuration source
 
 Production configuration comes from the maintained `@aave-dao/aave-address-book` package, not handwritten constants. The selected package identifies Polygon chain ID `137`, Pool `0x794a61358D6845594F94dc1DB02A252b5b4814aD`, six-decimal USDT/USDT0 `0xc2132D05D31c914a87C6611C10748AEb04B58e8F`, and aUSDT `0x6ab707Aca953eDAeFBc4fD23bA73294241490620`. Deployment still validates these identities on-chain.
 
 ## Deterministic early-exit workflow
 
-1. Before maturity, the original saver may list their entire locked position with an expiration no later than maturity and a minimum acceptable payout. The contract calculates the displayed discount from objective on-chain history; neither saver nor provider can override it.
+1. Before maturity, the original saver may list their entire locked position with an expiration no later than maturity and a minimum acceptable payout, provided no pending or authorized cooperative request exists. The contract calculates the displayed discount from objective on-chain history; neither saver nor provider can override it.
 2. A liquidity provider decides only whether to fund at the current system price. Multiple providers may race, but there are no competing prices and only the first successful transaction wins.
 3. Settlement recalculates current claim value and discount. It reverts if the saver payout is below the listing's recorded minimum.
 4. The provider grants allowance for the current saver payout plus the separate 0.9% fee. Tokens remain with the provider until settlement.
@@ -123,6 +140,11 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 | Deposit                                         | Original member while they own the position        |
 | Withdraw emergency balance                      | Original member                                    |
 | Withdraw locked balance after maturity          | Current position owner                             |
+| Request a cooperative group exit                | Active original group member                       |
+| Approve/revoke a pending group exit             | Other active original group members                |
+| Cancel a pending group exit                     | Requester only                                     |
+| Complete an authorized cooperative exit         | Requester only, after active goals are complete    |
+| Record expiry                                   | Any caller, or immutable market during listing     |
 | Transfer a position                             | Immutable early-exit market only                   |
 | Create/cancel listing                           | Original saver while still current owner           |
 | Fund an active listing at its live system price | Any provider with sufficient balance and allowance |
@@ -140,6 +162,12 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - Vault liabilities are separated by position and state is reduced before outbound calls.
 - Locked funds cannot leave before maturity; deposits are rejected at and after maturity.
 - Deposits are rejected while a non-expired listing is active.
+- Deposits are rejected while a cooperative request is pending or authorized.
+- A position cannot have a live cooperative request and market listing simultaneously.
+- Cooperative authorization requires unanimous N-1 approval from current active members and becomes irreversible at the final approval.
+- Cooperative settlement pays only the requester's live claim, charges no discount or fee, and leaves emergency ownership unchanged.
+- Market buyers never acquire immutable membership, approval power or reward eligibility.
+- Fewer than four reward-eligible group members disables group rewards without blocking maturity withdrawals.
 - A locked balance cannot be withdrawn twice.
 - A position cannot be sold twice, partially, or at/after maturity.
 - Discounts are deterministic, remain within 450–800 basis points and are recalculated atomically at settlement.

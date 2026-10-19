@@ -54,7 +54,9 @@ export default defineConfig({
   solidity: {
     version: '0.8.30',
     settings: {
-      optimizer: { enabled: true, runs: 200 },
+      // The factory embeds SavingsVault creation code. Optimize for deployment
+      // size so the real EVM limit remains enforced as vault features grow.
+      optimizer: { enabled: true, runs: 1 },
       viaIR: true,
     },
   },

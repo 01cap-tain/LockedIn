@@ -45,6 +45,39 @@ interface ConnectOptions {
   forceDevelopmentFallback?: boolean;
 }
 
+interface AddEthereumChainParameter {
+  chainId: string;
+  chainName: string;
+  nativeCurrency: {
+    name: string;
+    symbol: string;
+    decimals: number;
+  };
+  rpcUrls: string[];
+  blockExplorerUrls: string[];
+}
+
+const POLYGON_AMOY_CHAIN_ID = "0x13882";
+
+/**
+ * Returns public metadata that an injected wallet can use to add a missing
+ * test network. Application RPC credentials are deliberately not used here:
+ * values passed to `wallet_addEthereumChain` are visible to the wallet/user.
+ */
+function addChainParameter(
+  chainId: string
+): AddEthereumChainParameter | undefined {
+  if (chainId !== POLYGON_AMOY_CHAIN_ID) return undefined;
+
+  return {
+    chainId: POLYGON_AMOY_CHAIN_ID,
+    chainName: "Polygon Amoy",
+    nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
+    rpcUrls: ["https://rpc-amoy.polygon.technology/"],
+    blockExplorerUrls: ["https://amoy.polygonscan.com/"],
+  };
+}
+
 function configuredChainId(): string {
   return (import.meta.env.VITE_EVM_CHAIN_ID ?? "0x7a69").toLowerCase();
 }
@@ -68,6 +101,46 @@ function normalizeChainId(chainId: unknown): string {
   return chainId.toLowerCase();
 }
 
+/**
+ * Requests a wallet-controlled network change. MetaMask uses error 4902 when
+ * the requested chain is unknown; for Amoy we can then present its standard
+ * network metadata and let the user approve adding it.
+ */
+async function selectExpectedChain(
+  provider: Eip1193EventsProvider,
+  expectedChainId: string
+): Promise<string> {
+  let chainId = normalizeChainId(
+    await provider.request({ method: "eth_chainId" })
+  );
+  if (chainId === expectedChainId) return chainId;
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: expectedChainId }],
+    });
+  } catch (error) {
+    if (providerErrorCode(error) !== 4902) throw error;
+
+    const chainParameter = addChainParameter(expectedChainId);
+    if (!chainParameter) throw error;
+    await provider.request({
+      method: "wallet_addEthereumChain",
+      params: [chainParameter],
+    });
+  }
+
+  chainId = normalizeChainId(await provider.request({ method: "eth_chainId" }));
+  if (chainId !== expectedChainId) {
+    throw new EvmWalletError(
+      "WRONG_NETWORK",
+      `Switch the EVM wallet to chain ${expectedChainId}; the connected chain is ${chainId}.`
+    );
+  }
+  return chainId;
+}
+
 export async function connectEvmWallet(
   options: ConnectOptions = {}
 ): Promise<EvmWalletSession> {
@@ -83,15 +156,10 @@ export async function connectEvmWallet(
       const accounts = await provider.request({
         method: "eth_requestAccounts",
       });
-      const chainId = normalizeChainId(
-        await provider.request({ method: "eth_chainId" })
-      );
-      if (chainId !== expectedChainId) {
-        throw new EvmWalletError(
-          "WRONG_NETWORK",
-          `Switch the EVM wallet to chain ${expectedChainId}; the connected chain is ${chainId}.`
-        );
-      }
+      // Account access and network selection are separate wallet approvals.
+      // An already-authorized site may skip the first prompt but still show
+      // MetaMask's confirmation dialog when a network change is necessary.
+      const chainId = await selectExpectedChain(provider, expectedChainId);
       if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
         throw new EvmWalletError(
           "CONNECTION_FAILED",

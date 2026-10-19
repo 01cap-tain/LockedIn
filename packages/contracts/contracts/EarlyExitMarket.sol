@@ -29,6 +29,7 @@ interface IMarketVault {
             uint32 deposits
         );
     function transferPosition(uint256 positionId, address expectedOwner, address newOwner) external;
+    function prepareMarketListing(uint256 positionId) external;
 }
 
 /// @notice Atomically sells complete locked claims at a price determined only by on-chain state.
@@ -156,6 +157,9 @@ contract EarlyExitMarket is ReentrancyGuard {
     {
         if (!IVaultFactoryView(factory).isVault(vault)) revert InvalidVault();
         IMarketVault savingsVault = IMarketVault(vault);
+        // The vault atomically rejects a live cooperative request and records a
+        // lazily expired request before the market creates a fallback listing.
+        savingsVault.prepareMarketListing(positionId);
         uint64 maturity = savingsVault.maturity();
         if (expiresAt <= block.timestamp || expiresAt > maturity) revert InvalidExpiration();
         if (savingsVault.positionOwner(positionId) != msg.sender) revert PositionOwnerOnly();

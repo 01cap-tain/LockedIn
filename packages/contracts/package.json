@@ -12,6 +12,7 @@
     "test:amoy:persistence": "hardhat run scripts/check-amoy-persistence.js --network amoy --no-compile",
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.js --network localhost --no-compile",
+    "smoke:local": "hardhat run scripts/smoke-local.js --network localhost --no-compile",
     "deploy:amoy": "hardhat run scripts/deploy-amoy.js --network amoy --no-compile",
     "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile"
   },

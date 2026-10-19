@@ -156,7 +156,9 @@ if (deployerBalance < minimumDeploymentBalance) {
   );
 }
 
-console.log("Deploying VaultFactory and its RewardPool/EarlyExitMarket...");
+console.log(
+  "Deploying VaultFactory and its RewardPool/EarlyExitMarket/SavingsVaultDeployer..."
+);
 const factory = await factoryContract.deploy(...factoryArguments, {
   gasLimit: factoryGasLimit,
   gasPrice: deploymentGasPrice,
@@ -168,9 +170,10 @@ const factoryRecord = await deploymentRecord(factory);
 const factoryReceipt = await factory.deploymentTransaction().wait();
 const rewardPool = await factory.rewardPool();
 const earlyExitMarket = await factory.earlyExitMarket();
+const vaultDeployer = await factory.vaultDeployer();
 const timestamp = new Date().toISOString();
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   network: "polygon-amoy",
   chainId: CHAIN_ID,
   explorer: "https://amoy.polygonscan.com",
@@ -188,6 +191,11 @@ const manifest = {
     },
     earlyExitMarket: {
       address: earlyExitMarket,
+      transactionHash: factoryRecord.transactionHash,
+      blockNumber: factoryReceipt.blockNumber,
+    },
+    savingsVaultDeployer: {
+      address: vaultDeployer,
       transactionHash: factoryRecord.transactionHash,
       blockNumber: factoryReceipt.blockNumber,
     },
