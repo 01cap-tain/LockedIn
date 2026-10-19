@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 
@@ -29,7 +30,7 @@ describe('LockedIn Circle Phase 1', function () {
       maintenanceTreasury,
     ] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -37,7 +38,7 @@ describe('LockedIn Circle Phase 1', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress()))
     maturity = BigInt(await networkHelpers.time.latest()) + 10n * 24n * 60n * 60n
   })
 
@@ -200,7 +201,7 @@ describe('LockedIn Circle Phase 1', function () {
   it('blocks reentrant emergency withdrawals', async function () {
     const callbackToken = await ethers.deployContract('CallbackUSDT')
     const attacker = await ethers.deployContract('ReentrantMember')
-    const callbackFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: callbackFactory } = await deployFactory(ethers, [
       await callbackToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -208,7 +209,7 @@ describe('LockedIn Circle Phase 1', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     const members = [
       await creator.getAddress(),
       await attacker.getAddress(),

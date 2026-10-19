@@ -36,6 +36,18 @@ const targets = [
     ],
   },
   {
+    name: 'SafetyController',
+    address: contracts.safetyController.address,
+    constructorArgs: [
+      contracts.vaultFactory.address,
+      config.safety.authority,
+      config.safety.timelockSeconds,
+      config.safety.maxPositionPrincipal,
+      config.safety.maxVaultPrincipal,
+      config.safety.maxProtocolPrincipal,
+    ],
+  },
+  {
     name: 'VaultFactory',
     address: contracts.vaultFactory.address,
     constructorArgs: [
@@ -46,6 +58,7 @@ const targets = [
       '0x0000000000000000000000000000000000000000',
       manifest.chainId,
       contracts.mockYieldAdapterFactory.address,
+      contracts.safetyController.address,
     ],
   },
   {
@@ -65,6 +78,7 @@ const targets = [
       contracts.vaultFactory.address,
       config.riskReserve,
       config.maintenanceTreasury,
+      contracts.safetyController.address,
     ],
   },
   {

@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const RAY = 10n ** 27n
@@ -24,7 +25,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     ;({ ethers, networkHelpers } = await network.create())
     ;[saver, providerOne, providerTwo, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -32,7 +33,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress()))
     maturity = BigInt(await networkHelpers.time.latest()) + 365n * 24n * 60n * 60n
     await factory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
@@ -141,7 +142,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     const aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
     const pool = await ethers.deployContract('MockAavePool', [await token.getAddress(), await aToken.getAddress()])
     await aToken.bindPool(await pool.getAddress())
-    const earnFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: earnFactory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -149,7 +150,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
       await aToken.getAddress(),
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
     const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
     const earnMarket = await ethers.getContractAt('EarlyExitMarket', await earnFactory.earlyExitMarket())
@@ -203,10 +204,10 @@ describe('EarlyExitMarket deterministic pricing', function () {
     const aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
     const pool = await ethers.deployContract('MockAavePool', [await token.getAddress(), await aToken.getAddress()])
     await aToken.bindPool(await pool.getAddress())
-    const earnFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: earnFactory } = await deployFactory(ethers, [
       await token.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
       await pool.getAddress(), await aToken.getAddress(), 31_337, ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
     const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
     const earnMarket = await ethers.getContractAt('EarlyExitMarket', await earnFactory.earlyExitMarket())
@@ -266,10 +267,10 @@ describe('EarlyExitMarket deterministic pricing', function () {
 
   it('rolls back atomically when a malicious ERC-20 returns false', async function () {
     const badToken = await ethers.deployContract('FalseReturnUSDT')
-    const badFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: badFactory } = await deployFactory(ethers, [
       await badToken.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
       ethers.ZeroAddress, ethers.ZeroAddress, 31_337, ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await badFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const badVault = await ethers.getContractAt('SavingsVault', await badFactory.vaultAt(0))
     const badMarket = await ethers.getContractAt('EarlyExitMarket', await badFactory.earlyExitMarket())
@@ -290,10 +291,10 @@ describe('EarlyExitMarket deterministic pricing', function () {
   it('blocks callback reentrancy while completing the original sale', async function () {
     const callbackToken = await ethers.deployContract('CallbackUSDT')
     const sellerContract = await ethers.deployContract('ReentrantMarketSeller')
-    const callbackFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: callbackFactory } = await deployFactory(ethers, [
       await callbackToken.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
       ethers.ZeroAddress, ethers.ZeroAddress, 31_337, ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     const callbackMarket = await ethers.getContractAt('EarlyExitMarket', await callbackFactory.earlyExitMarket())
     await callbackFactory.createGroupVault(
       [

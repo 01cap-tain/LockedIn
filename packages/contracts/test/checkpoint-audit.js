@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 
@@ -35,7 +36,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       maintenanceTreasury,
     ] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -43,7 +44,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress()))
     rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
     maturity = BigInt(await networkHelpers.time.latest()) + 30n * 24n * 60n * 60n
@@ -274,7 +275,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   it('rejects wrong-decimal, fee-on-transfer and negatively rebasing accounting', async function () {
     const wrong = await ethers.deployContract('WrongDecimalsToken')
     await expect(
-      ethers.deployContract('VaultFactory', [
+      deployFactory(ethers, [
         await wrong.getAddress(),
         await riskReserve.getAddress(),
         await maintenanceTreasury.getAddress(),
@@ -282,11 +283,11 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         31_337,
         ethers.ZeroAddress,
-      ]),
+      ], await riskReserve.getAddress()),
     ).to.be.revertedWithCustomError(factory, 'UnsupportedToken')
 
     const feeToken = await ethers.deployContract('FeeOnTransferUSDT')
-    const feeFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: feeFactory } = await deployFactory(ethers, [
       await feeToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -294,7 +295,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
     await fundAndApprove(saver, await feeVault.getAddress(), 100n * UNIT, feeToken)
@@ -303,7 +304,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect((await feeVault.position(0)).deposited).to.equal(0n)
 
     const slashToken = await ethers.deployContract('SlashableUSDT')
-    const slashFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: slashFactory } = await deployFactory(ethers, [
       await slashToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -311,7 +312,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await slashFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const slashVault = await ethers.getContractAt('SavingsVault', await slashFactory.vaultAt(0))
     await fundAndApprove(saver, await slashVault.getAddress(), 100n * UNIT, slashToken)
@@ -323,7 +324,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('supports exact-transfer tokens that omit ERC-20 return values', async function () {
     const noReturn = await ethers.deployContract('NoReturnUSDT')
-    const noReturnFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: noReturnFactory } = await deployFactory(ethers, [
       await noReturn.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -331,7 +332,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     await noReturnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const vault = await ethers.getContractAt('SavingsVault', await noReturnFactory.vaultAt(0))
     await noReturn.mint(await saver.getAddress(), 100n * UNIT)
@@ -343,7 +344,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('rolls back a market sale if the asset begins charging transfer fees', async function () {
     const feeToken = await ethers.deployContract('FeeOnTransferUSDT')
-    const feeFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: feeFactory } = await deployFactory(ethers, [
       await feeToken.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -351,7 +352,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress())
     const feeMarket = await ethers.getContractAt('EarlyExitMarket', await feeFactory.earlyExitMarket())
     await feeFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     const feeVault = await ethers.getContractAt('SavingsVault', await feeFactory.vaultAt(0))
@@ -372,7 +373,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('rejects duplicate treasury and group-member addresses', async function () {
     await expect(
-      ethers.deployContract('VaultFactory', [
+      deployFactory(ethers, [
         await outsider.getAddress(),
         await riskReserve.getAddress(),
         await maintenanceTreasury.getAddress(),
@@ -380,10 +381,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         31_337,
         ethers.ZeroAddress,
-      ]),
+      ], await riskReserve.getAddress()),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
-      ethers.deployContract('VaultFactory', [
+      deployFactory(ethers, [
         await token.getAddress(),
         ethers.ZeroAddress,
         await maintenanceTreasury.getAddress(),
@@ -391,10 +392,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         31_337,
         ethers.ZeroAddress,
-      ]),
+      ], await riskReserve.getAddress()),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(
-      ethers.deployContract('VaultFactory', [
+      deployFactory(ethers, [
         await token.getAddress(),
         await riskReserve.getAddress(),
         await riskReserve.getAddress(),
@@ -402,7 +403,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         ethers.ZeroAddress,
         31_337,
         ethers.ZeroAddress,
-      ]),
+      ], await riskReserve.getAddress()),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
 
     const duplicate = [await saver.getAddress(), await saver.getAddress()]

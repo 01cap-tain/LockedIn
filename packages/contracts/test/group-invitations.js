@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
@@ -22,7 +23,7 @@ describe('Group invitation activation', function () {
     invitees = signers.slice(1, 4)
     outsider = signers[4]
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await signers[5].getAddress(),
       await signers[6].getAddress(),
@@ -30,7 +31,7 @@ describe('Group invitation activation', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await signers[7].getAddress()))
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
     maturity = BigInt(await networkHelpers.time.latest()) + 30n * DAY
   })

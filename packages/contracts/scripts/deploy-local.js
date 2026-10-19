@@ -14,6 +14,22 @@ const aavePool = await ethers.deployContract('MockAavePool', [await token.getAdd
 await aavePool.waitForDeployment()
 await (await aToken.bindPool(await aavePool.getAddress())).wait()
 
+const deployerAddress = await deployer.getAddress()
+const safetyNonce = await ethers.provider.getTransactionCount(deployerAddress)
+const predictedFactory = ethers.getCreateAddress({
+  from: deployerAddress,
+  nonce: safetyNonce + 1,
+})
+const safetyControllerContract = await ethers.deployContract('SafetyController', [
+  predictedFactory,
+  deployerAddress, // Test-only local safety council.
+  60 * 60,
+  1_000_000n * 10n ** 6n,
+  10_000_000n * 10n ** 6n,
+  100_000_000n * 10n ** 6n,
+])
+await safetyControllerContract.waitForDeployment()
+
 const factory = await ethers.deployContract('VaultFactory', [
   await token.getAddress(),
   await riskReserve.getAddress(),
@@ -22,12 +38,14 @@ const factory = await ethers.deployContract('VaultFactory', [
   await aToken.getAddress(),
   31_337,
   ethers.ZeroAddress,
+  await safetyControllerContract.getAddress(),
 ])
 await factory.waitForDeployment()
 
 const rewardPool = await factory.rewardPool()
 const earlyExitMarket = await factory.earlyExitMarket()
 const vaultDeployer = await factory.vaultDeployer()
+const safetyController = await safetyControllerContract.getAddress()
 const starterBalance = 1_000_000n * 10n ** 6n
 await (await token.mint(await deployer.getAddress(), starterBalance)).wait()
 
@@ -39,6 +57,7 @@ console.log(`VaultFactory: ${await factory.getAddress()}`)
 console.log(`RewardPool: ${rewardPool}`)
 console.log(`EarlyExitMarket: ${earlyExitMarket}`)
 console.log(`SavingsVaultDeployer: ${vaultDeployer}`)
+console.log(`SafetyController: ${safetyController} (deployer-controlled, test only)`)
 console.log(`Risk reserve: ${await riskReserve.getAddress()}`)
 console.log(`Maintenance treasury: ${await maintenanceTreasury.getAddress()}`)
 console.log('Set VITE_FACTORY_ADDRESS to the VaultFactory address before starting the frontend.')
@@ -59,6 +78,7 @@ await writeFile(
         rewardPool,
         earlyExitMarket,
         savingsVaultDeployer: vaultDeployer,
+        safetyController,
       },
     },
     null,

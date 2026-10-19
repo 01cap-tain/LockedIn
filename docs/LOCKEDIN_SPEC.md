@@ -23,6 +23,7 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 ### VaultFactory
 
 - Holds immutable accepted-token and `RewardPool` references.
+- Refuses new vault creation while the shared safety controller is paused.
 - Uses an immutable, factory-only `SavingsVaultDeployer` to deploy non-upgradeable personal and group vaults while keeping runtime bytecode below the EVM size limit.
 - Creates a dedicated adapter for each Earn vault.
 - Validates creation parameters and records vault and member indexes.
@@ -42,6 +43,17 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 - Tracks liabilities and rejects non-exact token transfer deltas.
 - Uses checks-effects-interactions, `SafeERC20` and `ReentrancyGuard` on value-moving operations.
 - Exposes no administrator, developer withdrawal, pause, target-editing or maturity-editing function.
+- Reports every principal deposit and withdrawal to the immutable safety controller; generated yield is excluded from exposure.
+
+### SafetyController
+
+- Has no token custody, transfer, upgrade, position-ownership or fee-routing capability.
+- Accepts an immutable deployment-configured safety council. Production is designed for an EVM multisig; the local and Amoy deployer-controlled council is explicitly test-only.
+- Allows that council to pause immediately. Unpausing and every cap change require the immutable timelock and may be executed permissionlessly after it expires.
+- While paused, blocks only new vaults, deposits, final group activation, new listings and market funding. Because Earn supply occurs only inside `deposit`, the same boundary blocks new yield supplies.
+- Never blocks emergency withdrawals, matured withdrawals, listing cancellation, authorized cooperative-exit execution, already allocated reward claims or reads.
+- Tracks net outstanding six-decimal principal for each registered vault and protocol-wide. Caps apply independently per position, per vault and protocol-wide.
+- Allows caps to be lowered below current exposure without moving funds; only a later deposit is blocked. Principal withdrawals reduce exposure, while market ownership transfers and generated yield do not change it.
 
 ### RewardPool
 
@@ -162,6 +174,9 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 | Fund a vault reward budget                      | Any token holder                                   |
 | Activate rewards                                | Any caller through an eligible vault               |
 | Claim a reward                                  | Reward recipient                                   |
+| Pause risk-increasing actions                   | Immutable safety council                           |
+| Schedule unpause or cap changes                 | Immutable safety council                           |
+| Execute elapsed safety changes                  | Any address after the timelock                      |
 
 ## Security invariants
 
@@ -189,6 +204,9 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - Settlement, fee distribution and position transfer are atomic and reentrancy-protected.
 - Risk-reserve and maintenance-treasury recipients are immutable.
 - No privileged party can withdraw principal or choose reward recipients.
+- Safety authority cannot move user funds, transfer claims, upgrade contracts, set market prices or redirect protocol fees.
+- Pausing cannot block emergency withdrawals, matured withdrawals, listing cancellation, authorized cooperative exits or already allocated reward claims.
+- Position, vault and protocol exposure caps count net outstanding principal only; generated yield and claim transfers never inflate or reduce principal exposure.
 - Reward activation is one-time, post-maturity and derived only from registered-vault state.
 - A seller is reward-disqualified atomically while emergency ownership remains unchanged.
 - Vault balances cover emergency and locked liabilities. RewardPool balances cover campaigns, claims and retained protocol revenue.

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
 import { polygonAaveConfig } from '../scripts/polygon-aave-config.js'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const RAY = 10n ** 27n
@@ -34,7 +35,7 @@ describe('LockedIn Circle Phase 2B', function () {
       await aToken.getAddress(),
     ])
     await aToken.bindPool(await pool.getAddress())
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -42,7 +43,7 @@ describe('LockedIn Circle Phase 2B', function () {
       await aToken.getAddress(),
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress()))
     market = await ethers.getContractAt(
       'EarlyExitMarket',
       await factory.earlyExitMarket()
@@ -405,7 +406,7 @@ describe('Polygon Amoy mock-yield configuration', function () {
       'MockYieldAdapterFactory',
       [await token.getAddress(), 31_337, (5n * RAY) / 100n]
     )
-    const factory = await ethers.deployContract('VaultFactory', [
+    const { factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -413,7 +414,7 @@ describe('Polygon Amoy mock-yield configuration', function () {
       ethers.ZeroAddress,
       31_337,
       await adapterFactory.getAddress(),
-    ])
+    ], await riskReserve.getAddress())
     const maturity =
       BigInt(await networkHelpers.time.latest()) + 30n * 24n * 60n * 60n
 

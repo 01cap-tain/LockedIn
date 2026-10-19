@@ -12,6 +12,7 @@ import {EarlyExitMarket} from "./EarlyExitMarket.sol";
 import {AaveYieldAdapter} from "./AaveYieldAdapter.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 import {IYieldAdapterFactory} from "./interfaces/IYieldAdapterFactory.sol";
+import {SafetyController} from "./SafetyController.sol";
 
 /// @notice Deploys immutable Safe or Earn savings vaults and records membership indexes.
 /// @dev The factory creates infrastructure but receives no authority over member principal.
@@ -31,6 +32,7 @@ contract VaultFactory {
     uint256 public immutable deploymentChainId;
     IYieldAdapterFactory public immutable testYieldAdapterFactory;
     SavingsVaultDeployer public immutable vaultDeployer;
+    SafetyController public immutable safetyController;
 
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
@@ -52,7 +54,8 @@ contract VaultFactory {
         IPool aavePool_,
         IAToken aToken_,
         uint256 deploymentChainId_,
-        IYieldAdapterFactory testYieldAdapterFactory_
+        IYieldAdapterFactory testYieldAdapterFactory_,
+        SafetyController safetyController_
     ) {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
@@ -73,15 +76,26 @@ contract VaultFactory {
                         || testYieldAdapterFactory_.asset() != address(asset_)
                 )
         ) revert InvalidConfiguration();
+        if (
+            address(safetyController_) == address(0) ||
+            address(safetyController_).code.length == 0 ||
+            safetyController_.factory() != address(this)
+        ) revert InvalidConfiguration();
         asset = asset_;
         aavePool = aavePool_;
         aToken = aToken_;
         deploymentChainId = deploymentChainId_;
         testYieldAdapterFactory = testYieldAdapterFactory_;
         vaultDeployer = new SavingsVaultDeployer();
+        safetyController = safetyController_;
         rewardPool = new RewardPool(asset_, address(this));
         earlyExitMarket = new EarlyExitMarket(
-            asset_, rewardPool, address(this), riskReserve_, maintenanceTreasury_
+            asset_,
+            rewardPool,
+            address(this),
+            riskReserve_,
+            maintenanceTreasury_,
+            safetyController
         );
     }
 
@@ -94,6 +108,7 @@ contract VaultFactory {
         external
         returns (address vault)
     {
+        safetyController.requireNotPaused();
         address[] memory members = new address[](1);
         members[0] = msg.sender;
         uint256[] memory targets = new uint256[](1);
@@ -110,6 +125,7 @@ contract VaultFactory {
         uint64 maturity,
         SavingsVault.VaultMode mode
     ) external returns (address vault) {
+        safetyController.requireNotPaused();
         uint256 count = members.length;
         if (count < MIN_GROUP_MEMBERS || count > MAX_GROUP_MEMBERS) {
             revert InvalidConfiguration();
@@ -166,6 +182,7 @@ contract VaultFactory {
             group,
             creator,
             address(earlyExitMarket),
+            safetyController,
             mode,
             adapter,
             members,
@@ -177,6 +194,7 @@ contract VaultFactory {
         if (mode == SavingsVault.VaultMode.Earn) adapter.bindVault(vault);
         _vaults.push(vault);
         isVault[vault] = true;
+        safetyController.registerVault(vault);
 
         for (uint256 i; i < members.length; ++i) {
             _memberVaults[members[i]].push(vault);

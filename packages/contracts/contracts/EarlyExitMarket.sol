@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {RewardPool} from "./RewardPool.sol";
+import {SafetyController} from "./SafetyController.sol";
 
 interface IVaultFactoryView {
     function isVault(address vault) external view returns (bool);
@@ -89,6 +90,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     address public immutable factory;
     address public immutable riskReserve;
     address public immutable maintenanceTreasury;
+    SafetyController public immutable safetyController;
 
     uint256 public nextListingId;
     mapping(uint256 listingId => Listing) public listings;
@@ -125,7 +127,8 @@ contract EarlyExitMarket is ReentrancyGuard {
         RewardPool rewardPool_,
         address factory_,
         address riskReserve_,
-        address maintenanceTreasury_
+        address maintenanceTreasury_,
+        SafetyController safetyController_
     ) {
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) || factory_ == address(0)
@@ -134,13 +137,14 @@ contract EarlyExitMarket is ReentrancyGuard {
                 || maintenanceTreasury_ == address(this) || riskReserve_ == address(asset_)
                 || maintenanceTreasury_ == address(asset_) || riskReserve_ == address(rewardPool_)
                 || maintenanceTreasury_ == address(rewardPool_) || riskReserve_ == factory_
-                || maintenanceTreasury_ == factory_
+                || maintenanceTreasury_ == factory_ || address(safetyController_) == address(0)
         ) revert InvalidAddress();
         asset = asset_;
         rewardPool = rewardPool_;
         factory = factory_;
         riskReserve = riskReserve_;
         maintenanceTreasury = maintenanceTreasury_;
+        safetyController = safetyController_;
     }
 
     function isPositionListed(address vault, uint256 positionId) external view returns (bool) {
@@ -155,6 +159,7 @@ contract EarlyExitMarket is ReentrancyGuard {
         external
         returns (uint256 listingId)
     {
+        safetyController.requireNotPaused();
         if (!IVaultFactoryView(factory).isVault(vault)) revert InvalidVault();
         IMarketVault savingsVault = IMarketVault(vault);
         // The vault atomically rejects a live cooperative request and records a
@@ -228,6 +233,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     /// @notice Funds the recalculated system price and transfers the complete claim atomically.
     /// @dev The first successful provider closes the listing; concurrent later transactions revert.
     function fundListing(uint256 listingId) external nonReentrant {
+        safetyController.requireNotPaused();
         Listing storage listing = _activeListing(listingId);
         if (msg.sender == listing.seller) revert ProviderOnly();
 

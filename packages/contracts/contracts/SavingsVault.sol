@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {RewardPool} from "./RewardPool.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
+import {SafetyController} from "./SafetyController.sol";
 
 interface IEarlyExitMarketStatus {
     function isPositionListed(address vault, uint256 positionId) external view returns (bool);
@@ -95,6 +96,7 @@ contract SavingsVault is ReentrancyGuard {
     address public immutable earlyExitMarket;
     VaultMode public immutable mode;
     IYieldAdapter public immutable yieldAdapter;
+    SafetyController public immutable safetyController;
     GroupLifecycle public groupLifecycle;
     uint32 public acceptedMemberCount;
 
@@ -171,6 +173,7 @@ contract SavingsVault is ReentrancyGuard {
         bool isGroup_,
         address groupCreator_,
         address earlyExitMarket_,
+        SafetyController safetyController_,
         VaultMode mode_,
         IYieldAdapter yieldAdapter_,
         address[] memory members_,
@@ -180,7 +183,7 @@ contract SavingsVault is ReentrancyGuard {
         uint256 count = members_.length;
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) ||
-            groupCreator_ == address(0) ||
+            groupCreator_ == address(0) || address(safetyController_) == address(0) ||
             maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
             (isGroup_ && (count < MIN_GROUP_SIZE || maturity_ <= block.timestamp + GROUP_INVITATION_LIFETIME)) ||
@@ -198,6 +201,7 @@ contract SavingsVault is ReentrancyGuard {
             ? uint64(block.timestamp) + GROUP_INVITATION_LIFETIME
             : 0;
         earlyExitMarket = earlyExitMarket_;
+        safetyController = safetyController_;
         mode = mode_;
         yieldAdapter = yieldAdapter_;
 
@@ -266,6 +270,12 @@ contract SavingsVault is ReentrancyGuard {
         _positionIdForMember(msg.sender);
         if (groupInvitationAccepted[msg.sender] || groupInvitationDeclined[msg.sender]) {
             revert InvitationAlreadyAnswered();
+        }
+
+        // Earlier acceptances may be recorded while paused, but the final
+        // acceptance cannot activate a new savings group until unpaused.
+        if (acceptedMemberCount + 1 == _positions.length) {
+            safetyController.requireNotPaused();
         }
 
         groupInvitationAccepted[msg.sender] = true;
@@ -487,6 +497,7 @@ contract SavingsVault is ReentrancyGuard {
         rewardDisqualified[positionId] = true;
         request.status = GroupExitRequestStatus.Completed;
         _setMemberStatus(positionId, MemberStatus.CooperativeExit);
+        safetyController.recordWithdrawal(principal);
 
         // All accounting effects precede the external interaction. Any adapter
         // or token failure reverts the entire transaction and preserves retryability.
@@ -569,6 +580,10 @@ contract SavingsVault is ReentrancyGuard {
             revert PositionListed();
         }
 
+        // The shared controller enforces position, vault and protocol caps from
+        // net outstanding principal. Any later revert rolls this reservation back.
+        safetyController.recordDeposit(activePrincipalSavings(positionId), amount);
+
         // Integer rounding intentionally benefits the locked portion: emergency receives the
         // truncated basis-point amount and every remaining unit is counted as locked principal.
         uint256 emergencyAmount = amount * stored.emergencyBps / 10_000;
@@ -607,6 +622,7 @@ contract SavingsVault is ReentrancyGuard {
 
         stored.emergencyBalance -= amount;
         totalEmergencyLiability -= amount;
+        safetyController.recordWithdrawal(amount);
         _transferOutExact(msg.sender, amount);
         _assertSolvent();
         emit EmergencyWithdrawn(positionId, msg.sender, amount);
@@ -630,6 +646,7 @@ contract SavingsVault is ReentrancyGuard {
         if (memberStatus[positionId] == MemberStatus.Active) {
             _setMemberStatus(positionId, MemberStatus.Matured);
         }
+        safetyController.recordWithdrawal(principal);
 
         // Reverts roll these effects back if redemption or transfer fails.
         uint256 amount;

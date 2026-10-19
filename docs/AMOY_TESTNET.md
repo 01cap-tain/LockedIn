@@ -4,7 +4,7 @@
 
 Amoy chain state is authoritative for vault balances, position ownership, deterministic discounts and settlement. Deployment manifests contain public metadata only. RPC credentials, API keys, private keys and mnemonics belong only in the ignored `.env.amoy` file or a CI secret store.
 
-Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL. The factory constructor deploys its RewardPool and EarlyExitMarket, so it is substantially more expensive than the two mock contracts. The deployment script checks a live gas-price-based balance budget before sending its first transaction; approximately 0.5 test POL is a sensible starting balance, but the script's current calculation is authoritative.
+Never use a funded production wallet for this testnet. Create disposable Amoy-only wallets and fund them with test POL. The deployment creates a standalone SafetyController followed by the factory, whose constructor creates its RewardPool and EarlyExitMarket, so it is substantially more expensive than the two mock contracts. The deployment script checks a live gas-price-based balance budget before sending its first transaction; approximately 0.5 test POL is a sensible starting balance, but the script's current calculation is authoritative.
 
 ## Network
 
@@ -24,6 +24,8 @@ Use a dedicated Amoy endpoint such as `https://polygon-amoy.g.alchemy.com/v2/YOU
 For interactive testing, leave `AMOY_WALLET_A_PRIVATE_KEY` and `AMOY_WALLET_B_PRIVATE_KEY` blank. Connect Wallet A through MetaMask, use the Wallet page to mint valueless test mUSDT, and perform the saver flow. Then switch MetaMask to Wallet B; the app listens for the account change, clears address-scoped state and reloads the market for the new signer. Wallet B can mint its own test mUSDT before funding the listing.
 
 The two optional wallet private keys are needed only by `contracts:test:amoy`, which provides a repeatable automated CLI version of the same flow. Never export real or funded-wallet keys for this test.
+
+The Amoy safety council is deliberately the disposable deployer and is labelled `test-only-deployer` in the manifest. Its unpause/cap timelock is 24 hours. Testnet exposure caps are 1,000,000 mUSDT per position, 10,000,000 mUSDT per vault and 100,000,000 mUSDT protocol-wide. These high values are test configuration, not proposed production economics. Production safety authority must be a reviewed multisig, and production caps remain unset until audit and economic review.
 
 The Hardhat configuration reads `.env.amoy` using Node's built-in environment-file loader. Vite exposes only variables prefixed with `VITE_`; private key variables are never included in the browser bundle.
 

@@ -8,6 +8,12 @@ import { network } from "hardhat";
 
 const CHAIN_ID = 80_002;
 const TOKEN_DECIMALS = 6;
+const UNIT = 10n ** BigInt(TOKEN_DECIMALS);
+// These deliberately high limits are testnet parameters, not production recommendations.
+const AMOY_SAFETY_TIMELOCK_SECONDS = 24 * 60 * 60;
+const AMOY_MAX_POSITION_PRINCIPAL = 1_000_000n * UNIT;
+const AMOY_MAX_VAULT_PRINCIPAL = 10_000_000n * UNIT;
+const AMOY_MAX_PROTOCOL_PRINCIPAL = 100_000_000n * UNIT;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const prerequisitePath = path.resolve(
   scriptDirectory,
@@ -115,6 +121,33 @@ console.log(
   `Reusing confirmed MockYieldAdapterFactory at ${adapterFactoryRecord.address}.`
 );
 
+const deployerAddress = await deployer.getAddress();
+const safetyNonce = await ethers.provider.getTransactionCount(
+  deployerAddress,
+  "pending"
+);
+// SafetyController needs an immutable factory address, so the deployment binds it
+// to the very next CREATE address from this signer. The factory constructor checks
+// the reciprocal binding and rejects any mismatched controller.
+const predictedFactoryAddress = ethers.getCreateAddress({
+  from: deployerAddress,
+  nonce: safetyNonce + 1,
+});
+const safetyArguments = [
+  predictedFactoryAddress,
+  deployerAddress, // TEST ONLY: replace with a reviewed multisig for production.
+  AMOY_SAFETY_TIMELOCK_SECONDS,
+  AMOY_MAX_POSITION_PRINCIPAL,
+  AMOY_MAX_VAULT_PRINCIPAL,
+  AMOY_MAX_PROTOCOL_PRINCIPAL,
+];
+const safetyContractFactory = await ethers.getContractFactory(
+  "SafetyController",
+  deployer
+);
+const unsignedSafetyDeployment =
+  await safetyContractFactory.getDeployTransaction(...safetyArguments);
+
 const factoryArguments = [
   await token.getAddress(),
   riskReserve,
@@ -128,31 +161,60 @@ const factoryContract = await ethers.getContractFactory(
   "VaultFactory",
   deployer
 );
-const unsignedFactoryDeployment = await factoryContract.getDeployTransaction(
-  ...factoryArguments
-);
 const [deployerBalance, feeData] = await Promise.all([
-  ethers.provider.getBalance(await deployer.getAddress()),
+  ethers.provider.getBalance(deployerAddress),
   ethers.provider.getFeeData(),
 ]);
 const deploymentGasPrice = feeData.gasPrice;
 if (!deploymentGasPrice) {
   throw new Error("The Amoy RPC did not return a usable legacy gas price.");
 }
-const estimatedFactoryGas = await ethers.provider.estimateGas({
-  ...unsignedFactoryDeployment,
-  from: await deployer.getAddress(),
+const estimatedSafetyGas = await ethers.provider.estimateGas({
+  ...unsignedSafetyDeployment,
+  from: deployerAddress,
 });
-const factoryGasLimit = (estimatedFactoryGas * 120n) / 100n;
-const minimumDeploymentBalance = factoryGasLimit * deploymentGasPrice;
+const safetyGasLimit = (estimatedSafetyGas * 120n) / 100n;
+// The factory validates the controller's deployed bytecode, so its live gas
+// estimate is only possible after the controller exists. Reserve a conservative
+// testnet budget before sending the first transaction to avoid an orphaned setup.
+const factoryPreflightGasBudget = 12_000_000n;
+const minimumDeploymentBalance =
+  (safetyGasLimit + factoryPreflightGasBudget) * deploymentGasPrice;
 if (deployerBalance < minimumDeploymentBalance) {
   throw new Error(
-    `The Amoy deployer is underfunded for the remaining VaultFactory transaction. ` +
+    `The Amoy deployer is underfunded for SafetyController plus VaultFactory. ` +
       `Current balance: ${ethers.formatEther(deployerBalance)} POL; ` +
       `required at the current gas price: ${ethers.formatEther(
         minimumDeploymentBalance
       )} POL. ` +
       "Request more test POL or retry when Amoy gas is lower."
+  );
+}
+
+console.log(
+  "Deploying SafetyController with a deployer-controlled TEST-ONLY safety role..."
+);
+const safetyController = await safetyContractFactory.deploy(...safetyArguments, {
+  gasLimit: safetyGasLimit,
+  gasPrice: deploymentGasPrice,
+});
+await safetyController.waitForDeployment();
+const safetyRecord = await deploymentRecord(safetyController);
+console.log(`SafetyController confirmed at ${safetyRecord.address}.`);
+
+factoryArguments.push(safetyRecord.address);
+const unsignedFactoryDeployment = await factoryContract.getDeployTransaction(
+  ...factoryArguments
+);
+const estimatedFactoryGas = await ethers.provider.estimateGas({
+  ...unsignedFactoryDeployment,
+  from: deployerAddress,
+});
+const factoryGasLimit = (estimatedFactoryGas * 120n) / 100n;
+if ((await ethers.provider.getBalance(deployerAddress)) < factoryGasLimit * deploymentGasPrice) {
+  throw new Error(
+    "SafetyController was confirmed, but the deployer no longer has enough POL for VaultFactory. " +
+      `The controller is bound to ${predictedFactoryAddress}; fund the same deployer before retrying with recovery tooling.`
   );
 }
 
@@ -167,13 +229,16 @@ await factory.waitForDeployment();
 console.log(`VaultFactory confirmed at ${await factory.getAddress()}.`);
 
 const factoryRecord = await deploymentRecord(factory);
+if (factoryRecord.address.toLowerCase() !== predictedFactoryAddress.toLowerCase()) {
+  throw new Error("Confirmed factory address differs from the safety binding.");
+}
 const factoryReceipt = await factory.deploymentTransaction().wait();
 const rewardPool = await factory.rewardPool();
 const earlyExitMarket = await factory.earlyExitMarket();
 const vaultDeployer = await factory.vaultDeployer();
 const timestamp = new Date().toISOString();
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   network: "polygon-amoy",
   chainId: CHAIN_ID,
   explorer: "https://amoy.polygonscan.com",
@@ -183,6 +248,7 @@ const manifest = {
   contracts: {
     mockUsdt: tokenRecord,
     mockYieldAdapterFactory: adapterFactoryRecord,
+    safetyController: safetyRecord,
     vaultFactory: factoryRecord,
     rewardPool: {
       address: rewardPool,
@@ -205,6 +271,14 @@ const manifest = {
     yieldAdapter: "MockYieldAdapter",
     riskReserve,
     maintenanceTreasury,
+    safety: {
+      authority: deployerAddress,
+      authorityType: "test-only-deployer",
+      timelockSeconds: AMOY_SAFETY_TIMELOCK_SECONDS,
+      maxPositionPrincipal: AMOY_MAX_POSITION_PRINCIPAL.toString(),
+      maxVaultPrincipal: AMOY_MAX_VAULT_PRINCIPAL.toString(),
+      maxProtocolPrincipal: AMOY_MAX_PROTOCOL_PRINCIPAL.toString(),
+    },
   },
 };
 
@@ -219,6 +293,7 @@ await writeFile(path.join(outputDirectory, "latest.json"), contents);
 
 console.log(`Amoy deployment recorded as ${version}.`);
 console.log(`VaultFactory: ${factoryRecord.address}`);
+console.log(`SafetyController: ${safetyRecord.address} (TEST-ONLY authority)`);
 console.log(
   `Explorer: https://amoy.polygonscan.com/address/${factoryRecord.address}`
 );

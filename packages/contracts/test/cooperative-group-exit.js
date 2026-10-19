@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
+import { deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
@@ -28,7 +29,7 @@ describe('Cooperative group exits', function () {
     riskReserve = signers[8]
     maintenanceTreasury = signers[9]
     token = await ethers.deployContract('MockUSDT')
-    factory = await ethers.deployContract('VaultFactory', [
+    ;({ factory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -36,7 +37,7 @@ describe('Cooperative group exits', function () {
       ethers.ZeroAddress,
       31_337,
       ethers.ZeroAddress,
-    ])
+    ], await riskReserve.getAddress()))
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
     maturity = BigInt(await networkHelpers.time.latest()) + 60n * DAY
   })
@@ -158,7 +159,7 @@ describe('Cooperative group exits', function () {
       31_337,
       5n * 10n ** 25n,
     ])
-    const earnFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: earnFactory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -166,7 +167,7 @@ describe('Cooperative group exits', function () {
       ethers.ZeroAddress,
       31_337,
       await adapterFactory.getAddress(),
-    ])
+    ], await riskReserve.getAddress())
     const vault = await createGroup(5, 1, earnFactory)
     await completeGoals(vault)
     const adapter = await ethers.getContractAt('MockYieldAdapter', await vault.yieldAdapter())
@@ -287,7 +288,7 @@ describe('Cooperative group exits', function () {
       31_337,
       0,
     ])
-    const earnFactory = await ethers.deployContract('VaultFactory', [
+    const { factory: earnFactory } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -295,7 +296,7 @@ describe('Cooperative group exits', function () {
       ethers.ZeroAddress,
       31_337,
       await adapterFactory.getAddress(),
-    ])
+    ], await riskReserve.getAddress())
     const vault = await createGroup(5, 1, earnFactory)
     await deposit(vault, members[0], 0)
     await deposit(vault, members[1], 1, 20n * UNIT)
