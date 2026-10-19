@@ -64,18 +64,23 @@ describe('LockedIn Circle Phase 2B', function () {
   }
 
   async function createGroupVault() {
-    const members = [await saver.getAddress(), await memberTwo.getAddress()]
+    const groupSigners = [saver, memberTwo, buyer, outsider]
+    const members = await Promise.all(groupSigners.map((member) => member.getAddress()))
     await factory.createGroupVault(
       members,
-      [100n * UNIT, 100n * UNIT],
-      [1_000, 1_000],
+      members.map(() => 100n * UNIT),
+      members.map(() => 1_000),
       maturity,
       1
     )
-    return ethers.getContractAt(
+    const vault = await ethers.getContractAt(
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n)
     )
+    for (let index = 1; index < groupSigners.length; index += 1) {
+      await vault.connect(groupSigners[index]).acceptGroupInvitation()
+    }
+    return vault
   }
 
   async function fundAndApprove(account, spender, amount) {

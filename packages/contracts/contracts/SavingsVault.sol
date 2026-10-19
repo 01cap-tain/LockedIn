@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {RewardPool} from "./RewardPool.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
@@ -18,12 +19,16 @@ contract SavingsVault is ReentrancyGuard {
 
     uint16 public constant MIN_EMERGENCY_BPS = 1_000;
     uint16 public constant MAX_EMERGENCY_BPS = 1_500;
-    uint64 public constant GROUP_EXIT_REQUEST_LIFETIME = 7 days;
-    uint256 public constant MIN_ACTIVE_GROUP_MEMBERS = 4;
+    uint64 public constant GROUP_EXIT_REQUEST_LIFETIME = 24 hours;
+    uint64 public constant GROUP_EXIT_AUTHORIZATION_LIFETIME = 24 hours;
+    uint64 public constant GROUP_INVITATION_LIFETIME = 72 hours;
+    uint16 public constant MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS = 2_500;
+    uint256 public constant MIN_GROUP_SIZE = 4;
 
     enum VaultMode { Safe, Earn }
     enum MemberStatus { Active, CooperativeExit, MarketExit, Matured }
     enum GroupExitRequestStatus { None, Pending, Authorized, Cancelled, Expired, Completed }
+    enum GroupLifecycle { NotApplicable, Pending, Active, Declined, Expired, Cancelled }
 
     struct Position {
         address member;
@@ -41,6 +46,7 @@ contract SavingsVault is ReentrancyGuard {
         address requester;
         uint64 createdAt;
         uint64 expiresAt;
+        uint64 authorizationExpiresAt;
         uint32 requiredApprovals;
         uint32 completedApprovals;
         GroupExitRequestStatus status;
@@ -59,14 +65,21 @@ contract SavingsVault is ReentrancyGuard {
     error RewardsNotReady();
     error PositionListed();
     error GroupOnly();
+    error GroupNotActive();
+    error InvitationUnavailable();
+    error InvitationExpired();
+    error InvitationAlreadyAnswered();
+    error CreatorOnly();
     error GroupEarlyUnlockDisabled();
     error GroupExitUnavailable();
     error GroupExitUnresolved();
     error GroupExitExpiredRequest();
+    error GroupExitAuthorizationWindowExpired();
     error GroupExitNotAuthorized();
     error GroupGoalsIncomplete();
     error SelfApproval();
     error ApprovalUnavailable();
+    error InsufficientApprovalProgress();
     error DuplicateApproval();
     error ApprovalMissing();
     error TokenAccountingMismatch();
@@ -77,9 +90,13 @@ contract SavingsVault is ReentrancyGuard {
     uint64 public immutable maturity;
     uint64 public immutable createdAt;
     bool public immutable isGroup;
+    address public immutable groupCreator;
+    uint64 public immutable invitationExpiresAt;
     address public immutable earlyExitMarket;
     VaultMode public immutable mode;
     IYieldAdapter public immutable yieldAdapter;
+    GroupLifecycle public groupLifecycle;
+    uint32 public acceptedMemberCount;
 
     Position[] private _positions;
     mapping(address member => uint256 positionIdPlusOne) private _memberPosition;
@@ -92,6 +109,9 @@ contract SavingsVault is ReentrancyGuard {
     mapping(uint256 requestId => GroupExitRequest request) public groupExitRequests;
     mapping(uint256 positionId => uint256 requestIdPlusOne) public currentGroupExitRequest;
     mapping(uint256 requestId => mapping(address member => bool approved)) public groupExitApproval;
+    mapping(uint256 requestId => mapping(address member => bool required)) public groupExitRequiredApprover;
+    mapping(address member => bool accepted) public groupInvitationAccepted;
+    mapping(address member => bool declined) public groupInvitationDeclined;
     uint256 public nextGroupExitRequestId;
     uint256 public totalEmergencyLiability;
     uint256 public totalLockedLiability;
@@ -121,8 +141,10 @@ contract SavingsVault is ReentrancyGuard {
     event GroupExitAuthorized(
         uint256 indexed requestId,
         uint32 requiredApprovals,
-        uint32 completedApprovals
+        uint32 completedApprovals,
+        uint64 authorizationExpiresAt
     );
+    event GroupExitAuthorizationExpired(uint256 indexed requestId);
     event GroupExitCompleted(
         uint256 indexed requestId,
         uint256 indexed positionId,
@@ -135,12 +157,19 @@ contract SavingsVault is ReentrancyGuard {
         MemberStatus previousStatus,
         MemberStatus newStatus
     );
+    event GroupInvitationCreated(address indexed member, uint64 expiresAt);
+    event GroupInvitationAccepted(address indexed member, uint32 acceptedCount, uint32 requiredCount);
+    event GroupInvitationDeclined(address indexed member);
+    event GroupActivated(uint64 activatedAt);
+    event GroupInvitationExpired(uint64 expiredAt);
+    event UnactivatedGroupCancelled(address indexed creator);
 
     constructor(
         IERC20 asset_,
         RewardPool rewardPool_,
         uint64 maturity_,
         bool isGroup_,
+        address groupCreator_,
         address earlyExitMarket_,
         VaultMode mode_,
         IYieldAdapter yieldAdapter_,
@@ -151,8 +180,10 @@ contract SavingsVault is ReentrancyGuard {
         uint256 count = members_.length;
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) ||
+            groupCreator_ == address(0) ||
             maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
+            (isGroup_ && (count < MIN_GROUP_SIZE || maturity_ <= block.timestamp + GROUP_INVITATION_LIFETIME)) ||
             (mode_ == VaultMode.Safe && address(yieldAdapter_) != address(0)) ||
             (mode_ == VaultMode.Earn && address(yieldAdapter_) == address(0))
         ) revert InvalidConfiguration();
@@ -162,10 +193,15 @@ contract SavingsVault is ReentrancyGuard {
         maturity = maturity_;
         createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
+        groupCreator = groupCreator_;
+        invitationExpiresAt = isGroup_
+            ? uint64(block.timestamp) + GROUP_INVITATION_LIFETIME
+            : 0;
         earlyExitMarket = earlyExitMarket_;
         mode = mode_;
         yieldAdapter = yieldAdapter_;
 
+        bool creatorIncluded;
         for (uint256 i; i < count; ++i) {
             if (
                 members_[i] == address(0) || targets_[i] == 0 ||
@@ -185,6 +221,22 @@ contract SavingsVault is ReentrancyGuard {
             }));
             _memberPosition[members_[i]] = i + 1;
             positionOwner[i] = members_[i];
+            if (members_[i] == groupCreator_) creatorIncluded = true;
+        }
+
+        if (isGroup_) {
+            if (!creatorIncluded) revert InvalidConfiguration();
+            groupLifecycle = GroupLifecycle.Pending;
+            groupInvitationAccepted[groupCreator_] = true;
+            acceptedMemberCount = 1;
+            emit GroupInvitationAccepted(groupCreator_, 1, uint32(count));
+            for (uint256 i; i < count; ++i) {
+                if (members_[i] != groupCreator_) {
+                    emit GroupInvitationCreated(members_[i], invitationExpiresAt);
+                }
+            }
+        } else {
+            groupLifecycle = GroupLifecycle.NotApplicable;
         }
     }
 
@@ -206,11 +258,93 @@ contract SavingsVault is ReentrancyGuard {
         return value - 1;
     }
 
-    /// @notice Opens a seven-day cooperative exit request for the caller's own group position.
+    /// @notice Accepts the complete immutable group terms presented by this vault.
+    function acceptGroupInvitation() external {
+        if (!isGroup) revert GroupOnly();
+        if (groupLifecycle != GroupLifecycle.Pending) revert InvitationUnavailable();
+        if (block.timestamp >= invitationExpiresAt) revert InvitationExpired();
+        _positionIdForMember(msg.sender);
+        if (groupInvitationAccepted[msg.sender] || groupInvitationDeclined[msg.sender]) {
+            revert InvitationAlreadyAnswered();
+        }
+
+        groupInvitationAccepted[msg.sender] = true;
+        ++acceptedMemberCount;
+        emit GroupInvitationAccepted(msg.sender, acceptedMemberCount, uint32(_positions.length));
+        if (acceptedMemberCount == _positions.length) {
+            groupLifecycle = GroupLifecycle.Active;
+            emit GroupActivated(uint64(block.timestamp));
+        }
+    }
+
+    /// @notice Permanently prevents activation when an invited wallet rejects the terms.
+    function declineGroupInvitation() external {
+        if (!isGroup) revert GroupOnly();
+        if (groupLifecycle != GroupLifecycle.Pending) revert InvitationUnavailable();
+        if (block.timestamp >= invitationExpiresAt) revert InvitationExpired();
+        _positionIdForMember(msg.sender);
+        if (msg.sender == groupCreator || groupInvitationAccepted[msg.sender]) {
+            revert InvitationAlreadyAnswered();
+        }
+        groupInvitationDeclined[msg.sender] = true;
+        groupLifecycle = GroupLifecycle.Declined;
+        emit GroupInvitationDeclined(msg.sender);
+    }
+
+    /// @notice Materializes an unanswered invitation's expiry for indexers.
+    function expireGroupInvitation() external {
+        if (
+            !isGroup || groupLifecycle != GroupLifecycle.Pending ||
+            block.timestamp < invitationExpiresAt
+        ) revert InvitationUnavailable();
+        groupLifecycle = GroupLifecycle.Expired;
+        emit GroupInvitationExpired(uint64(block.timestamp));
+    }
+
+    /// @notice Lets only the creator close a declined or expired, never-funded group.
+    function cancelUnactivatedGroup() external {
+        if (msg.sender != groupCreator) revert CreatorOnly();
+        if (!isGroup) revert GroupOnly();
+        if (
+            groupLifecycle == GroupLifecycle.Pending &&
+            block.timestamp >= invitationExpiresAt
+        ) {
+            groupLifecycle = GroupLifecycle.Expired;
+            emit GroupInvitationExpired(uint64(block.timestamp));
+        }
+        if (
+            groupLifecycle != GroupLifecycle.Declined &&
+            groupLifecycle != GroupLifecycle.Expired
+        ) revert InvitationUnavailable();
+        groupLifecycle = GroupLifecycle.Cancelled;
+        emit UnactivatedGroupCancelled(msg.sender);
+    }
+
+    function groupIsActive() public view returns (bool) {
+        return !isGroup || groupLifecycle == GroupLifecycle.Active;
+    }
+
+    /// @notice Principal still actively held for a member; generated yield is excluded.
+    function activePrincipalSavings(uint256 positionId) public view returns (uint256) {
+        Position storage stored = _position(positionId);
+        return stored.lockedBalance + stored.emergencyBalance;
+    }
+
+    function groupExitApprovalEligible(uint256 positionId) public view returns (bool) {
+        Position storage stored = _position(positionId);
+        return memberStatus[positionId] == MemberStatus.Active && Math.mulDiv(
+            activePrincipalSavings(positionId),
+            10_000,
+            stored.target
+        ) >= MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS;
+    }
+
+    /// @notice Opens a 24-hour cooperative exit request for the caller's own group position.
     function requestGroupExit() external returns (uint256 requestId) {
         if (!isGroup) revert GroupOnly();
+        if (!groupIsActive()) revert GroupNotActive();
         if (block.timestamp >= maturity) revert DepositsClosed();
-        if (activeMemberCount() < MIN_ACTIVE_GROUP_MEMBERS) revert GroupEarlyUnlockDisabled();
+        if (activeMemberCount() < MIN_GROUP_SIZE) revert GroupEarlyUnlockDisabled();
 
         uint256 positionId = _positionIdForMember(msg.sender);
         Position storage stored = _position(positionId);
@@ -225,12 +359,8 @@ contract SavingsVault is ReentrancyGuard {
         uint256 previousIdPlusOne = currentGroupExitRequest[positionId];
         if (previousIdPlusOne != 0) {
             GroupExitRequest storage previous = groupExitRequests[previousIdPlusOne - 1];
-            if (
-                previous.status == GroupExitRequestStatus.Pending &&
-                previous.expiresAt <= block.timestamp
-            ) {
-                previous.status = GroupExitRequestStatus.Expired;
-                emit GroupExitExpired(previousIdPlusOne - 1);
+            if (_requestHasExpired(previous)) {
+                _recordGroupExitExpiry(previousIdPlusOne - 1, previous);
             } else if (
                 previous.status == GroupExitRequestStatus.Pending ||
                 previous.status == GroupExitRequestStatus.Authorized
@@ -241,12 +371,21 @@ contract SavingsVault is ReentrancyGuard {
 
         requestId = nextGroupExitRequestId++;
         uint64 expiresAt = uint64(block.timestamp) + GROUP_EXIT_REQUEST_LIFETIME;
+        uint32 requiredApprovals;
+        for (uint256 i; i < _positions.length; ++i) {
+            address member = _positions[i].member;
+            if (memberStatus[i] == MemberStatus.Active && member != msg.sender) {
+                groupExitRequiredApprover[requestId][member] = true;
+                ++requiredApprovals;
+            }
+        }
         groupExitRequests[requestId] = GroupExitRequest({
             positionId: positionId,
             requester: msg.sender,
             createdAt: uint64(block.timestamp),
             expiresAt: expiresAt,
-            requiredApprovals: 0,
+            authorizationExpiresAt: 0,
+            requiredApprovals: requiredApprovals,
             completedApprovals: 0,
             status: GroupExitRequestStatus.Pending
         });
@@ -259,19 +398,34 @@ contract SavingsVault is ReentrancyGuard {
         GroupExitRequest storage request = _pendingGroupExitRequest(requestId);
         if (msg.sender == request.requester) revert SelfApproval();
         uint256 approverPosition = _positionIdForMember(msg.sender);
-        if (memberStatus[approverPosition] != MemberStatus.Active) revert ApprovalUnavailable();
+        if (
+            !groupExitRequiredApprover[requestId][msg.sender] ||
+            memberStatus[approverPosition] != MemberStatus.Active
+        ) revert ApprovalUnavailable();
+        // Approval power is earned through measurable participation. Deposits made while
+        // another member's request is pending can bring an approver up to this threshold.
+        if (
+            !groupExitApprovalEligible(approverPosition)
+        ) revert InsufficientApprovalProgress();
         if (groupExitApproval[requestId][msg.sender]) revert DuplicateApproval();
 
         groupExitApproval[requestId][msg.sender] = true;
         emit GroupExitApproved(requestId, msg.sender);
 
-        (uint32 required, uint32 completed, bool unanimous) = _approvalProgress(requestId);
-        if (unanimous) {
-            request.requiredApprovals = required;
-            request.completedApprovals = completed;
-            request.status = GroupExitRequestStatus.Authorized;
-            emit GroupExitAuthorized(requestId, required, completed);
+        (, uint32 completed, bool unanimous) = _approvalProgress(requestId);
+        request.completedApprovals = completed;
+        if (unanimous && _allRequiredApproversEligible(requestId)) {
+            _authorizeGroupExit(requestId, request);
         }
+    }
+
+    /// @notice Rechecks already-recorded unanimous approvals after a member restores eligibility.
+    function authorizeGroupExit(uint256 requestId) external {
+        GroupExitRequest storage request = _pendingGroupExitRequest(requestId);
+        (,, bool unanimous) = _approvalProgress(requestId);
+        if (!unanimous) revert ApprovalMissing();
+        if (!_allRequiredApproversEligible(requestId)) revert InsufficientApprovalProgress();
+        _authorizeGroupExit(requestId, request);
     }
 
     /// @notice Revokes an approval only while the request remains unresolved.
@@ -281,6 +435,8 @@ contract SavingsVault is ReentrancyGuard {
         if (memberStatus[approverPosition] != MemberStatus.Active) revert ApprovalUnavailable();
         if (!groupExitApproval[requestId][msg.sender]) revert ApprovalMissing();
         groupExitApproval[requestId][msg.sender] = false;
+        (, uint32 completed,) = _approvalProgress(requestId);
+        groupExitRequests[requestId].completedApprovals = completed;
         emit GroupExitApprovalRevoked(requestId, msg.sender);
     }
 
@@ -294,21 +450,22 @@ contract SavingsVault is ReentrancyGuard {
     /// @notice Materializes an expired status for event indexers; anyone may call it.
     function expireGroupExit(uint256 requestId) external {
         GroupExitRequest storage request = groupExitRequests[requestId];
-        if (
-            request.status != GroupExitRequestStatus.Pending ||
-            request.expiresAt > block.timestamp
-        ) revert GroupExitUnavailable();
-        request.status = GroupExitRequestStatus.Expired;
-        emit GroupExitExpired(requestId);
+        if (!_requestHasExpired(request)) revert GroupExitUnavailable();
+        _recordGroupExitExpiry(requestId, request);
     }
 
     /// @notice Pays only the requester's locked claim after final unanimous authorization.
     function completeGroupExit(uint256 requestId) external nonReentrant {
         GroupExitRequest storage request = groupExitRequests[requestId];
         if (request.status != GroupExitRequestStatus.Authorized) revert GroupExitNotAuthorized();
+        if (request.authorizationExpiresAt <= block.timestamp) {
+            revert GroupExitAuthorizationWindowExpired();
+        }
         if (msg.sender != request.requester) revert MemberOnly();
         if (block.timestamp >= maturity) revert NotMatured();
-        if (activeMemberCount() < MIN_ACTIVE_GROUP_MEMBERS) revert GroupEarlyUnlockDisabled();
+        uint256 active = activeMemberCount();
+        if (active == 0 || active - 1 < MIN_GROUP_SIZE) revert GroupEarlyUnlockDisabled();
+        if (!_allRequiredApproversEligible(requestId)) revert InsufficientApprovalProgress();
         if (!_allActiveGoalsComplete()) revert GroupGoalsIncomplete();
 
         uint256 positionId = request.positionId;
@@ -371,23 +528,25 @@ contract SavingsVault is ReentrancyGuard {
         uint256 requestIdPlusOne = currentGroupExitRequest[positionId];
         if (requestIdPlusOne == 0) return false;
         GroupExitRequest storage request = groupExitRequests[requestIdPlusOne - 1];
-        return request.status == GroupExitRequestStatus.Authorized ||
-            (request.status == GroupExitRequestStatus.Pending && request.expiresAt > block.timestamp);
+        return (
+            request.status == GroupExitRequestStatus.Authorized &&
+            request.authorizationExpiresAt > block.timestamp
+        ) || (
+            request.status == GroupExitRequestStatus.Pending &&
+            request.expiresAt > block.timestamp
+        );
     }
 
     /// @dev Called by the immutable market before listing. It records lazy expiry on-chain.
     function prepareMarketListing(uint256 positionId) external {
         if (msg.sender != earlyExitMarket) revert MarketOnly();
         if (!isGroup) return;
+        if (!groupIsActive()) revert GroupNotActive();
         uint256 requestIdPlusOne = currentGroupExitRequest[positionId];
         if (requestIdPlusOne == 0) return;
         GroupExitRequest storage request = groupExitRequests[requestIdPlusOne - 1];
-        if (
-            request.status == GroupExitRequestStatus.Pending &&
-            request.expiresAt <= block.timestamp
-        ) {
-            request.status = GroupExitRequestStatus.Expired;
-            emit GroupExitExpired(requestIdPlusOne - 1);
+        if (_requestHasExpired(request)) {
+            _recordGroupExitExpiry(requestIdPlusOne - 1, request);
             return;
         }
         if (
@@ -397,6 +556,7 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function deposit(uint256 positionId, uint256 amount) external nonReentrant {
+        if (isGroup && !groupIsActive()) revert GroupNotActive();
         Position storage stored = _position(positionId);
         if (
             msg.sender != stored.member || positionOwner[positionId] != msg.sender ||
@@ -485,6 +645,7 @@ contract SavingsVault is ReentrancyGuard {
 
     function transferPosition(uint256 positionId, address expectedOwner, address newOwner) external nonReentrant {
         if (msg.sender != earlyExitMarket || earlyExitMarket == address(0)) revert MarketOnly();
+        if (isGroup && !groupIsActive()) revert GroupNotActive();
         Position storage stored = _position(positionId);
         if (newOwner == address(0)) revert InvalidConfiguration();
         if (positionOwner[positionId] != expectedOwner) revert PositionOwnerOnly();
@@ -523,8 +684,9 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function rewardsReady() public view returns (bool) {
+        if (isGroup && !groupIsActive()) return false;
         if (block.timestamp < maturity) return false;
-        if (isGroup && _rewardEligibleCount() < MIN_ACTIVE_GROUP_MEMBERS) return false;
+        if (isGroup && _rewardEligibleCount() < MIN_GROUP_SIZE) return false;
         uint256 count = _positions.length;
         bool hasEligibleMember;
         for (uint256 i; i < count; ++i) {
@@ -624,7 +786,7 @@ contract SavingsVault is ReentrancyGuard {
         request = groupExitRequests[requestId];
         if (request.status != GroupExitRequestStatus.Pending) revert GroupExitUnavailable();
         if (request.expiresAt <= block.timestamp) revert GroupExitExpiredRequest();
-        if (activeMemberCount() < MIN_ACTIVE_GROUP_MEMBERS) revert GroupEarlyUnlockDisabled();
+        if (activeMemberCount() < MIN_GROUP_SIZE) revert GroupEarlyUnlockDisabled();
         if (memberStatus[request.positionId] != MemberStatus.Active) revert GroupExitUnavailable();
     }
 
@@ -635,15 +797,68 @@ contract SavingsVault is ReentrancyGuard {
     {
         GroupExitRequest storage request = groupExitRequests[requestId];
         if (request.status == GroupExitRequestStatus.None) revert GroupExitUnavailable();
-        uint256 count = _positions.length;
-        for (uint256 i; i < count; ++i) {
-            if (memberStatus[i] != MemberStatus.Active) continue;
+        required = request.requiredApprovals;
+        for (uint256 i; i < _positions.length; ++i) {
             address member = _positions[i].member;
-            if (member == request.requester) continue;
-            ++required;
-            if (groupExitApproval[requestId][member]) ++completed;
+            if (
+                groupExitRequiredApprover[requestId][member] &&
+                groupExitApproval[requestId][member]
+            ) ++completed;
         }
         unanimous = required != 0 && completed == required;
+    }
+
+    function _allRequiredApproversEligible(uint256 requestId) internal view returns (bool) {
+        for (uint256 i; i < _positions.length; ++i) {
+            address member = _positions[i].member;
+            if (!groupExitRequiredApprover[requestId][member]) continue;
+            if (
+                !groupExitApproval[requestId][member] ||
+                !groupExitApprovalEligible(i)
+            ) return false;
+        }
+        return true;
+    }
+
+    function _authorizeGroupExit(
+        uint256 requestId,
+        GroupExitRequest storage request
+    ) internal {
+        uint64 authorizationExpiresAt =
+            uint64(block.timestamp) + GROUP_EXIT_AUTHORIZATION_LIFETIME;
+        request.completedApprovals = request.requiredApprovals;
+        request.authorizationExpiresAt = authorizationExpiresAt;
+        request.status = GroupExitRequestStatus.Authorized;
+        emit GroupExitAuthorized(
+            requestId,
+            request.requiredApprovals,
+            request.completedApprovals,
+            authorizationExpiresAt
+        );
+    }
+
+    function _requestHasExpired(GroupExitRequest storage request)
+        internal
+        view
+        returns (bool)
+    {
+        return (
+            request.status == GroupExitRequestStatus.Pending &&
+            request.expiresAt <= block.timestamp
+        ) || (
+            request.status == GroupExitRequestStatus.Authorized &&
+            request.authorizationExpiresAt <= block.timestamp
+        );
+    }
+
+    function _recordGroupExitExpiry(
+        uint256 requestId,
+        GroupExitRequest storage request
+    ) internal {
+        bool authorizationExpired = request.status == GroupExitRequestStatus.Authorized;
+        request.status = GroupExitRequestStatus.Expired;
+        if (authorizationExpired) emit GroupExitAuthorizationExpired(requestId);
+        else emit GroupExitExpired(requestId);
     }
 
     function _allActiveGoalsComplete() internal view returns (bool) {

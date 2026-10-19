@@ -9,13 +9,14 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 ## Savings workflow
 
 1. A creator selects personal or group mode, Safe or Earn mode, a common maturity, and a USDT target and emergency percentage for each member.
-2. `VaultFactory` deploys a non-upgradeable `SavingsVault` and records it globally and per member.
-3. Before maturity, a member approves and deposits the accepted token into their fixed position.
-4. Each deposit uses integer basis points: `emergency = amount * emergencyBps / 10_000`; all rounding remainder enters the locked balance.
-5. A member may withdraw their emergency balance at any time. This never reduces cumulative deposits or reverses goal completion.
-6. At or after maturity, the current position owner may withdraw its locked claim exactly once.
-7. Incomplete positions recover their funds but are not reward-eligible. A market-sold or cooperatively exited position is inactive and permanently reward-disqualified. Group rewards require at least four eligible members and completion by every eligible member.
-8. Anyone may trigger reward activation at or after maturity when the vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded for that vault.
+2. `VaultFactory` deploys a non-upgradeable `SavingsVault` and records it globally and per member. A group requires at least four proposed members and begins in `Pending` invitation state.
+3. The creator's creation transaction counts as acceptance. Every other invited EVM wallet has 72 hours to inspect the immutable terms and accept. One decline or invitation expiry prevents activation; the creator may then cancel the never-funded group.
+4. Group deposits, listings, cooperative exits and rewards remain disabled until every invitation is accepted. Before maturity, a member of an active group approves and deposits the accepted token into their fixed position.
+5. Each deposit uses integer basis points: `emergency = amount * emergencyBps / 10_000`; all rounding remainder enters the locked balance.
+6. A member may withdraw their emergency balance at any time. This never reduces cumulative deposits or reverses goal completion, but it does reduce active principal used for cooperative-exit approval eligibility.
+7. At or after maturity, the current position owner may withdraw its locked claim exactly once.
+8. Incomplete positions recover their funds but are not reward-eligible. A market-sold or cooperatively exited position is inactive and permanently reward-disqualified. Group rewards require at least four eligible members and completion by every eligible member.
+9. Anyone may trigger reward activation at or after maturity when the vault-derived conditions hold. Eligible recipients claim equal shares from revenue funded for that vault.
 
 ## Contract responsibilities
 
@@ -79,18 +80,19 @@ The displayed Aave liquidity rate is variable and is never represented as guaran
 
 ## Cooperative group exits
 
-1. An active member with a funded group position may open one unresolved request. The request expires exactly seven days after creation.
+1. An active member with a funded group position may open one unresolved request. The request expires exactly 24 hours after creation.
 2. A request is unavailable while that position has an active Early-Exit Market listing. Deposits are frozen while a cooperative request is pending or authorized.
-3. Every other currently active member must approve from the Polygon EVM address recorded as their member address. The requester cannot self-approve; non-members, exited members, position buyers, factories, treasuries and deployers have no approval power.
-4. An approver may revoke only while the request is pending. The last required approval records an irreversible `Authorized` state.
-5. Authorization alone does not release funds. Before maturity, completion also requires every currently active member to have reached their goal and at least four active members at the start of completion.
-6. The requester completes the authorized exit and receives only their live locked-position value, including attributable Earn yield or loss. Emergency funds remain separately withdrawable by the original member.
-7. Cooperative completion charges no market discount and no provider fee. It marks the requester as `CooperativeExit`, removes approval power and permanently revokes reward eligibility.
-8. A pending request may be cancelled by its requester. Expired requests may be finalized by anyone or lazily finalized when the requester creates a market listing. Cancellation or expiry enables the existing market fallback.
-9. If an exit leaves fewer than four active members, additional cooperative early unlocks and group rewards are disabled. Every position owner retains their independent maturity withdrawal.
-10. `Active`, `CooperativeExit`, `MarketExit` and `Matured` are member-status records. A market buyer receives only position ownership; the original immutable member identity is never replaced.
+3. Every other member who is active when the request is created must approve from their own recorded Polygon EVM address. Approval eligibility is `remaining locked principal contribution + remaining emergency principal >= 25% of that member's own target`; generated yield and another participant's savings never count. Members below that threshold may keep depositing into their own position while another member's request is pending, then approve once eligible. The requester cannot self-approve; non-members, exited members, position buyers, factories, treasuries and deployers have no approval power.
+4. Eligibility is revalidated when unanimous authorization is formed and again at execution. Emergency withdrawal can therefore invalidate a recorded approval without changing historical goal completion or reward eligibility; the approver may restore eligibility with another deposit before expiry.
+5. An approver may revoke only while the request is pending. The last valid required approval records an irreversible `Authorized` state and starts a separate 24-hour execution window. If it expires, a fresh request and fresh approvals are required.
+6. Authorization alone does not release funds. Before maturity, completion also requires every currently active member to have reached their goal and `activeMemberCount - 1 >= 4`, so a cooperative exit can never leave fewer than four active savers.
+7. The requester completes the authorized exit and receives only their live locked-position value, including attributable Earn yield or loss. Emergency funds remain separately withdrawable by the original member.
+8. Cooperative completion charges no market discount and no provider fee. It marks the requester as `CooperativeExit`, removes approval power and permanently revokes reward eligibility.
+9. A pending request may be cancelled by its requester. Pending or authorized expiry may be finalized by anyone or lazily finalized when the requester creates a market listing. Cancellation or expiry enables the existing market fallback.
+10. A market exit that leaves fewer than four eligible active members disables further cooperative early unlocks and group rewards, without blocking emergency or maturity withdrawals.
+11. `Active`, `CooperativeExit`, `MarketExit` and `Matured` are member-status records. A market buyer receives only position ownership; the original immutable member identity is never replaced.
 
-The vault emits `GroupExitRequested`, `GroupExitApproved`, `GroupExitApprovalRevoked`, `GroupExitCancelled`, `GroupExitExpired`, `GroupExitAuthorized`, `GroupExitCompleted` and `GroupMemberStatusChanged`. A future PostgreSQL service may index these events but cannot approve, price or settle an exit.
+The vault emits invitation lifecycle events (`GroupInvitationCreated`, `GroupInvitationAccepted`, `GroupInvitationDeclined`, `GroupActivated`, `GroupInvitationExpired`, `UnactivatedGroupCancelled`) and cooperative-exit events (`GroupExitRequested`, `GroupExitApproved`, `GroupExitApprovalRevoked`, `GroupExitCancelled`, `GroupExitExpired`, `GroupExitAuthorized`, `GroupExitAuthorizationExpired`, `GroupExitCompleted`, `GroupMemberStatusChanged`). A PostgreSQL service may index these events but cannot accept, approve, price or settle on behalf of a wallet.
 
 ### Polygon configuration source
 
@@ -109,6 +111,14 @@ Production configuration comes from the maintained `@aave-dao/aave-address-book`
 9. Cancellation or expiration permits relisting. Each attempt remains visible in immutable event history.
 
 Personal and group listings use identical settlement rules. Clients derive the category from the vault's immutable `isGroup` value and may filter by it.
+
+### Settlement history
+
+- `ListingFunded` is the authoritative completed-trade record. Clients join it to the matching immutable `ListingCreated` event to recover the saver, vault and position identity.
+- A connected wallet's completed-trade history contains settlements where that address was either the saver or the funding liquidity provider. Both parties see the same finalized execution values and explorer-verifiable transaction.
+- The public market exposes a recent-trades view containing every finalized saver-to-provider transfer, including Personal/Group classification and an explorer link.
+- Receipt cards are presentation-only projections of canonical events. They cannot alter ownership, pricing or accounting, and a future indexer may cache them without becoming authoritative.
+- After settlement, portfolio discovery follows current `positionOwner`: the provider sees the acquired locked claim, while the original saver sees only any unwithdrawn emergency balance. Once that emergency balance is withdrawn, the sold vault no longer appears as the saver's position.
 
 ### Market fee
 
@@ -141,7 +151,8 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 | Withdraw emergency balance                      | Original member                                    |
 | Withdraw locked balance after maturity          | Current position owner                             |
 | Request a cooperative group exit                | Active original group member                       |
-| Approve/revoke a pending group exit             | Other active original group members                |
+| Approve a pending group exit                    | Other active original members at 25%+ of target    |
+| Revoke approval for a pending group exit        | An active original member who previously approved  |
 | Cancel a pending group exit                     | Requester only                                     |
 | Complete an authorized cooperative exit         | Requester only, after active goals are complete    |
 | Record expiry                                   | Any caller, or immutable market during listing     |
@@ -157,14 +168,17 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - Accepted token, maturity, members, targets, allocations, mode, reward pool and market authority are immutable.
 - Emergency allocation is 1,000–1,500 basis points inclusive.
 - Members and positions are unique, fixed and limited to 50 per group.
+- A group has at least four proposed members, accepts no deposits before unanimous invitation acceptance, and cannot activate after a decline or the 72-hour invitation deadline.
 - Cumulative deposit never decreases; emergency withdrawal cannot undo completion.
 - Emergency ownership never transfers with the locked position.
 - Vault liabilities are separated by position and state is reduced before outbound calls.
 - Locked funds cannot leave before maturity; deposits are rejected at and after maturity.
 - Deposits are rejected while a non-expired listing is active.
-- Deposits are rejected while a cooperative request is pending or authorized.
+- Deposits to the requester's position are rejected while its cooperative request is pending or authorized; other active members may continue funding their own positions.
 - A position cannot have a live cooperative request and market listing simultaneously.
-- Cooperative authorization requires unanimous N-1 approval from current active members and becomes irreversible at the final approval.
+- Cooperative authorization requires unanimous N-1 approval within 24 hours from the request's snapshotted active approvers. Each approver must retain active non-yield principal of at least 25% of their own target both at authorization and execution.
+- Authorized cooperative exits have a separate 24-hour execution window and cannot be reused after it expires.
+- Cooperative completion must leave at least four active saving members.
 - Cooperative settlement pays only the requester's live claim, charges no discount or fee, and leaves emergency ownership unchanged.
 - Market buyers never acquire immutable membership, approval power or reward eligibility.
 - Fewer than four reward-eligible group members disables group rewards without blocking maturity withdrawals.

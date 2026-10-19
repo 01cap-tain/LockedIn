@@ -14,8 +14,8 @@ const deployment = JSON.parse(
   await readFile(path.join(directory, 'latest.json'), 'utf8')
 )
 const { ethers } = await network.create('localhost')
-const [creator, memberTwo, memberThree, memberFour] = await ethers.getSigners()
-const members = [creator, memberTwo, memberThree, memberFour]
+const [creator, memberTwo, memberThree, memberFour, memberFive] = await ethers.getSigners()
+const members = [creator, memberTwo, memberThree, memberFour, memberFive]
 const addresses = await Promise.all(members.map((member) => member.getAddress()))
 const token = await ethers.getContractAt('MockUSDT', deployment.contracts.mockUsdt)
 const factory = await ethers.getContractAt(
@@ -39,6 +39,9 @@ const vault = await ethers.getContractAt(
   'SavingsVault',
   await factory.vaultAt((await factory.vaultCount()) - 1n)
 )
+for (const member of members.slice(1)) {
+  await (await vault.connect(member).acceptGroupInvitation()).wait()
+}
 for (const [index, member] of members.entries()) {
   await (await token.mint(await member.getAddress(), 100n * UNIT)).wait()
   await (await token.connect(member).approve(await vault.getAddress(), 100n * UNIT)).wait()
@@ -54,5 +57,5 @@ await (await vault.connect(creator).completeGroupExit(0)).wait()
 assert.equal((await vault.position(0)).emergencyBalance, 10n * UNIT)
 assert.equal((await vault.position(0)).lockedBalance, 0n)
 assert.equal(await vault.memberStatus(0), 1n)
-assert.equal(await vault.activeMemberCount(), 3n)
+assert.equal(await vault.activeMemberCount(), 4n)
 console.log('Local cooperative group-exit deployment smoke test passed.')

@@ -296,11 +296,22 @@ describe('EarlyExitMarket deterministic pricing', function () {
     ])
     const callbackMarket = await ethers.getContractAt('EarlyExitMarket', await callbackFactory.earlyExitMarket())
     await callbackFactory.createGroupVault(
-      [await saver.getAddress(), await sellerContract.getAddress()],
-      [UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0,
+      [
+        await saver.getAddress(),
+        await sellerContract.getAddress(),
+        await providerTwo.getAddress(),
+        await outsider.getAddress(),
+      ],
+      [UNIT, 100n * UNIT, UNIT, UNIT],
+      [1_000, 1_000, 1_000, 1_000],
+      maturity,
+      0,
     )
     const callbackVault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
     await sellerContract.configure(await callbackVault.getAddress(), await callbackToken.getAddress(), await callbackMarket.getAddress())
+    await sellerContract.acceptInvitation()
+    await callbackVault.connect(providerTwo).acceptGroupInvitation()
+    await callbackVault.connect(outsider).acceptGroupInvitation()
     await callbackToken.mint(await sellerContract.getAddress(), 100n * UNIT)
     await sellerContract.deposit(1, 100n * UNIT)
     const claim = await callbackVault.positionValue(1)

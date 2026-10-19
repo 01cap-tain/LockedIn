@@ -1,10 +1,14 @@
 import {
+  BrowserProvider,
   Contract,
   Interface,
+  JsonRpcProvider,
   formatUnits,
   getAddress,
   parseUnits,
+  type Filter,
   type Log,
+  type Provider,
   type Signer,
 } from "ethers";
 
@@ -34,6 +38,14 @@ const vaultAbi = [
   "function positionOwner(uint256 positionId) view returns (address)",
   "function rewardDisqualified(uint256 positionId) view returns (bool)",
   "function memberStatus(uint256 positionId) view returns (uint8)",
+  "function groupCreator() view returns (address)",
+  "function invitationExpiresAt() view returns (uint64)",
+  "function groupLifecycle() view returns (uint8)",
+  "function groupInvitationAccepted(address member) view returns (bool)",
+  "function groupInvitationDeclined(address member) view returns (bool)",
+  "function acceptGroupInvitation()",
+  "function declineGroupInvitation()",
+  "function cancelUnactivatedGroup()",
   "function positionOf(address member) view returns (uint256)",
   "function position(uint256 positionId) view returns (address member,uint256 target,uint256 deposited,uint256 emergencyBalance,uint256 lockedBalance,uint256 lockedShares,uint16 emergencyBps,bool lockedWithdrawn)",
   "function positionValue(uint256 positionId) view returns (uint256)",
@@ -45,15 +57,18 @@ const vaultAbi = [
   "function withdrawLocked(uint256 positionId)",
   "function requestGroupExit() returns (uint256)",
   "function approveGroupExit(uint256 requestId)",
+  "function authorizeGroupExit(uint256 requestId)",
   "function revokeGroupExitApproval(uint256 requestId)",
   "function cancelGroupExit(uint256 requestId)",
   "function expireGroupExit(uint256 requestId)",
   "function completeGroupExit(uint256 requestId)",
   "function currentGroupExitRequest(uint256 positionId) view returns (uint256)",
-  "function groupExitRequests(uint256 requestId) view returns (uint256 positionId,address requester,uint64 createdAt,uint64 expiresAt,uint32 requiredApprovals,uint32 completedApprovals,uint8 status)",
+  "function groupExitRequests(uint256 requestId) view returns (uint256 positionId,address requester,uint64 createdAt,uint64 expiresAt,uint64 authorizationExpiresAt,uint32 requiredApprovals,uint32 completedApprovals,uint8 status)",
   "function groupExitApproval(uint256 requestId,address member) view returns (bool)",
   "function groupExitApprovalProgress(uint256 requestId) view returns (uint32 required,uint32 completed)",
   "function activeMemberCount() view returns (uint256)",
+  "function activePrincipalSavings(uint256 positionId) view returns (uint256)",
+  "function groupExitApprovalEligible(uint256 positionId) view returns (bool)",
   "event Deposited(uint256 indexed positionId,address indexed member,uint256 amount,uint256 emergencyAmount,uint256 lockedAmount)",
   "event EmergencyWithdrawn(uint256 indexed positionId,address indexed member,uint256 amount)",
   "event LockedWithdrawn(uint256 indexed positionId,address indexed owner,uint256 amount)",
@@ -64,9 +79,16 @@ const vaultAbi = [
   "event GroupExitApprovalRevoked(uint256 indexed requestId,address indexed approver)",
   "event GroupExitCancelled(uint256 indexed requestId,address indexed requester)",
   "event GroupExitExpired(uint256 indexed requestId)",
-  "event GroupExitAuthorized(uint256 indexed requestId,uint32 requiredApprovals,uint32 completedApprovals)",
+  "event GroupExitAuthorized(uint256 indexed requestId,uint32 requiredApprovals,uint32 completedApprovals,uint64 authorizationExpiresAt)",
+  "event GroupExitAuthorizationExpired(uint256 indexed requestId)",
   "event GroupExitCompleted(uint256 indexed requestId,uint256 indexed positionId,address indexed requester,uint256 amount)",
   "event GroupMemberStatusChanged(uint256 indexed positionId,address indexed member,uint8 previousStatus,uint8 newStatus)",
+  "event GroupInvitationCreated(address indexed member,uint64 expiresAt)",
+  "event GroupInvitationAccepted(address indexed member,uint32 acceptedCount,uint32 requiredCount)",
+  "event GroupInvitationDeclined(address indexed member)",
+  "event GroupActivated(uint64 activatedAt)",
+  "event GroupInvitationExpired(uint64 expiredAt)",
+  "event UnactivatedGroupCancelled(address indexed creator)",
 ] as const;
 
 const tokenAbi = [
@@ -110,6 +132,8 @@ export interface VaultSnapshot {
   address: string;
   signerAddress: string;
   positionId: bigint;
+  ownsLockedPosition: boolean;
+  isOriginalMember: boolean;
   target: string;
   deposited: string;
   emergencyBalance: string;
@@ -125,6 +149,17 @@ export interface VaultSnapshot {
   lockedWithdrawn: boolean;
   maturity: Date;
   isGroup: boolean;
+  groupCreator: string;
+  groupLifecycle:
+    | "not-applicable"
+    | "pending"
+    | "active"
+    | "declined"
+    | "expired"
+    | "cancelled";
+  invitationExpiresAt: Date | null;
+  connectedInvitationAccepted: boolean;
+  connectedInvitationDeclined: boolean;
   members: VaultMemberSnapshot[];
 }
 
@@ -137,6 +172,11 @@ export interface VaultMemberSnapshot {
   emergencyBalance: string;
   lockedBalance: string;
   currentValue: string;
+  activePrincipal: string;
+  approvalProgressPercent: number;
+  approvalEligible: boolean;
+  invitationAccepted: boolean;
+  invitationDeclined: boolean;
   goalComplete: boolean;
   rewardDisqualified: boolean;
   lockedWithdrawn: boolean;
@@ -148,6 +188,8 @@ export interface GroupExitRequestSnapshot {
   positionId: bigint;
   requester: string;
   expiresAt: Date;
+  authorizationExpiresAt: Date | null;
+  currentDeadline: Date;
   requiredApprovals: number;
   completedApprovals: number;
   connectedMemberApproved: boolean;
@@ -156,6 +198,8 @@ export interface GroupExitRequestSnapshot {
 
 export interface VaultSummary {
   address: string;
+  positionId: bigint;
+  access: "owner" | "emergency-only";
   isGroup: boolean;
   maturity: Date;
   memberCount: number;
@@ -190,6 +234,7 @@ export interface ExitListingSnapshot {
     currentProviderPotentialReturn: string;
     providerFee: string;
     currentProviderFee: string;
+    currentTotalProviderPaid: string;
     minimumPayout: string;
     expiresAt: Date;
     active: boolean;
@@ -204,6 +249,25 @@ export interface ActivityItem {
   title: string;
   detail: string;
   vault?: string;
+  timestamp: Date;
+}
+
+/** A finalized early-exit settlement reconstructed from canonical market events. */
+export interface CompletedTrade {
+  listingId: bigint;
+  vault: string;
+  positionId: bigint;
+  isGroup: boolean;
+  seller: string;
+  provider: string;
+  claimValue: string;
+  systemDiscountPercent: number;
+  saverPayout: string;
+  providerPotentialReturn: string;
+  providerFee: string;
+  totalProviderPaid: string;
+  blockNumber: number;
+  transactionHash: string;
   timestamp: Date;
 }
 
@@ -250,11 +314,26 @@ function memberStatusLabel(status: bigint): VaultMemberSnapshot["status"] {
   return "active";
 }
 
+function groupLifecycleLabel(
+  lifecycle: bigint
+): VaultSnapshot["groupLifecycle"] {
+  if (lifecycle === 1n) return "pending";
+  if (lifecycle === 2n) return "active";
+  if (lifecycle === 3n) return "declined";
+  if (lifecycle === 4n) return "expired";
+  if (lifecycle === 5n) return "cancelled";
+  return "not-applicable";
+}
+
 function groupExitStatusLabel(
   status: bigint,
-  expiresAt: Date
+  expiresAt: Date,
+  authorizationExpiresAt: Date | null
 ): GroupExitRequestSnapshot["status"] {
-  if (status === 2n) return "authorized";
+  if (status === 2n)
+    return authorizationExpiresAt && authorizationExpiresAt.getTime() <= Date.now()
+      ? "expired"
+      : "authorized";
   if (status === 3n) return "cancelled";
   if (status === 4n || (status === 1n && expiresAt.getTime() <= Date.now()))
     return "expired";
@@ -325,8 +404,10 @@ export async function createVault(
     ).wait();
   } else {
     const members = [signerAddress, ...input.additionalMembers.map(getAddress)];
-    if (members.length < 2)
-      throw new Error("Add at least one other EVM member address.");
+    if (members.length < 4)
+      throw new Error("A group requires at least four members in total.");
+    if (maturity <= BigInt(Math.floor(Date.now() / 1_000)) + 72n * 60n * 60n)
+      throw new Error("Group maturity must be later than the 72-hour invitation window.");
     if (
       new Set(members.map((member) => member.toLowerCase())).size !==
       members.length
@@ -351,46 +432,86 @@ export async function createVault(
 
 export async function loadVault(
   signer: Signer,
-  address: string
+  address: string,
+  requestedPositionId?: bigint
 ): Promise<VaultSnapshot> {
   const signerAddress = await signer.getAddress();
   const vaultAddress = getAddress(address);
   const vault = new Contract(vaultAddress, vaultAbi, signer);
-  const positionId: bigint = await vault.getFunction("positionOf")(
-    signerAddress
-  );
+  const memberCount: bigint = await vault.getFunction("memberCount")();
+  let positionId = requestedPositionId;
+  if (positionId === undefined) {
+    // Prefer the caller's immutable member record (which may retain emergency
+    // funds after a sale), then fall back to a position acquired in the market.
+    try {
+      positionId = await vault.getFunction("positionOf")(signerAddress);
+    } catch {
+      for (let index = 0n; index < memberCount; index += 1n) {
+        const owner: string = await vault.getFunction("positionOwner")(index);
+        if (owner.toLowerCase() === signerAddress.toLowerCase()) {
+          positionId = index;
+          break;
+        }
+      }
+    }
+  }
+  if (positionId === undefined)
+    throw new Error("This wallet has no accessible position in the vault.");
   const [
     stored,
+    positionOwner,
     completed,
     maturity,
     isGroup,
-    memberCount,
     mode,
     yieldAdapter,
     currentValue,
     accruedYield,
     liquidityRate,
+    groupCreator,
+    invitationExpiresAt,
+    groupLifecycle,
+    connectedInvitationAccepted,
+    connectedInvitationDeclined,
   ] = await Promise.all([
     vault.getFunction("position")(positionId),
+    vault.getFunction("positionOwner")(positionId),
     vault.getFunction("goalComplete")(positionId),
     vault.getFunction("maturity")(),
     vault.getFunction("isGroup")(),
-    vault.getFunction("memberCount")(),
     vault.getFunction("mode")(),
     vault.getFunction("yieldAdapter")(),
     vault.getFunction("positionValue")(positionId),
     vault.getFunction("accruedYield")(positionId),
     vault.getFunction("currentLiquidityRate")(),
+    vault.getFunction("groupCreator")(),
+    vault.getFunction("invitationExpiresAt")(),
+    vault.getFunction("groupLifecycle")(),
+    vault.getFunction("groupInvitationAccepted")(signerAddress),
+    vault.getFunction("groupInvitationDeclined")(signerAddress),
   ]);
   const members: VaultMemberSnapshot[] = await Promise.all(
     Array.from({ length: Number(memberCount) }, async (_, index) => {
       const memberPosition = await vault.getFunction("position")(index);
-      const [owner, memberComplete, rewardDisqualified, status] =
+      const [
+        owner,
+        memberComplete,
+        rewardDisqualified,
+        status,
+        activePrincipal,
+        approvalEligible,
+        invitationAccepted,
+        invitationDeclined,
+      ] =
         await Promise.all([
           vault.getFunction("positionOwner")(index),
           vault.getFunction("goalComplete")(index),
           vault.getFunction("rewardDisqualified")(index),
           vault.getFunction("memberStatus")(index),
+          vault.getFunction("activePrincipalSavings")(index),
+          vault.getFunction("groupExitApprovalEligible")(index),
+          vault.getFunction("groupInvitationAccepted")(memberPosition.member),
+          vault.getFunction("groupInvitationDeclined")(memberPosition.member),
         ]);
       const memberValue: bigint = await vault.getFunction("positionValue")(
         index
@@ -407,6 +528,14 @@ export async function loadVault(
         ),
         lockedBalance: formatUnits(memberPosition.lockedBalance, USDT_DECIMALS),
         currentValue: formatUnits(memberValue, USDT_DECIMALS),
+        activePrincipal: formatUnits(activePrincipal, USDT_DECIMALS),
+        approvalProgressPercent:
+          Number(memberPosition.target) === 0
+            ? 0
+            : (Number(activePrincipal) / Number(memberPosition.target)) * 100,
+        approvalEligible,
+        invitationAccepted,
+        invitationDeclined,
         goalComplete: memberComplete,
         rewardDisqualified,
         lockedWithdrawn: memberPosition.lockedWithdrawn,
@@ -418,6 +547,10 @@ export async function loadVault(
     address: vaultAddress,
     signerAddress,
     positionId,
+    ownsLockedPosition:
+      String(positionOwner).toLowerCase() === signerAddress.toLowerCase(),
+    isOriginalMember:
+      String(stored.member).toLowerCase() === signerAddress.toLowerCase(),
     target: formatUnits(stored.target, USDT_DECIMALS),
     deposited: formatUnits(stored.deposited, USDT_DECIMALS),
     emergencyBalance: formatUnits(stored.emergencyBalance, USDT_DECIMALS),
@@ -433,6 +566,14 @@ export async function loadVault(
     lockedWithdrawn: stored.lockedWithdrawn,
     maturity: new Date(Number(maturity) * 1_000),
     isGroup,
+    groupCreator: getAddress(groupCreator),
+    groupLifecycle: groupLifecycleLabel(groupLifecycle),
+    invitationExpiresAt:
+      Number(invitationExpiresAt) === 0
+        ? null
+        : new Date(Number(invitationExpiresAt) * 1_000),
+    connectedInvitationAccepted,
+    connectedInvitationDeclined,
     members,
   };
 }
@@ -440,29 +581,70 @@ export async function loadVault(
 export async function loadVaultsForSigner(
   signer: Signer
 ): Promise<VaultSummary[]> {
-  // Factory membership indexes avoid scanning arbitrary blocks just to build
-  // the connected user's vault list. Market-wide listings are loaded separately.
+  // Original membership and current economic ownership are different after a
+  // market sale. Join the factory member index with funded trades so the saver
+  // keeps only emergency access while the provider discovers the bought claim.
   await assertFactoryDeployment(signer);
   const factory = factoryFor(signer);
-  const addresses: string[] = await factory.getFunction("vaultsOf")(
-    await signer.getAddress()
+  const signerAddress = await signer.getAddress();
+  const memberAddresses: string[] = await factory.getFunction("vaultsOf")(
+    signerAddress
   );
-  return Promise.all(
-    addresses.map(async (address) => {
+  const memberPositions = await Promise.all(
+    memberAddresses.map(async (address) => ({
+      address: getAddress(address),
+      positionId: BigInt(
+        await new Contract(address, vaultAbi, signer).getFunction("positionOf")(
+          signerAddress
+        )
+      ),
+    }))
+  );
+  let completedTrades: CompletedTrade[] = [];
+  try {
+    completedTrades = await loadCompletedTrades(signer);
+  } catch {
+    // Original member vault discovery remains usable if historical log reads
+    // are temporarily unavailable. A later refresh restores bought positions.
+  }
+  const purchasedPositions = completedTrades
+    .filter((trade) => trade.provider.toLowerCase() === signerAddress.toLowerCase())
+    .map((trade) => ({ address: trade.vault, positionId: trade.positionId }));
+  const candidates = new Map<string, { address: string; positionId: bigint }>();
+  for (const candidate of [...memberPositions, ...purchasedPositions]) {
+    candidates.set(
+      `${candidate.address.toLowerCase()}-${candidate.positionId.toString()}`,
+      candidate
+    );
+  }
+
+  const summaries = await Promise.all(
+    [...candidates.values()].map(async ({ address, positionId }) => {
       const vault = new Contract(address, vaultAbi, signer);
-      const [isGroup, maturity, memberCount] = await Promise.all([
+      const [isGroup, maturity, memberCount, stored, owner] = await Promise.all([
         vault.getFunction("isGroup")(),
         vault.getFunction("maturity")(),
         vault.getFunction("memberCount")(),
+        vault.getFunction("position")(positionId),
+        vault.getFunction("positionOwner")(positionId),
       ]);
+      const ownsPosition = String(owner).toLowerCase() === signerAddress.toLowerCase();
+      const hasOwnedClaim = ownsPosition && !stored.lockedWithdrawn;
+      const isOriginalMember =
+        String(stored.member).toLowerCase() === signerAddress.toLowerCase();
+      const hasEmergency = BigInt(stored.emergencyBalance) > 0n;
+      if (!hasOwnedClaim && (!isOriginalMember || !hasEmergency)) return null;
       return {
         address: getAddress(address),
+        positionId,
+        access: hasOwnedClaim ? ("owner" as const) : ("emergency-only" as const),
         isGroup,
         maturity: new Date(Number(maturity) * 1_000),
         memberCount: Number(memberCount),
       };
     })
   );
+  return summaries.filter((summary): summary is VaultSummary => summary !== null);
 }
 
 export async function depositToVault(
@@ -593,15 +775,29 @@ export async function loadGroupExitRequests(
           vault.getFunction("groupExitApproval")(requestId, connectedAddress),
         ]);
         const expiresAt = new Date(Number(request.expiresAt) * 1_000);
+        const authorizationExpiresAt =
+          Number(request.authorizationExpiresAt) === 0
+            ? null
+            : new Date(Number(request.authorizationExpiresAt) * 1_000);
+        const status = groupExitStatusLabel(
+          request.status,
+          expiresAt,
+          authorizationExpiresAt
+        );
         return {
           id: requestId,
           positionId: request.positionId,
           requester: getAddress(request.requester),
           expiresAt,
+          authorizationExpiresAt,
+          currentDeadline:
+            status === "authorized" && authorizationExpiresAt
+              ? authorizationExpiresAt
+              : expiresAt,
           requiredApprovals: Number(progress.required),
           completedApprovals: Number(progress.completed),
           connectedMemberApproved,
-          status: groupExitStatusLabel(request.status, expiresAt),
+          status,
         };
       })
   );
@@ -629,6 +825,27 @@ export async function requestGroupExit(
   await sendGroupExitTransaction(signer, vaultAddress, "requestGroupExit");
 }
 
+export async function acceptGroupInvitation(
+  signer: Signer,
+  vaultAddress: string
+): Promise<void> {
+  await sendGroupExitTransaction(signer, vaultAddress, "acceptGroupInvitation");
+}
+
+export async function declineGroupInvitation(
+  signer: Signer,
+  vaultAddress: string
+): Promise<void> {
+  await sendGroupExitTransaction(signer, vaultAddress, "declineGroupInvitation");
+}
+
+export async function cancelUnactivatedGroup(
+  signer: Signer,
+  vaultAddress: string
+): Promise<void> {
+  await sendGroupExitTransaction(signer, vaultAddress, "cancelUnactivatedGroup");
+}
+
 export async function approveGroupExit(
   signer: Signer,
   vaultAddress: string,
@@ -638,6 +855,19 @@ export async function approveGroupExit(
     signer,
     vaultAddress,
     "approveGroupExit",
+    requestId
+  );
+}
+
+export async function authorizeGroupExit(
+  signer: Signer,
+  vaultAddress: string,
+  requestId: bigint
+): Promise<void> {
+  await sendGroupExitTransaction(
+    signer,
+    vaultAddress,
+    "authorizeGroupExit",
     requestId
   );
 }
@@ -789,6 +1019,10 @@ async function mapListing(signer: Signer, market: Contract, listingId: bigint) {
     ),
     providerFee: formatUnits(listing.providerFee, USDT_DECIMALS),
     currentProviderFee: formatUnits(currentProviderFee, USDT_DECIMALS),
+    currentTotalProviderPaid: formatUnits(
+      currentSaverPayout + currentProviderFee,
+      USDT_DECIMALS
+    ),
     minimumPayout: formatUnits(listing.minimumPayout, USDT_DECIMALS),
     expiresAt: new Date(Number(listing.expiresAt) * 1_000),
     active,
@@ -891,6 +1125,201 @@ function parsedEvent(log: Log, abi: readonly string[]) {
   }
 }
 
+const MAX_LOG_BLOCK_RANGE = 10_000;
+
+/**
+ * Public Amoy RPC services commonly reject `eth_getLogs` requests spanning
+ * more than 10,000 blocks. Read the same canonical history in bounded,
+ * inclusive windows so Activity keeps working as the deployment gets older.
+ */
+async function getLogsInChunks(
+  provider: Provider,
+  filter: Filter,
+  fromBlock: number,
+  toBlock: number
+): Promise<Log[]> {
+  const logs: Log[] = [];
+  for (
+    let firstBlock = fromBlock;
+    firstBlock <= toBlock;
+    firstBlock += MAX_LOG_BLOCK_RANGE
+  ) {
+    const lastBlock = Math.min(
+      firstBlock + MAX_LOG_BLOCK_RANGE - 1,
+      toBlock
+    );
+    logs.push(
+      ...(await provider.getLogs({
+        ...filter,
+        fromBlock: firstBlock,
+        toBlock: lastBlock,
+      }))
+    );
+  }
+  return logs;
+}
+
+/**
+ * Builds the public settlement ledger from immutable EarlyExitMarket events.
+ * `ListingFunded` holds the final execution values while `ListingCreated`
+ * supplies the seller, vault and position identity for the same listing ID.
+ */
+export async function loadCompletedTrades(
+  signer: Signer
+): Promise<CompletedTrade[]> {
+  const provider = signer.provider;
+  if (!provider)
+    throw new Error("The connected wallet has no readable provider.");
+  const market = await marketFor(signer);
+  return scanCompletedTrades(provider, await market.getAddress());
+}
+
+/**
+ * Loads the public market ledger without requesting wallet account access.
+ * Hosted builds should configure a deliberately public, rate-limited RPC URL;
+ * otherwise an already-injected provider is used for read-only calls.
+ */
+export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
+  const publicRpcUrl =
+    import.meta.env.VITE_PUBLIC_RPC_URL ??
+    "https://polygon-amoy.g.alchemy.com/v2/demo";
+  const provider: Provider = publicRpcUrl
+    ? new JsonRpcProvider(publicRpcUrl)
+    : typeof window !== "undefined" && window.ethereum
+      ? new BrowserProvider(window.ethereum)
+      : (() => {
+          throw new Error(
+            "Configure VITE_PUBLIC_RPC_URL to show public market history without a wallet."
+          );
+        })();
+  const factory = new Contract(factoryAddress(), factoryAbi, provider);
+  const marketAddress: string = await factory.getFunction("earlyExitMarket")();
+  return scanCompletedTrades(provider, getAddress(marketAddress));
+}
+
+async function scanCompletedTrades(
+  provider: Provider,
+  marketAddress: string
+): Promise<CompletedTrade[]> {
+  const fromBlock = Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0);
+  const latestBlock = await provider.getBlockNumber();
+  const logs = await getLogsInChunks(
+    provider,
+    { address: marketAddress },
+    fromBlock,
+    latestBlock
+  );
+
+  const created = new Map<
+    string,
+    { vault: string; positionId: bigint; seller: string }
+  >();
+  const funded: Array<{
+    listingId: bigint;
+    provider: string;
+    claimValue: bigint;
+    systemDiscountBps: bigint;
+    saverPayout: bigint;
+    providerPotentialReturn: bigint;
+    providerFee: bigint;
+    blockNumber: number;
+    transactionHash: string;
+    logIndex: number;
+  }> = [];
+
+  for (const log of logs) {
+    const event = parsedEvent(log, marketAbi);
+    if (!event) continue;
+    const listingId = event.args.listingId?.toString();
+    if (!listingId) continue;
+
+    if (event.name === "ListingCreated") {
+      created.set(listingId, {
+        vault: getAddress(event.args.vault),
+        positionId: event.args.positionId,
+        seller: getAddress(event.args.seller),
+      });
+    }
+    if (event.name === "ListingFunded") {
+      funded.push({
+        listingId: event.args.listingId,
+        provider: getAddress(event.args.provider),
+        claimValue: event.args.claimValue,
+        systemDiscountBps: event.args.systemDiscountBps,
+        saverPayout: event.args.saverPayout,
+        providerPotentialReturn: event.args.providerPotentialReturn,
+        providerFee: event.args.providerFee,
+        blockNumber: log.blockNumber,
+        transactionHash: log.transactionHash,
+        logIndex: log.index,
+      });
+    }
+  }
+
+  const settled = funded.filter((trade) =>
+    created.has(trade.listingId.toString())
+  );
+  const vaultAddresses = [
+    ...new Set(
+      settled.map(
+        (trade) => created.get(trade.listingId.toString())!.vault
+      )
+    ),
+  ];
+  const blockNumbers = [...new Set(settled.map((trade) => trade.blockNumber))];
+  const [vaultTypeEntries, blockEntries] = await Promise.all([
+    Promise.all(
+      vaultAddresses.map(async (vault) => [
+        vault.toLowerCase(),
+        Boolean(await new Contract(vault, vaultAbi, provider).getFunction("isGroup")()),
+      ] as const)
+    ),
+    Promise.all(
+      blockNumbers.map(async (blockNumber) => {
+        const block = await provider.getBlock(blockNumber);
+        return [
+          blockNumber,
+          new Date(Number(block?.timestamp ?? 0) * 1_000),
+        ] as const;
+      })
+    ),
+  ]);
+  const vaultTypes = new Map(vaultTypeEntries);
+  const blockTimes = new Map(blockEntries);
+
+  return settled
+    .sort(
+      (a, b) =>
+        b.blockNumber - a.blockNumber || b.logIndex - a.logIndex
+    )
+    .map((trade) => {
+      const listing = created.get(trade.listingId.toString())!;
+      return {
+        listingId: trade.listingId,
+        vault: listing.vault,
+        positionId: listing.positionId,
+        isGroup: vaultTypes.get(listing.vault.toLowerCase()) ?? false,
+        seller: listing.seller,
+        provider: trade.provider,
+        claimValue: formatUnits(trade.claimValue, USDT_DECIMALS),
+        systemDiscountPercent: Number(trade.systemDiscountBps) / 100,
+        saverPayout: formatUnits(trade.saverPayout, USDT_DECIMALS),
+        providerPotentialReturn: formatUnits(
+          trade.providerPotentialReturn,
+          USDT_DECIMALS
+        ),
+        providerFee: formatUnits(trade.providerFee, USDT_DECIMALS),
+        totalProviderPaid: formatUnits(
+          trade.saverPayout + trade.providerFee,
+          USDT_DECIMALS
+        ),
+        blockNumber: trade.blockNumber,
+        transactionHash: trade.transactionHash,
+        timestamp: blockTimes.get(trade.blockNumber) ?? new Date(0),
+      };
+    });
+}
+
 export async function loadActivity(
   signer: Signer,
   vaultAddresses: string[]
@@ -903,19 +1332,16 @@ export async function loadActivity(
   const fromBlock = Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0);
   const market = await marketFor(signer);
   const marketAddress = await market.getAddress();
+  const latestBlock = await provider.getBlockNumber();
   const normalizedVaults = new Set(
     vaultAddresses.map((address) => address.toLowerCase())
   );
   const [factoryLogs, marketLogs, vaultLogGroups] = await Promise.all([
-    provider.getLogs({
-      address: factoryAddress(),
-      fromBlock,
-      toBlock: "latest",
-    }),
-    provider.getLogs({ address: marketAddress, fromBlock, toBlock: "latest" }),
+    getLogsInChunks(provider, { address: factoryAddress() }, fromBlock, latestBlock),
+    getLogsInChunks(provider, { address: marketAddress }, fromBlock, latestBlock),
     Promise.all(
       vaultAddresses.map((address) =>
-        provider.getLogs({ address, fromBlock, toBlock: "latest" })
+        getLogsInChunks(provider, { address }, fromBlock, latestBlock)
       )
     ),
   ]);

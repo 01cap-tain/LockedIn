@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "network": "polygon-amoy",
   "chainId": 80002,
   "explorer": "https://amoy.polygonscan.com",
-  "gitCommit": "d50b30e84ee8fe0cfeb055f348670bddc20fa6c3",
-  "deploymentTimestamp": "2026-10-19T00:12:59.015Z",
+  "gitCommit": "117942840c642122eee677eaccf85d2b33e199b4",
+  "deploymentTimestamp": "2026-10-19T09:20:36.511Z",
   "tokenDecimals": 6,
   "contracts": {
     "mockUsdt": {
@@ -18,19 +18,24 @@
       "blockNumber": 50538014
     },
     "vaultFactory": {
-      "address": "0x02bE2762DF01507A202a9741c378B241aA2E8e25",
-      "transactionHash": "0xd07d1cb07e601e8f0ccb247dead9ab98a759ee5b52de26a1f26672d8f38b8dd4",
-      "blockNumber": 50546217
+      "address": "0x4cdC11bE0f02205e4Ffa02BaBc17cc72Ad7030D8",
+      "transactionHash": "0xa7b60a08ae5f4e2bac22816089330ed8e25296b49a6fef21f7a98194a266e81a",
+      "blockNumber": 50579073
     },
     "rewardPool": {
-      "address": "0xA8d99095C053aCA419152f91358797037dde486b",
-      "transactionHash": "0xd07d1cb07e601e8f0ccb247dead9ab98a759ee5b52de26a1f26672d8f38b8dd4",
-      "blockNumber": 50546217
+      "address": "0x6473F328501620ed3e471d42964aC68933Ca57Db",
+      "transactionHash": "0xa7b60a08ae5f4e2bac22816089330ed8e25296b49a6fef21f7a98194a266e81a",
+      "blockNumber": 50579073
     },
     "earlyExitMarket": {
-      "address": "0x98d75CB41a1Ee0c3Ae2732EBEe726866899113c0",
-      "transactionHash": "0xd07d1cb07e601e8f0ccb247dead9ab98a759ee5b52de26a1f26672d8f38b8dd4",
-      "blockNumber": 50546217
+      "address": "0x1f7Ae6Eef241A146A07CE224E00eE7a15Ec4A995",
+      "transactionHash": "0xa7b60a08ae5f4e2bac22816089330ed8e25296b49a6fef21f7a98194a266e81a",
+      "blockNumber": 50579073
+    },
+    "savingsVaultDeployer": {
+      "address": "0x2d33c363B0B1e0977E125Ae6072C3B09B8b67d44",
+      "transactionHash": "0xa7b60a08ae5f4e2bac22816089330ed8e25296b49a6fef21f7a98194a266e81a",
+      "blockNumber": 50579073
     }
   },
   "factoryConfiguration": {

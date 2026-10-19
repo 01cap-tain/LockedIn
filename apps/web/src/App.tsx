@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
+  acceptGroupInvitation,
+  approveGroupExit,
+  authorizeGroupExit,
   cancelExitListing,
   cancelGroupExit,
+  cancelUnactivatedGroup,
   completeGroupExit,
   createExitListing,
   createVault,
   depositToVault,
+  declineGroupInvitation,
   describeContractError,
   loadActivity,
   loadAllExitListings,
+  loadPublicCompletedTrades,
   loadExitListing,
   fundExitListing,
   loadExitMarket,
@@ -19,11 +25,11 @@ import {
   loadVaultsForSigner,
   requestMockUsdt,
   requestGroupExit,
-  approveGroupExit,
   revokeGroupExitApproval,
   withdrawEmergency,
   withdrawLocked,
   type ActivityItem,
+  type CompletedTrade,
   type CreateVaultInput,
   type ExitListingSnapshot,
   type GroupExitRequestSnapshot,
@@ -57,12 +63,14 @@ type TransactionState =
   | { status: "idle" }
   | { status: "pending" | "success" | "error"; message: string };
 type ListingFilter = "all" | "personal" | "group" | "mine";
+type MarketView = "listings" | "recent";
+type HistoryView = "trades" | "events";
 
 const routes: Array<{ id: AppRoute; label: string }> = [
   { id: "vaults", label: "Create" },
   { id: "position", label: "My vaults" },
   { id: "market", label: "Early exit" },
-  { id: "activity", label: "Activity" },
+  { id: "activity", label: "History" },
   { id: "wallet", label: "Wallet" },
 ];
 
@@ -126,9 +134,14 @@ export function App() {
   const [listings, setListings] = useState<ExitListingSnapshot[]>([]);
   const [exitState, setExitState] = useState<ExitListingSnapshot | null>(null);
   const [listingFilter, setListingFilter] = useState<ListingFilter>("all");
+  const [marketView, setMarketView] = useState<MarketView>("listings");
   const [exitExpiration, setExitExpiration] = useState(() => futureInput(7));
   const [minimumPayout, setMinimumPayout] = useState("0");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [completedTrades, setCompletedTrades] = useState<CompletedTrade[]>([]);
+  const [publicTradesError, setPublicTradesError] = useState<string | null>(null);
+  const [historyView, setHistoryView] = useState<HistoryView>("trades");
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [developmentAccounts, setDevelopmentAccounts] = useState<string[]>([]);
   const [mockTokenBalance, setMockTokenBalance] = useState<string | null>(null);
   const [groupExitRequests, setGroupExitRequests] = useState<
@@ -159,6 +172,9 @@ export function App() {
   const selectedListing = exitState?.listing;
   const canComposeListing = Boolean(
     snapshot &&
+      snapshot.ownsLockedPosition &&
+      snapshot.isOriginalMember &&
+      (!snapshot.isGroup || snapshot.groupLifecycle === "active") &&
       (!selectedListing ||
         (!selectedListing.active &&
           selectedListing.vault === snapshot.address &&
@@ -177,6 +193,21 @@ export function App() {
       }),
     [listings, listingFilter, connectedAddress]
   );
+  // A completed settlement belongs in personal history for both sides of the
+  // trade: the original saver and the provider who acquired the claim.
+  const myCompletedTrades = useMemo(
+    () =>
+      completedTrades.filter(
+        (trade) =>
+          trade.seller.toLowerCase() === connectedAddress ||
+          trade.provider.toLowerCase() === connectedAddress
+      ),
+    [completedTrades, connectedAddress]
+  );
+  const selectedCompletedTrade =
+    myCompletedTrades.find(
+      (trade) => trade.listingId.toString() === selectedTradeId
+    ) ?? myCompletedTrades[0] ?? null;
 
   useEffect(() => {
     const updateRoute = () => setRoute(routeFromHash());
@@ -188,6 +219,11 @@ export function App() {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!deploymentReady) return;
+    void refreshPublicTradeHistory();
+  }, [deploymentReady]);
 
   useEffect(() => {
     // Account and network changes invalidate every address-scoped query. Clear
@@ -229,6 +265,7 @@ export function App() {
     setListings([]);
     setExitState(null);
     setActivity([]);
+    setSelectedTradeId(null);
     setMockTokenBalance(null);
     setGroupExitRequests([]);
   }
@@ -285,8 +322,13 @@ export function App() {
     // The chain remains authoritative. This MVP reconstructs the portfolio and
     // activity feed from contract views and events rather than trusting a DB.
     const nextVaults = await loadVaultsForSigner(session.signer);
-    const [nextListings, nextActivity, nextMockTokenBalance] =
-      await Promise.all([
+    setVaults(nextVaults);
+
+    // Market history, activity and faucet balances are secondary projections.
+    // A temporary RPC/indexing failure must never make a confirmed transaction
+    // look reverted or prevent the newly created vault from opening.
+    const [listingsResult, activityResult, balanceResult] =
+      await Promise.allSettled([
         loadAllExitListings(session.signer),
         loadActivity(
           session.signer,
@@ -296,22 +338,44 @@ export function App() {
           ? loadMockUsdtBalance(session.signer)
           : Promise.resolve(null),
       ]);
-    setVaults(nextVaults);
-    setListings(nextListings);
-    setActivity(nextActivity);
-    setMockTokenBalance(nextMockTokenBalance);
+    if (listingsResult.status === "fulfilled")
+      setListings(listingsResult.value);
+    if (activityResult.status === "fulfilled")
+      setActivity(activityResult.value);
+    if (balanceResult.status === "fulfilled")
+      setMockTokenBalance(balanceResult.value);
+    void refreshPublicTradeHistory();
     if (
       snapshot &&
-      nextVaults.some((vault) => vault.address === snapshot.address)
+      nextVaults.some(
+        (vault) =>
+          vault.address === snapshot.address &&
+          vault.positionId === snapshot.positionId
+      )
     )
-      await openVault(snapshot.address, session);
+      await openVault(snapshot.address, snapshot.positionId, session);
+    else if (snapshot) {
+      setSnapshot(null);
+      setExitState(null);
+      setGroupExitRequests([]);
+    }
+  }
+
+  async function refreshPublicTradeHistory(): Promise<void> {
+    try {
+      setCompletedTrades(await loadPublicCompletedTrades());
+      setPublicTradesError(null);
+    } catch (error) {
+      setPublicTradesError(describeContractError(error));
+    }
   }
 
   async function openVault(
     address: string,
+    positionId?: bigint,
     session = requireSession()
   ): Promise<void> {
-    const next = await loadVault(session.signer, address);
+    const next = await loadVault(session.signer, address, positionId);
     const [nextExit, nextGroupExits] = await Promise.all([
       loadExitMarket(session.signer, next),
       loadGroupExitRequests(session.signer, address),
@@ -359,8 +423,7 @@ export function App() {
       async () => {
         await action();
         await refreshPortfolio();
-        if (snapshot) await openVault(snapshot.address);
-        else if (selectedListing)
+        if (!snapshot && selectedListing)
           setExitState(
             await loadExitListing(requireSession().signer, selectedListing.id)
           );
@@ -396,7 +459,7 @@ export function App() {
         };
         const created = await createVault(session.signer, input);
         await refreshPortfolio(session);
-        await openVault(created, session);
+        await openVault(created, undefined, session);
         window.location.hash = "/position";
       },
       "Vault created and added to your portfolio."
@@ -420,7 +483,6 @@ export function App() {
         snapshot.positionId
       );
       await refreshPortfolio();
-      await openVault(snapshot.address);
       setTransaction({
         status: "success",
         message: "Maturity withdrawal confirmed.",
@@ -641,7 +703,7 @@ export function App() {
                   <span>Participant EVM addresses</span>
                   <textarea
                     onChange={(event) => setMemberAddresses(event.target.value)}
-                    placeholder="One 0x address per line"
+                    placeholder="At least 3 additional 0x addresses, one per line"
                     required
                     value={memberAddresses}
                   />
@@ -692,15 +754,16 @@ export function App() {
                 {vaults.map((vault) => (
                   <button
                     className={
-                      snapshot?.address === vault.address
+                      snapshot?.address === vault.address &&
+                      snapshot.positionId === vault.positionId
                         ? "vault-row selected"
                         : "vault-row"
                     }
-                    key={vault.address}
+                    key={`${vault.address}-${vault.positionId.toString()}`}
                     onClick={() =>
                       void runTransaction(
                         "Loading vault…",
-                        () => openVault(vault.address),
+                        () => openVault(vault.address, vault.positionId),
                         "Vault loaded."
                       )
                     }
@@ -712,6 +775,9 @@ export function App() {
                     </span>
                     <strong>{short(vault.address)}</strong>
                     <small>
+                      {vault.access === "emergency-only"
+                        ? "Emergency funds only · "
+                        : `Position #${vault.positionId.toString()} · `}
                       {vault.memberCount} member
                       {vault.memberCount === 1 ? "" : "s"} ·{" "}
                       {vault.maturity.toLocaleDateString()}
@@ -747,14 +813,62 @@ export function App() {
                   </div>
                   <span
                     className={
-                      snapshot.goalComplete
+                      !snapshot.ownsLockedPosition || snapshot.goalComplete
                         ? "status-pill complete"
                         : "status-pill"
                     }
                   >
-                    {snapshot.goalComplete ? "Target reached" : "In progress"}
+                    {!snapshot.ownsLockedPosition
+                      ? "Position sold"
+                      : !snapshot.isOriginalMember
+                        ? "Purchased claim"
+                        : snapshot.goalComplete
+                          ? "Target reached"
+                          : "In progress"}
                   </span>
                 </div>
+                {snapshot.isGroup && snapshot.groupLifecycle !== "active" && (
+                  <GroupInvitationPanel
+                    clock={clock}
+                    disabled={actionsDisabled}
+                    snapshot={snapshot}
+                    onAccept={() =>
+                      void transactAndRefresh(
+                        "Accepting group invitation…",
+                        () =>
+                          acceptGroupInvitation(
+                            requireSession().signer,
+                            snapshot.address
+                          ),
+                        "Invitation accepted."
+                      )
+                    }
+                    onCancel={() =>
+                      void transactAndRefresh(
+                        "Cancelling unactivated group…",
+                        () =>
+                          cancelUnactivatedGroup(
+                            requireSession().signer,
+                            snapshot.address
+                          ),
+                        "Unactivated group cancelled."
+                      )
+                    }
+                    onDecline={() =>
+                      void transactAndRefresh(
+                        "Declining group invitation…",
+                        () =>
+                          declineGroupInvitation(
+                            requireSession().signer,
+                            snapshot.address
+                          ),
+                        "Invitation declined."
+                      )
+                    }
+                  />
+                )}
+                {snapshot.isOriginalMember && snapshot.ownsLockedPosition && (
+                  <>
                 <div className="progress-copy">
                   <span>Your goal progress</span>
                   <strong>{progress.toFixed(1)}%</strong>
@@ -762,27 +876,50 @@ export function App() {
                 <div className="progress-track">
                   <span style={{ width: `${progress}%` }} />
                 </div>
+                  </>
+                )}
+                {!snapshot.ownsLockedPosition && (
+                  <div className="notice">
+                    <strong>Locked position sold</strong>
+                    <span>
+                      You no longer own this savings claim. This vault remains
+                      visible only so you can withdraw your separate emergency
+                      balance.
+                    </span>
+                  </div>
+                )}
                 <div className="metrics">
+                  {snapshot.isOriginalMember && (
                   <Metric
                     label="Deposited"
                     value={`${snapshot.deposited} mUSDT`}
                   />
+                  )}
+                  {snapshot.isOriginalMember && (
                   <Metric
                     label="Emergency (outside Aave)"
                     value={`${snapshot.emergencyBalance} mUSDT`}
                   />
+                  )}
+                  {snapshot.ownsLockedPosition && (
                   <Metric
                     label="Locked principal"
                     value={`${snapshot.lockedBalance} mUSDT`}
                   />
+                  )}
+                  {snapshot.ownsLockedPosition && (
                   <Metric
                     label="Accrued yield"
                     value={`${snapshot.accruedYield} mUSDT`}
                   />
+                  )}
+                  {snapshot.ownsLockedPosition && (
                   <Metric
                     label="Current position value"
                     value={`${snapshot.currentValue} mUSDT`}
                   />
+                  )}
+                  {snapshot.ownsLockedPosition && (
                   <Metric
                     label={
                       usesMockYieldAdapter
@@ -799,6 +936,8 @@ export function App() {
                           }`
                     }
                   />
+                  )}
+                  {snapshot.ownsLockedPosition && (
                   <Metric
                     label={
                       usesMockYieldAdapter
@@ -826,12 +965,13 @@ export function App() {
                       )
                     }
                   />
+                  )}
                   <Metric
                     label="Maturity"
                     value={snapshot.maturity.toLocaleString()}
                   />
                 </div>
-                {snapshot.vaultMode === "earn" && (
+                {snapshot.ownsLockedPosition && snapshot.vaultMode === "earn" && (
                   <div className="notice">
                     <strong>
                       {usesMockYieldAdapter
@@ -845,7 +985,8 @@ export function App() {
                     </span>
                   </div>
                 )}
-                <div className="maturity-action">
+                {snapshot.ownsLockedPosition && (
+                  <div className="maturity-action">
                   <div>
                     <strong>Maturity withdrawal</strong>
                     <span>
@@ -875,8 +1016,12 @@ export function App() {
                       ? "Withdrawn"
                       : "Withdraw position"}
                   </button>
-                </div>
+                  </div>
+                )}
                 <div className="action-grid">
+                  {snapshot.ownsLockedPosition &&
+                    snapshot.isOriginalMember &&
+                    (!snapshot.isGroup || snapshot.groupLifecycle === "active") && (
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -909,6 +1054,9 @@ export function App() {
                       Deposit
                     </button>
                   </form>
+                  )}
+                  {snapshot.isOriginalMember &&
+                    Number(snapshot.emergencyBalance) > 0 && (
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -941,8 +1089,12 @@ export function App() {
                       Withdraw
                     </button>
                   </form>
+                  )}
                 </div>
-                {snapshot.isGroup && connectedMember && (
+                {snapshot.isGroup &&
+                  snapshot.groupLifecycle === "active" &&
+                  snapshot.ownsLockedPosition &&
+                  connectedMember && (
                   <GroupExitPanel
                     activeMemberCount={
                       snapshot.members.filter(
@@ -952,6 +1104,9 @@ export function App() {
                     clock={clock}
                     connectedAddress={connectedAddress ?? ""}
                     connectedMemberStatus={connectedMember.status}
+                    connectedMemberProgress={
+                      connectedMember.approvalProgressPercent / 100
+                    }
                     disabled={actionsDisabled}
                     requests={groupExitRequests}
                     onApprove={(requestId) =>
@@ -964,6 +1119,18 @@ export function App() {
                             requestId
                           ),
                         "Group-exit approval recorded."
+                      )
+                    }
+                    onAuthorize={(requestId) =>
+                      void transactAndRefresh(
+                        "Rechecking unanimous approval eligibility…",
+                        () =>
+                          authorizeGroupExit(
+                            requireSession().signer,
+                            snapshot.address,
+                            requestId
+                          ),
+                        "Group exit authorized for 24 hours."
                       )
                     }
                     onCancel={(requestId) =>
@@ -1001,7 +1168,7 @@ export function App() {
                             requireSession().signer,
                             snapshot.address
                           ),
-                        "Seven-day group-exit request created."
+                        "24-hour group-exit request created."
                       )
                     }
                     onRevoke={(requestId) =>
@@ -1018,7 +1185,7 @@ export function App() {
                     }
                   />
                 )}
-                {snapshot.isGroup && (
+                {snapshot.isGroup && snapshot.ownsLockedPosition && (
                   <div className="members">
                     <div className="section-title">
                       <div>
@@ -1059,6 +1226,13 @@ export function App() {
                               <div className="mini-progress">
                                 <i style={{ width: `${memberProgress}%` }} />
                               </div>
+                              <small>
+                                Active principal: {member.activePrincipal} mUSDT ·{" "}
+                                {member.approvalProgressPercent.toFixed(1)}% ·{" "}
+                                {member.approvalEligible
+                                  ? "approval eligible"
+                                  : "25% required"}
+                              </small>
                             </div>
                             <span
                               className={
@@ -1094,7 +1268,23 @@ export function App() {
       )}
 
       {route === "market" && (
-        <section className="route-page market-layout">
+        <section className="route-page">
+          <div className="panel view-switch" aria-label="Market view">
+            <button
+              className={marketView === "listings" ? "active" : ""}
+              onClick={() => setMarketView("listings")}
+            >
+              Open listings
+            </button>
+            <button
+              className={marketView === "recent" ? "active" : ""}
+              onClick={() => setMarketView("recent")}
+            >
+              Recent trades
+            </button>
+          </div>
+          {marketView === "listings" ? (
+            <div className="market-layout">
           <aside className="panel market-browser">
             <div className="section-title">
               <div>
@@ -1233,11 +1423,125 @@ export function App() {
               </div>
             )}
           </article>
+            </div>
+          ) : (
+            <article className="panel recent-trades-panel">
+              <div className="section-title">
+                <div>
+                  <h2>Recent market trades</h2>
+                  <p>
+                    Public, finalized saver-to-provider position transfers.
+                  </p>
+                </div>
+                <button
+                  className="secondary"
+                  disabled={!deploymentReady}
+                  onClick={() => void refreshPublicTradeHistory()}
+                >
+                  Refresh
+                </button>
+              </div>
+              {publicTradesError && (
+                <div className="notice error">
+                  <strong>Recent trades unavailable</strong>
+                  <span>{publicTradesError}</span>
+                </div>
+              )}
+              <RecentTradeTable
+                trades={completedTrades}
+                explorerBaseUrl={explorerBaseUrl}
+              />
+            </article>
+          )}
         </section>
       )}
 
       {route === "activity" && (
         <section className="route-page">
+          <div className="panel view-switch" aria-label="History view">
+            <button
+              className={historyView === "trades" ? "active" : ""}
+              onClick={() => setHistoryView("trades")}
+            >
+              My completed trades
+            </button>
+            <button
+              className={historyView === "events" ? "active" : ""}
+              onClick={() => setHistoryView("events")}
+            >
+              Vault activity
+            </button>
+          </div>
+          {historyView === "trades" && (
+            <div className="trade-history-layout">
+              <aside className="panel trade-history-list">
+                <div className="section-title">
+                  <div>
+                    <h2>Completed trades</h2>
+                    <p>Trades where you were the saver or provider.</p>
+                  </div>
+                  <button
+                    className="icon-button"
+                    disabled={actionsDisabled}
+                    onClick={() => void refreshPortfolio()}
+                    title="Refresh"
+                  >
+                    ↻
+                  </button>
+                </div>
+                {myCompletedTrades.length === 0 ? (
+                  <div className="empty-mini">No completed trades yet.</div>
+                ) : (
+                  myCompletedTrades.map((trade) => {
+                    const role =
+                      trade.seller.toLowerCase() === connectedAddress
+                        ? "Saver"
+                        : "Liquidity provider";
+                    return (
+                      <button
+                        className={
+                          selectedCompletedTrade?.listingId === trade.listingId
+                            ? "trade-history-row selected"
+                            : "trade-history-row"
+                        }
+                        key={trade.listingId.toString()}
+                        onClick={() =>
+                          setSelectedTradeId(trade.listingId.toString())
+                        }
+                      >
+                        <span>
+                          <span
+                            className={`tag ${
+                              trade.isGroup ? "group" : "personal"
+                            }`}
+                          >
+                            {vaultType(trade.isGroup)}
+                          </span>
+                          <small>{role}</small>
+                        </span>
+                        <strong>Trade #{trade.listingId.toString()}</strong>
+                        <small>{trade.timestamp.toLocaleString()}</small>
+                      </button>
+                    );
+                  })
+                )}
+              </aside>
+              <article className="panel trade-receipt-shell">
+                {selectedCompletedTrade ? (
+                  <TradeReceiptCard
+                    trade={selectedCompletedTrade}
+                    connectedAddress={connectedAddress!}
+                    explorerBaseUrl={explorerBaseUrl}
+                  />
+                ) : (
+                  <div className="empty-state">
+                    Your completed market trades will appear here.
+                  </div>
+                )}
+              </article>
+            </div>
+          )}
+          {historyView === "events" && (
           <article className="panel activity-panel">
             <div className="section-title">
               <div>
@@ -1291,6 +1595,7 @@ export function App() {
               </div>
             )}
           </article>
+          )}
         </section>
       )}
 
@@ -1405,6 +1710,151 @@ export function App() {
   );
 }
 
+function RecentTradeTable({
+  trades,
+  explorerBaseUrl,
+}: {
+  trades: CompletedTrade[];
+  explorerBaseUrl?: string;
+}) {
+  if (trades.length === 0)
+    return <div className="empty-state compact-empty">No completed trades yet.</div>;
+
+  return (
+    <div className="recent-trade-table">
+      <div className="recent-trade-head">
+        <span>Trade</span>
+        <span>Transfer</span>
+        <span>Settlement</span>
+        <span>Time</span>
+        <span>Transaction</span>
+      </div>
+      {trades.map((trade) => (
+        <div className="recent-trade-row" key={trade.listingId.toString()}>
+          <div>
+            <strong>#{trade.listingId.toString()}</strong>
+            <span className={`tag ${trade.isGroup ? "group" : "personal"}`}>
+              {vaultType(trade.isGroup)}
+            </span>
+          </div>
+          <div>
+            <span>{short(trade.seller)}</span>
+            <small>to {short(trade.provider)}</small>
+          </div>
+          <div>
+            <strong>{trade.saverPayout} mUSDT</strong>
+            <small>{trade.systemDiscountPercent.toFixed(2)}% discount</small>
+          </div>
+          <time dateTime={trade.timestamp.toISOString()}>
+            {trade.timestamp.toLocaleString()}
+          </time>
+          {explorerBaseUrl ? (
+            <a
+              href={`${explorerBaseUrl}/tx/${trade.transactionHash}`}
+              rel="noreferrer"
+              target="_blank"
+            >
+              View transaction ↗
+            </a>
+          ) : (
+            <code>{short(trade.transactionHash)}</code>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TradeReceiptCard({
+  trade,
+  connectedAddress,
+  explorerBaseUrl,
+}: {
+  trade: CompletedTrade;
+  connectedAddress: string;
+  explorerBaseUrl?: string;
+}) {
+  const isSaver = trade.seller.toLowerCase() === connectedAddress.toLowerCase();
+  return (
+    <div className="trade-receipt">
+      <header>
+        <div>
+          <span className="eyebrow">LockedIn Circle · Trade receipt</span>
+          <h2>Early-exit trade #{trade.listingId.toString()}</h2>
+          <p>Finalized on Polygon Amoy</p>
+        </div>
+        <span className="receipt-status">Completed</span>
+      </header>
+      <div className="receipt-summary">
+        <div>
+          <small>Your role</small>
+          <strong>{isSaver ? "Saver" : "Liquidity provider"}</strong>
+        </div>
+        <div>
+          <small>Position type</small>
+          <strong>{vaultType(trade.isGroup)}</strong>
+        </div>
+        <div>
+          <small>Completed</small>
+          <strong>{trade.timestamp.toLocaleString()}</strong>
+        </div>
+      </div>
+      <div className="receipt-amount">
+        <span>{isSaver ? "Liquidity received" : "Locked claim acquired"}</span>
+        <strong>
+          {isSaver ? "+" : ""}
+          {isSaver ? trade.saverPayout : trade.claimValue} mUSDT
+        </strong>
+        <small>
+          {isSaver
+            ? "Paid directly to your connected wallet. Confirm it in your wallet activity or on the explorer."
+            : `Acquired after a ${trade.systemDiscountPercent.toFixed(2)}% system discount.`}
+        </small>
+      </div>
+      <div className="receipt-grid">
+        <Metric label="Provider fee (0.9%)" value={`${trade.providerFee} mUSDT`} />
+        <Metric
+          label="Total provider paid"
+          value={`${trade.totalProviderPaid} mUSDT`}
+        />
+        <Metric
+          label="Provider potential return"
+          value={`${trade.providerPotentialReturn} mUSDT`}
+        />
+        <Metric label="Position ID" value={`#${trade.positionId.toString()}`} />
+      </div>
+      <dl className="receipt-parties">
+        <div>
+          <dt>Saver</dt>
+          <dd>{trade.seller}</dd>
+        </div>
+        <div>
+          <dt>Liquidity provider</dt>
+          <dd>{trade.provider}</dd>
+        </div>
+        <div>
+          <dt>Vault</dt>
+          <dd>{trade.vault}</dd>
+        </div>
+      </dl>
+      <footer>
+        <span>Block {trade.blockNumber}</span>
+        {explorerBaseUrl ? (
+          <a
+            href={`${explorerBaseUrl}/tx/${trade.transactionHash}`}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Verify on explorer ↗
+          </a>
+        ) : (
+          <code>{trade.transactionHash}</code>
+        )}
+      </footer>
+    </div>
+  );
+}
+
 function WalletChip({ label, address }: { label: string; address: string }) {
   return (
     <div className="wallet-chip">
@@ -1436,15 +1886,112 @@ function expiryCountdown(expiresAt: Date, clock: number): string {
   return `${days}d ${hours}h ${minutes}m ${seconds}s remaining`;
 }
 
+function GroupInvitationPanel({
+  snapshot,
+  clock,
+  disabled,
+  onAccept,
+  onDecline,
+  onCancel,
+}: {
+  snapshot: VaultSnapshot;
+  clock: number;
+  disabled: boolean;
+  onAccept: () => void;
+  onDecline: () => void;
+  onCancel: () => void;
+}) {
+  const invitationExpired = Boolean(
+    snapshot.invitationExpiresAt &&
+      snapshot.invitationExpiresAt.getTime() <= clock
+  );
+  const canAnswer =
+    snapshot.groupLifecycle === "pending" &&
+    !invitationExpired &&
+    !snapshot.connectedInvitationAccepted &&
+    !snapshot.connectedInvitationDeclined;
+  const isCreator =
+    snapshot.groupCreator.toLowerCase() === snapshot.signerAddress.toLowerCase();
+  const canCancel =
+    isCreator &&
+    (snapshot.groupLifecycle === "declined" ||
+      snapshot.groupLifecycle === "expired" ||
+      invitationExpired);
+
+  return (
+    <section className="group-invitation-panel">
+      <div className="section-title">
+        <div>
+          <span className={`listing-status ${snapshot.groupLifecycle}`}>
+            {invitationExpired && snapshot.groupLifecycle === "pending"
+              ? "expired"
+              : snapshot.groupLifecycle}
+          </span>
+          <h3>Group invitation</h3>
+          <p>
+            Review every member and the immutable savings terms below. Deposits,
+            rewards and exits remain disabled until all invited wallets accept.
+          </p>
+        </div>
+        {snapshot.invitationExpiresAt && (
+          <strong>{expiryCountdown(snapshot.invitationExpiresAt, clock)}</strong>
+        )}
+      </div>
+      <div className="metrics invitation-terms">
+        <Metric label="Your target" value={`${snapshot.target} mUSDT`} />
+        <Metric label="Maturity" value={snapshot.maturity.toLocaleString()} />
+        <Metric label="Mode" value={snapshot.vaultMode === "earn" ? "Earn" : "Safe"} />
+        <Metric
+          label="Emergency allocation"
+          value={`${snapshot.emergencyPercent}%`}
+        />
+      </div>
+      <div className="invitation-members">
+        {snapshot.members.map((member) => (
+          <div key={member.member}>
+            <code>{member.member}</code>
+            <span>
+              {member.invitationDeclined
+                ? "Declined"
+                : member.invitationAccepted
+                  ? "Accepted"
+                  : "Awaiting response"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="group-exit-actions">
+        {canAnswer && (
+          <>
+            <button className="primary" disabled={disabled} onClick={onAccept}>
+              Accept complete terms
+            </button>
+            <button className="secondary" disabled={disabled} onClick={onDecline}>
+              Decline
+            </button>
+          </>
+        )}
+        {canCancel && (
+          <button className="secondary" disabled={disabled} onClick={onCancel}>
+            Cancel unactivated group
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function GroupExitPanel({
   requests,
   activeMemberCount,
   connectedAddress,
   connectedMemberStatus,
+  connectedMemberProgress,
   clock,
   disabled,
   onRequest,
   onApprove,
+  onAuthorize,
   onRevoke,
   onCancel,
   onComplete,
@@ -1454,10 +2001,12 @@ function GroupExitPanel({
   activeMemberCount: number;
   connectedAddress: string;
   connectedMemberStatus: VaultSnapshot["members"][number]["status"];
+  connectedMemberProgress: number;
   clock: number;
   disabled: boolean;
   onRequest: () => void;
   onApprove: (requestId: bigint) => void;
+  onAuthorize: (requestId: bigint) => void;
   onRevoke: (requestId: bigint) => void;
   onCancel: (requestId: bigint) => void;
   onComplete: (requestId: bigint) => void;
@@ -1476,9 +2025,10 @@ function GroupExitPanel({
           <h3>Cooperative group exit</h3>
           <p>
             Unlock your own claim without a discount after every other active
-            member approves and all active goals are complete.
-            {activeMemberCount < 4 && (
-              <> Early unlock is disabled below four active members.</>
+            member approves within 24 hours and all active goals are complete.
+            Approvers must have saved at least 25% of their own target.
+            {activeMemberCount <= 4 && (
+              <> An exit cannot proceed because it would leave fewer than four active members.</>
             )}
           </p>
         </div>
@@ -1488,7 +2038,7 @@ function GroupExitPanel({
             disabled ||
             connectedMemberStatus !== "active" ||
             ownUnresolved ||
-            activeMemberCount < 4
+            activeMemberCount <= 4
           }
           onClick={onRequest}
           type="button"
@@ -1508,6 +2058,7 @@ function GroupExitPanel({
               request.status === "pending" &&
               !isRequester &&
               connectedMemberStatus === "active";
+            const meetsApprovalThreshold = connectedMemberProgress >= 0.25;
             return (
               <article
                 className="group-exit-request"
@@ -1523,20 +2074,27 @@ function GroupExitPanel({
                   </strong>
                   <small>
                     {request.completedApprovals}/{request.requiredApprovals}{" "}
-                    approvals · {expiryCountdown(request.expiresAt, clock)}
+                    approvals · {expiryCountdown(request.currentDeadline, clock)}
                   </small>
                 </div>
                 <div className="group-exit-actions">
                   {canVote && !request.connectedMemberApproved && (
                     <button
                       className="primary"
-                      disabled={disabled}
+                      disabled={disabled || !meetsApprovalThreshold}
                       onClick={() => onApprove(request.id)}
                       type="button"
                     >
                       Approve
                     </button>
                   )}
+                  {canVote &&
+                    !request.connectedMemberApproved &&
+                    !meetsApprovalThreshold && (
+                      <small className="approval-requirement">
+                        Save at least 25% of your target to approve.
+                      </small>
+                    )}
                   {canVote && request.connectedMemberApproved && (
                     <button
                       className="secondary"
@@ -1547,6 +2105,18 @@ function GroupExitPanel({
                       Revoke
                     </button>
                   )}
+                  {request.status === "pending" &&
+                    request.completedApprovals === request.requiredApprovals &&
+                    request.requiredApprovals > 0 && (
+                      <button
+                        className="secondary"
+                        disabled={disabled}
+                        onClick={() => onAuthorize(request.id)}
+                        type="button"
+                      >
+                        Recheck 25% eligibility
+                      </button>
+                    )}
                   {isRequester && request.status === "pending" && (
                     <button
                       className="secondary"
@@ -1777,6 +2347,10 @@ function ListingDetail({
           value={`${listing.currentProviderFee} mUSDT`}
         />
         <Metric
+          label="Total provider pays"
+          value={`${listing.currentTotalProviderPaid} mUSDT`}
+        />
+        <Metric
           label="Saver minimum"
           value={`${listing.minimumPayout} mUSDT`}
         />
@@ -1825,7 +2399,8 @@ function ListingDetail({
       {!isSeller && listing.active && (
         <p className="provider-note">
           Funding pays {listing.currentSaverPayout} mUSDT to the saver plus{" "}
-          {listing.currentProviderFee} mUSDT in protocol fees, then permanently
+          {listing.currentProviderFee} mUSDT in protocol fees—{" "}
+          {listing.currentTotalProviderPaid} mUSDT total—then permanently
           transfers the locked claim.
         </p>
       )}

@@ -39,6 +39,33 @@ describe("EVM wallet connection", () => {
     ).rejects.toEqual(expect.objectContaining({ code: "CONNECTION_REJECTED" }));
   });
 
+  it("maps a plain-object user rejection to a typed connection error", async () => {
+    const provider: Eip1193EventsProvider = {
+      request: vi.fn().mockRejectedValue({ code: "4001", message: "Denied" }),
+    };
+    await expect(
+      connectEvmWallet({ provider, expectedChainId: "0x13882" })
+    ).rejects.toMatchObject({
+      code: "CONNECTION_REJECTED",
+      message: "EVM wallet access was rejected.",
+    });
+  });
+
+  it("preserves a plain provider error message for diagnosis", async () => {
+    const provider: Eip1193EventsProvider = {
+      request: vi.fn().mockRejectedValue({
+        code: -32603,
+        message: "The wallet RPC could not complete the request.",
+      }),
+    };
+    await expect(
+      connectEvmWallet({ provider, expectedChainId: "0x13882" })
+    ).rejects.toMatchObject({
+      code: "CONNECTION_FAILED",
+      message: "The wallet RPC could not complete the request.",
+    });
+  });
+
   it("requests a network switch before rejecting a provider on the wrong chain", async () => {
     const provider = providerWith((method) =>
       method === "eth_requestAccounts"

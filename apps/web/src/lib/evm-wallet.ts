@@ -87,9 +87,47 @@ function injectedProvider(): Eip1193EventsProvider | undefined {
 }
 
 function providerErrorCode(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error))
-    return undefined;
-  return typeof error.code === "number" ? error.code : undefined;
+  if (typeof error !== "object" || error === null) return undefined;
+
+  if ("code" in error) {
+    if (typeof error.code === "number") return error.code;
+    if (typeof error.code === "string") {
+      const parsedCode = Number(error.code);
+      if (Number.isFinite(parsedCode)) return parsedCode;
+    }
+  }
+
+  // Some wallet bridges wrap the original EIP-1193 error.
+  if ("error" in error) return providerErrorCode(error.error);
+  if ("cause" in error) return providerErrorCode(error.cause);
+  return undefined;
+}
+
+/**
+ * Wallet extensions frequently reject with a plain JSON object rather than an
+ * `Error`. Preserve the provider's useful explanation without exposing the
+ * whole object (which may contain verbose request payloads).
+ */
+function providerErrorMessage(error: unknown, depth = 0): string | undefined {
+  if (depth > 3) return undefined;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error !== "object" || error === null) return undefined;
+  const record = error as Record<string, unknown>;
+
+  for (const key of ["shortMessage", "message", "reason"] as const) {
+    if (key in record) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return value;
+    }
+  }
+
+  for (const key of ["error", "cause", "data"] as const) {
+    if (key in record) {
+      const nestedMessage = providerErrorMessage(record[key], depth + 1);
+      if (nestedMessage) return nestedMessage;
+    }
+  }
+  return undefined;
 }
 
 function normalizeChainId(chainId: unknown): string {
@@ -186,9 +224,7 @@ export async function connectEvmWallet(
       }
       throw new EvmWalletError(
         "CONNECTION_FAILED",
-        error instanceof Error
-          ? error.message
-          : "The EVM wallet connection failed.",
+        providerErrorMessage(error) ?? "The EVM wallet connection failed.",
         { cause: error }
       );
     }

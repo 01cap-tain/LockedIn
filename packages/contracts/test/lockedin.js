@@ -38,7 +38,7 @@ describe('LockedIn Circle Phase 1', function () {
       31_337,
       ethers.ZeroAddress,
     ])
-    maturity = BigInt(await networkHelpers.time.latest()) + 3_600n
+    maturity = BigInt(await networkHelpers.time.latest()) + 10n * 24n * 60n * 60n
   })
 
   async function personalVault({ target = 100n * UNIT, bps = 1_000, owner = creator } = {}) {
@@ -48,9 +48,16 @@ describe('LockedIn Circle Phase 1', function () {
   }
 
   async function groupVault(targets = [100n * UNIT, 100n * UNIT], bps = [1_000, 1_000]) {
-    const members = [await creator.getAddress(), await memberTwo.getAddress()]
-    await factory.createGroupVault(members, targets, bps, maturity, 0)
-    return ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
+    const signers = [creator, memberTwo, memberThree, memberFour]
+    const members = await Promise.all(signers.map((member) => member.getAddress()))
+    const allTargets = [...targets, ...Array(4 - targets.length).fill(100n * UNIT)]
+    const allBps = [...bps, ...Array(4 - bps.length).fill(1_000)]
+    await factory.createGroupVault(members, allTargets, allBps, maturity, 0)
+    const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
+    for (let index = 1; index < signers.length; index += 1) {
+      await vault.connect(signers[index]).acceptGroupInvitation()
+    }
+    return vault
   }
 
   async function fundAndApprove(signer, spender, amount) {
@@ -64,7 +71,7 @@ describe('LockedIn Circle Phase 1', function () {
 
     expect(await personal.isGroup()).to.equal(false)
     expect(await group.isGroup()).to.equal(true)
-    expect(await group.memberCount()).to.equal(2n)
+    expect(await group.memberCount()).to.equal(4n)
     expect(await factory.vaultCount()).to.equal(2n)
     expect(await factory.isVault(await personal.getAddress())).to.equal(true)
     expect(await factory.vaultsOf(await memberTwo.getAddress())).to.deep.equal([await group.getAddress()])
@@ -137,6 +144,9 @@ describe('LockedIn Circle Phase 1', function () {
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n),
     )
+    for (let index = 1; index < groupMembers.length; index += 1) {
+      await vault.connect(groupMembers[index]).acceptGroupInvitation()
+    }
     for (const [index, member] of groupMembers.entries()) {
       await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
       if (index === 0) await vault.deposit(index, 100n * UNIT)
@@ -199,11 +209,25 @@ describe('LockedIn Circle Phase 1', function () {
       31_337,
       ethers.ZeroAddress,
     ])
-    const members = [await creator.getAddress(), await attacker.getAddress()]
-    await callbackFactory.createGroupVault(members, [UNIT, 100n * UNIT], [1_000, 1_000], maturity, 0)
+    const members = [
+      await creator.getAddress(),
+      await attacker.getAddress(),
+      await memberTwo.getAddress(),
+      await memberThree.getAddress(),
+    ]
+    await callbackFactory.createGroupVault(
+      members,
+      [UNIT, 100n * UNIT, UNIT, UNIT],
+      [1_000, 1_000, 1_000, 1_000],
+      maturity,
+      0,
+    )
     const vault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
 
     await attacker.configure(await vault.getAddress(), await callbackToken.getAddress(), 1)
+    await attacker.acceptInvitation()
+    await vault.connect(memberTwo).acceptGroupInvitation()
+    await vault.connect(memberThree).acceptGroupInvitation()
     await callbackToken.mint(await attacker.getAddress(), 100n * UNIT)
     await attacker.deposit(100n * UNIT)
     await callbackToken.setCallbacksEnabled(true)

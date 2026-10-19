@@ -5,6 +5,7 @@ pragma solidity ^0.8.30;
 interface ICooperativeGroupExit {
     function requestGroupExit() external returns (uint256 requestId);
     function approveGroupExit(uint256 requestId) external;
+    function authorizeGroupExit(uint256 requestId) external;
     function revokeGroupExitApproval(uint256 requestId) external;
     function cancelGroupExit(uint256 requestId) external;
     function expireGroupExit(uint256 requestId) external;
@@ -14,4 +15,6 @@ interface ICooperativeGroupExit {
         external
         view
         returns (uint32 required, uint32 completed);
+    function activePrincipalSavings(uint256 positionId) external view returns (uint256);
+    function groupExitApprovalEligible(uint256 positionId) external view returns (bool);
 }

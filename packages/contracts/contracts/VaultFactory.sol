@@ -16,6 +16,7 @@ import {IYieldAdapterFactory} from "./interfaces/IYieldAdapterFactory.sol";
 /// @notice Deploys immutable Safe or Earn savings vaults and records membership indexes.
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
+    uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 
     error InvalidConfiguration();
@@ -99,7 +100,7 @@ contract VaultFactory {
         targets[0] = target;
         uint16[] memory allocations = new uint16[](1);
         allocations[0] = emergencyBps;
-        vault = _create(false, members, targets, allocations, maturity, mode);
+        vault = _create(false, msg.sender, members, targets, allocations, maturity, mode);
     }
 
     function createGroupVault(
@@ -110,14 +111,16 @@ contract VaultFactory {
         SavingsVault.VaultMode mode
     ) external returns (address vault) {
         uint256 count = members.length;
-        if (count < 2 || count > MAX_GROUP_MEMBERS) revert InvalidConfiguration();
+        if (count < MIN_GROUP_MEMBERS || count > MAX_GROUP_MEMBERS) {
+            revert InvalidConfiguration();
+        }
 
         bool creatorIncluded;
         for (uint256 i; i < count; ++i) {
             if (members[i] == msg.sender) creatorIncluded = true;
         }
         if (!creatorIncluded) revert CreatorNotMember();
-        vault = _create(true, members, targets, emergencyBps, maturity, mode);
+        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode);
     }
 
     function vaultCount() external view returns (uint256) {
@@ -134,6 +137,7 @@ contract VaultFactory {
 
     function _create(
         bool group,
+        address creator,
         address[] memory members,
         uint256[] memory targets,
         uint16[] memory emergencyBps,
@@ -160,6 +164,7 @@ contract VaultFactory {
             rewardPool,
             maturity,
             group,
+            creator,
             address(earlyExitMarket),
             mode,
             adapter,

@@ -155,6 +155,10 @@ contract ReentrantMarketSeller is ITokenReceiver {
         market = market_;
     }
 
+    function acceptInvitation() external {
+        vault.acceptGroupInvitation();
+    }
+
     function deposit(uint256 positionId, uint256 amount) external {
         token.approve(address(vault), amount);
         vault.deposit(positionId, amount);
@@ -190,6 +194,10 @@ contract ReentrantMember is ITokenReceiver {
         vault = vault_;
         token = token_;
         positionId = positionId_;
+    }
+
+    function acceptInvitation() external {
+        vault.acceptGroupInvitation();
     }
 
     function deposit(uint256 amount) external {
