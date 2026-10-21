@@ -73,7 +73,10 @@ function addChainParameter(
     chainId: POLYGON_AMOY_CHAIN_ID,
     chainName: "Polygon Amoy",
     nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
-    rpcUrls: ["https://rpc-amoy.polygon.technology/"],
+    // The wallet submission endpoint is intentionally separate from the app's
+    // read endpoint so portfolio queries cannot consume the wallet's rate
+    // limit. It was verified against chain 80002 and the current deployment.
+    rpcUrls: ["https://polygon-amoy-bor-rpc.publicnode.com"],
     blockExplorerUrls: ["https://amoy.polygonscan.com/"],
   };
 }

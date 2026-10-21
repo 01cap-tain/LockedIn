@@ -9,9 +9,9 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 ## Savings workflow
 
 1. A creator selects personal or group mode, Safe or Earn mode, a common maturity, and a USDT target and emergency percentage for each member.
-2. `VaultFactory` deploys a non-upgradeable `SavingsVault` and records it globally and per member. A group requires at least four proposed members and begins in `Pending` invitation state.
-3. The creator's creation transaction counts as acceptance. Every other invited EVM wallet has 72 hours to inspect the immutable terms and accept. One decline or invitation expiry prevents activation; the creator may then cancel the never-funded group.
-4. Group deposits, listings, cooperative exits and rewards remain disabled until every invitation is accepted. Before maturity, a member of an active group approves and deposits the accepted token into their fixed position.
+2. `VaultFactory` deploys a non-upgradeable `SavingsVault` and records it globally and per member. A creator chooses either a fixed invitation group or a public group with an advertised capacity from 4 to 50 members.
+3. A fixed invitation group begins in `Pending`: the creator's transaction counts as acceptance and every other invited EVM wallet has 72 hours to inspect and accept. A public group begins `Active`; any EVM wallet may join until capacity is reached or the first deposit permanently closes enrollment.
+4. Fixed-group deposits remain disabled until every invitation is accepted. Public joiners receive the same immutable per-member target and emergency allocation as the creator. Before maturity, a member approves and deposits the accepted token into their own position.
 5. Each deposit uses integer basis points: `emergency = amount * emergencyBps / 10_000`; all rounding remainder enters the locked balance.
 6. A member may withdraw their emergency balance at any time. This never reduces cumulative deposits or reverses goal completion, but it does reduce active principal used for cooperative-exit approval eligibility.
 7. At or after maturity, the current position owner may withdraw its locked claim exactly once.
@@ -32,7 +32,7 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 
 ### SavingsVault
 
-- Maintains immutable membership, targets, emergency allocations, maturity and mode.
+- Maintains immutable position terms, maturity and mode. Fixed groups have immutable invitations; public groups have immutable capacity and shared terms, and freeze their final membership on the first deposit.
 - Separates cumulative deposits, emergency balances, locked principal and Earn shares per position.
 - Maintains `positionId => owner`; ownership conveys only the locked claim.
 - Keeps emergency withdrawal rights with the original saver after an early exit.
@@ -138,7 +138,7 @@ The manifest is public metadata, not authority. It never contains RPC credential
 10. A market exit that leaves fewer than four eligible active members disables further cooperative early unlocks and group rewards, without blocking emergency or maturity withdrawals.
 11. `Active`, `CooperativeExit`, `MarketExit` and `Matured` are member-status records. A market buyer receives only position ownership; the original immutable member identity is never replaced.
 
-The vault emits invitation lifecycle events (`GroupInvitationCreated`, `GroupInvitationAccepted`, `GroupInvitationDeclined`, `GroupActivated`, `GroupInvitationExpired`, `UnactivatedGroupCancelled`) and cooperative-exit events (`GroupExitRequested`, `GroupExitApproved`, `GroupExitApprovalRevoked`, `GroupExitCancelled`, `GroupExitExpired`, `GroupExitAuthorized`, `GroupExitAuthorizationExpired`, `GroupExitCompleted`, `GroupMemberStatusChanged`). A PostgreSQL service may index these events but cannot accept, approve, price or settle on behalf of a wallet.
+The vault emits invitation lifecycle events (`GroupInvitationCreated`, `GroupInvitationAccepted`, `GroupInvitationDeclined`, `GroupActivated`, `GroupInvitationExpired`, `UnactivatedGroupCancelled`), public-enrollment events (`PublicGroupJoined`, `PublicGroupJoiningClosed`) and cooperative-exit events (`GroupExitRequested`, `GroupExitApproved`, `GroupExitApprovalRevoked`, `GroupExitCancelled`, `GroupExitExpired`, `GroupExitAuthorized`, `GroupExitAuthorizationExpired`, `GroupExitCompleted`, `GroupMemberStatusChanged`). A PostgreSQL service may index these events for faster discovery but cannot join, accept, approve, price or settle on behalf of a wallet.
 
 ### Polygon configuration source
 
@@ -220,8 +220,10 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - Accepted token, maturity, members, targets, allocations, mode, reward pool and market authority are immutable.
 - Emergency allocation is 1,000–1,500 basis points inclusive.
 - Members and positions are unique, fixed and limited to 50 per group.
-- A group has at least four proposed members, accepts no deposits before unanimous invitation acceptance, and cannot activate after a decline or the 72-hour invitation deadline.
+- A fixed group has at least four proposed members, accepts no deposits before unanimous invitation acceptance, and cannot activate after a decline or the 72-hour invitation deadline.
+- A public group advertises a capacity of 4–50 and one shared target/allocation. Enrollment is permissionless only before the first deposit and while capacity remains; it cannot reopen afterward.
 - Cumulative deposit never decreases; emergency withdrawal cannot undo completion.
+- Cumulative deposits cannot exceed the immutable target, in one transaction or across multiple contributions.
 - Emergency ownership never transfers with the locked position.
 - Vault liabilities are separated by position and state is reduced before outbound calls.
 - Locked funds cannot leave before maturity; deposits are rejected at and after maturity.
@@ -251,3 +253,28 @@ The listing stores display snapshots of claim value, discount, payout, provider 
 - Negative rebases are unsupported. Solvency checks block later outflows after an external balance reduction but cannot restore removed tokens; production requires reviewed non-rebasing USDT.
 - Contracts are unaudited and intended for local Hardhat or explicitly configured test environments only.
 - A deployment is usable only when its on-chain identity matches the versioned manifest exactly.
+
+## Device-only savings-plan preferences
+
+Vault names, descriptions, contribution amounts, frequency, preferred days and
+start dates are optional planning aids. The frontend stores them in a versioned
+browser-local record keyed by chain, vault and position. They may not follow a
+wallet to another browser or device and must never be treated as evidence of a
+deposit, balance, maturity right or ownership.
+
+The contract remains authoritative for the target, cumulative deposits,
+maturity, balances and withdrawal rights. The local schema includes the wallet
+owner and a version so the preferences can later migrate to a signed-wallet
+PostgreSQL profile service without mixing them into authoritative financial
+state.
+
+Profile display names follow the same boundary. Until a wallet owner stores an
+explicit local username, the interface displays the first five characters of
+the active wallet address (for example `0x734`). The name is presentation-only,
+is keyed by wallet address and may not follow the wallet to another device.
+
+The frontend checks the connected wallet's current token and native gas balance
+before starting supported transactions. These checks prevent known
+insufficient-fund wallet prompts, but are not an accounting authority: the
+token, vault and market contracts remain responsible for enforcing balances and
+permissions at execution time.

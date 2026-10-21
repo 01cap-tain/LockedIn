@@ -2,7 +2,7 @@ const UNIT = 10n ** 6n
 
 /**
  * Deploys the standalone safety and reward contracts first. Both bind their
- * immutable factory authority to the third CREATE address from the signer.
+ * immutable factory authority to the fourth CREATE address from the signer.
  */
 export async function deployFactory(
   ethers,
@@ -24,7 +24,7 @@ export async function deployFactory(
   const nonce = await ethers.provider.getTransactionCount(deployerAddress)
   const predictedFactory = ethers.getCreateAddress({
     from: deployerAddress,
-    nonce: nonce + 2,
+    nonce: nonce + 3,
   })
   const safetyController = await ethers.deployContract('SafetyController', [
     predictedFactory,
@@ -42,10 +42,14 @@ export async function deployFactory(
     minimumRewardTarget,
     minimumSavingDuration,
   ])
+  const vaultDeployer = await ethers.deployContract('SavingsVaultDeployer', [
+    predictedFactory,
+  ])
   const factory = await ethers.deployContract('VaultFactory', [
     ...factoryArguments,
+    await vaultDeployer.getAddress(),
     await safetyController.getAddress(),
     await rewardPool.getAddress(),
   ])
-  return { factory, safetyController, rewardPool }
+  return { factory, safetyController, rewardPool, vaultDeployer }
 }

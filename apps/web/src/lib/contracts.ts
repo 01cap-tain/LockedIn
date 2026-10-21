@@ -23,6 +23,7 @@ const factoryAbi = [
   "function asset() view returns (address)",
   "function createPersonalVault(uint256 target,uint64 maturity,uint16 emergencyBps,uint8 mode) returns (address)",
   "function createGroupVault(address[] members,uint256[] targets,uint16[] emergencyBps,uint64 maturity,uint8 mode) returns (address)",
+  "function createPublicGroupVault(uint256 target,uint16 emergencyBps,uint32 maxMembers,uint64 maturity,uint8 mode) returns (address)",
   "function vaultCount() view returns (uint256)",
   "function vaultAt(uint256 index) view returns (address)",
   "function vaultsOf(address member) view returns (address[])",
@@ -41,12 +42,18 @@ const aaveAdapterAbi = [
 ] as const;
 
 const vaultAbi = [
+  "function createdAt() view returns (uint64)",
   "function asset() view returns (address)",
   "function maturity() view returns (uint64)",
   "function isGroup() view returns (bool)",
   "function mode() view returns (uint8)",
   "function yieldAdapter() view returns (address)",
   "function memberCount() view returns (uint256)",
+  "function acceptedMemberCount() view returns (uint32)",
+  "function publicJoining() view returns (bool)",
+  "function publicJoinClosed() view returns (bool)",
+  "function maxMemberCount() view returns (uint32)",
+  "function joinPublicGroup()",
   "function memberAt(uint256 positionId) view returns (address)",
   "function positionOwner(uint256 positionId) view returns (address)",
   "function rewardDisqualified(uint256 positionId) view returns (bool)",
@@ -101,6 +108,7 @@ const vaultAbi = [
   "event GroupInvitationDeclined(address indexed member)",
   "event GroupActivated(uint64 activatedAt)",
   "event GroupInvitationExpired(uint64 expiredAt)",
+  "event PublicGroupJoined(address indexed member,uint256 indexed positionId,uint32 memberCount)",
   "event UnactivatedGroupCancelled(address indexed creator)",
 ] as const;
 
@@ -131,6 +139,52 @@ const marketAbi = [
 const USDT_DECIMALS = 6;
 const POLYGON_AMOY_CHAIN_ID = 80_002n;
 const AMOY_MIN_PRIORITY_FEE = parseUnits("25", "gwei");
+let amoyReadProvider: JsonRpcProvider | undefined;
+
+/**
+ * Nimiq Pay remains the signer and transaction submitter. Public Amoy reads
+ * use a direct provider so transient failures in the wallet's custom-chain
+ * RPC bridge cannot masquerade as signature or contract failures.
+ */
+function readProviderFor(signer: Signer): Provider {
+  if (
+    (import.meta.env.VITE_EVM_CHAIN_ID ?? "").toLowerCase() === "0x13882"
+  ) {
+    amoyReadProvider ??= new JsonRpcProvider(
+      import.meta.env.VITE_PUBLIC_RPC_URL ??
+        "https://polygon-amoy.gateway.tenderly.co",
+      Number(POLYGON_AMOY_CHAIN_ID),
+      {
+        staticNetwork: true,
+        // dRPC's public/free endpoint permits at most three requests in one
+        // JSON-RPC batch. Ethers otherwise batches every call made in the same
+        // event-loop turn and turns healthy contract reads into HTTP 500s.
+        batchMaxCount: 3,
+      }
+    );
+    return amoyReadProvider;
+  }
+  if (!signer.provider)
+    throw new Error("The EVM signer has no readable provider.");
+  return signer.provider;
+}
+
+function publicReadProvider(): Provider {
+  const publicRpcUrl =
+    import.meta.env.VITE_PUBLIC_RPC_URL ??
+    "https://polygon-amoy.gateway.tenderly.co";
+  if (publicRpcUrl) {
+    return new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
+      staticNetwork: true,
+      batchMaxCount: 3,
+    });
+  }
+  if (typeof window !== "undefined" && window.ethereum)
+    return new BrowserProvider(window.ethereum);
+  throw new Error(
+    "Configure VITE_PUBLIC_RPC_URL to read public vaults without a wallet."
+  );
+}
 
 export interface CreateVaultInput {
   groupMode: "personal" | "group";
@@ -139,6 +193,7 @@ export interface CreateVaultInput {
   maturity: string;
   emergencyPercent: number;
   additionalMembers: string[];
+  maxParticipants?: number;
 }
 
 export interface VaultSnapshot {
@@ -161,6 +216,7 @@ export interface VaultSnapshot {
   emergencyPercent: number;
   goalComplete: boolean;
   lockedWithdrawn: boolean;
+  createdAt: Date;
   maturity: Date;
   isGroup: boolean;
   groupCreator: string;
@@ -262,9 +318,40 @@ export interface VaultSummary {
   address: string;
   positionId: bigint;
   access: "owner" | "emergency-only";
+  isOriginalMember: boolean;
   isGroup: boolean;
+  createdAt: Date;
   maturity: Date;
   memberCount: number;
+  target: string;
+  deposited: string;
+  currentValue: string;
+  progressPercent: number;
+  expectedProgressPercent: number;
+  pace: "on-track" | "behind" | "complete";
+  vaultMode: "safe" | "earn";
+}
+
+export interface PublicGroupSummary {
+  address: string;
+  creator: string;
+  maturity: Date;
+  memberCount: number;
+  acceptedMemberCount: number;
+  maxMemberCount: number;
+  publicJoining: boolean;
+  joiningOpen: boolean;
+  memberTarget: string;
+  progressPercent: number;
+  totalDeposited: string;
+  totalTarget: string;
+  vaultMode: "safe" | "earn";
+  lifecycle: "pending" | "active" | "declined" | "expired" | "cancelled";
+  members: Array<{
+    address: string;
+    positionId: bigint;
+    progressPercent: number;
+  }>;
 }
 
 export interface ReferenceDiscountSnapshot {
@@ -298,6 +385,7 @@ export interface ExitListingSnapshot {
     currentProviderFee: string;
     currentTotalProviderPaid: string;
     minimumPayout: string;
+    maturity: Date;
     expiresAt: Date;
     active: boolean;
     status: "active" | "expired" | "cancelled-or-sold";
@@ -350,8 +438,8 @@ function factoryFor(signer: Signer): Contract {
 async function assertFactoryDeployment(signer: Signer): Promise<void> {
   // Calling an ABI against an address with no bytecode produces the confusing
   // `could not decode result data` error. Fail early with an actionable message.
-  const provider = signer.provider;
-  if (!provider || (await provider.getCode(factoryAddress())) === "0x") {
+  const provider = readProviderFor(signer);
+  if ((await provider.getCode(factoryAddress())) === "0x") {
     throw new Error(
       "No VaultFactory contract exists at the configured address on this network. Redeploy it and restart the app."
     );
@@ -363,14 +451,15 @@ async function assertFactoryDeployment(signer: Signer): Promise<void> {
  * enables writes. This prevents a valid-looking address on the wrong chain, or
  * a mixed set of contracts, from being treated as the intended protocol.
  */
-export async function verifyDeployment(
+async function verifyDeploymentOnce(
   signer: Signer
 ): Promise<DeploymentVerification> {
   await assertFactoryDeployment(signer);
-  const provider = signer.provider;
-  if (!provider) throw new Error("The EVM signer has no readable provider.");
-  const factory = factoryFor(signer);
+  const provider = readProviderFor(signer);
+  const factory = new Contract(factoryAddress(), factoryAbi, provider);
   const network = await provider.getNetwork();
+  // These calls use the direct read provider, not the wallet bridge. Parallel
+  // reads keep mobile verification short while ethers batches compatible RPCs.
   const [protocolVersion, deploymentId, chainId, asset, market, rewardPool, safetyController] =
     await Promise.all([
       factory.getFunction("PROTOCOL_VERSION")(),
@@ -412,11 +501,15 @@ export async function verifyDeployment(
       safetyController: expected.safetyController,
     }
   );
-  for (const [label, address] of [["asset", asset], ["market", market], ["reward pool", rewardPool], ["safety controller", safetyController]] as const) {
-    if ((await provider.getCode(String(address))) === "0x")
+  const linkedContracts = [["asset", asset], ["market", market], ["reward pool", rewardPool], ["safety controller", safetyController]] as const;
+  const linkedCode = await Promise.all(
+    linkedContracts.map(([, address]) => provider.getCode(String(address)))
+  );
+  linkedContracts.forEach(([label], index) => {
+    if (linkedCode[index] === "0x")
       throw new Error(`Deployment mismatch: ${label} has no contract bytecode.`);
-  }
-  const safety = new Contract(String(safetyController), safetyControllerAbi, signer);
+  });
+  const safety = new Contract(String(safetyController), safetyControllerAbi, provider);
   return {
     protocolVersion: String(protocolVersion),
     deploymentId: String(deploymentId),
@@ -429,9 +522,38 @@ export async function verifyDeployment(
   };
 }
 
+export async function verifyDeployment(
+  signer: Signer
+): Promise<DeploymentVerification> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await verifyDeploymentOnce(signer);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      // A genuine identity mismatch is deterministic and must never be hidden
+      // behind retries intended only for temporary RPC transport failures.
+      if (message.includes("Deployment mismatch")) throw error;
+      if (attempt < 3)
+        await new Promise((resolve) => window.setTimeout(resolve, attempt * 300));
+    }
+  }
+  throw lastError;
+}
+
 async function marketFor(signer: Signer): Promise<Contract> {
-  const address = await factoryFor(signer).getFunction("earlyExitMarket")();
+  const readProvider = readProviderFor(signer);
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
+  const address = await readFactory.getFunction("earlyExitMarket")();
   return new Contract(address, marketAbi, signer);
+}
+
+async function marketReaderFor(signer: Signer): Promise<Contract> {
+  const readProvider = readProviderFor(signer);
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
+  const address = await readFactory.getFunction("earlyExitMarket")();
+  return new Contract(address, marketAbi, readProvider);
 }
 
 function amount(value: string): bigint {
@@ -482,8 +604,7 @@ function groupExitStatusLabel(
 async function transactionOverrides(
   signer: Signer
 ): Promise<Record<string, bigint>> {
-  const provider = signer.provider;
-  if (!provider) return {};
+  const provider = readProviderFor(signer);
 
   const network = await provider.getNetwork();
   if (network.chainId !== POLYGON_AMOY_CHAIN_ID) return {};
@@ -508,13 +629,33 @@ async function transactionOverrides(
   };
 }
 
+/**
+ * Waits for a wallet-submitted transaction through the independent read RPC.
+ * Nimiq Pay remains the signer/submission provider, but its custom-chain bridge
+ * must not turn a confirmed transaction into a UI failure when receipt polling
+ * is rate-limited.
+ */
+async function confirmTransaction(signer: Signer, hash: string) {
+  const receipt = await readProviderFor(signer).waitForTransaction(
+    hash,
+    1,
+    180_000
+  );
+  if (!receipt)
+    throw new Error(
+      `Transaction ${hash} was submitted but confirmation timed out. Check it on PolygonScan before retrying.`
+    );
+  if (receipt.status !== 1)
+    throw new Error(`Transaction ${hash} reverted on Polygon Amoy.`);
+  return receipt;
+}
+
 export async function createVault(
   signer: Signer,
   input: CreateVaultInput
 ): Promise<string> {
   await assertFactoryDeployment(signer);
   const factory = factoryFor(signer);
-  const signerAddress = await signer.getAddress();
   const target = amount(input.target);
   const maturity = BigInt(
     Math.floor(new Date(input.maturity).getTime() / 1_000)
@@ -523,44 +664,61 @@ export async function createVault(
     throw new Error("Maturity must be in the future.");
   const emergencyBps = input.emergencyPercent * 100;
   const yieldMode = input.yieldMode === "earn" ? 1 : 0;
-  const overrides = await transactionOverrides(signer);
+  const memberCount = 1;
+  // Nimiq Pay's custom-chain bridge intermittently fails `eth_estimateGas` on
+  // Amoy. These limits use measured deployment costs plus
+  // a 25% margin; unused gas is not charged. The per-member component keeps
+  // large groups within a realistic bound without granting unlimited gas.
+  const measuredBaseGas = input.yieldMode === "earn" ? 4_850_000n : 4_200_000n;
+  const measuredMemberGas = 210_000n * BigInt(memberCount - 1);
+  const gasLimit = ((measuredBaseGas + measuredMemberGas) * 125n) / 100n;
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit };
+
+  let transaction;
 
   if (input.groupMode === "personal") {
-    await (
-      await factory.getFunction("createPersonalVault")(
-        target,
-        maturity,
-        emergencyBps,
-        yieldMode,
-        overrides
-      )
-    ).wait();
+    transaction = await factory.getFunction("createPersonalVault")(
+      target,
+      maturity,
+      emergencyBps,
+      yieldMode,
+      overrides
+    );
   } else {
-    const members = [signerAddress, ...input.additionalMembers.map(getAddress)];
-    if (members.length < 4)
-      throw new Error("A group requires at least four members in total.");
-    if (maturity <= BigInt(Math.floor(Date.now() / 1_000)) + 72n * 60n * 60n)
-      throw new Error("Group maturity must be later than the 72-hour invitation window.");
-    if (
-      new Set(members.map((member) => member.toLowerCase())).size !==
-      members.length
-    ) {
-      throw new Error("Group member addresses must be unique.");
-    }
-    await (
-      await factory.getFunction("createGroupVault")(
-        members,
-        members.map(() => target),
-        members.map(() => emergencyBps),
-        maturity,
-        yieldMode,
-        overrides
-      )
-    ).wait();
+    const maxParticipants = input.maxParticipants ?? 4;
+    if (!Number.isInteger(maxParticipants) || maxParticipants < 4 || maxParticipants > 50)
+      throw new Error("Public group capacity must be between 4 and 50 participants.");
+    transaction = await factory.getFunction("createPublicGroupVault")(
+      target,
+      emergencyBps,
+      maxParticipants,
+      maturity,
+      yieldMode,
+      overrides
+    );
   }
 
-  const count: bigint = await factory.getFunction("vaultCount")();
-  return getAddress(await factory.getFunction("vaultAt")(count - 1n));
+  const receipt = await confirmTransaction(signer, transaction.hash);
+  for (const log of receipt.logs) {
+    const event = parsedEvent(log, factoryAbi);
+    if (event?.name === "VaultCreated")
+      return getAddress(String(event.args.vault));
+  }
+  throw new Error(
+    `Vault transaction ${receipt.hash} confirmed, but its VaultCreated event could not be decoded.`
+  );
+}
+
+export async function joinPublicGroup(
+  signer: Signer,
+  vaultAddress: string
+): Promise<void> {
+  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const transaction = await vault.getFunction("joinPublicGroup")({
+    ...(await transactionOverrides(signer)),
+    gasLimit: 450_000n,
+  });
+  await confirmTransaction(signer, transaction.hash);
 }
 
 export async function loadVault(
@@ -570,7 +728,8 @@ export async function loadVault(
 ): Promise<VaultSnapshot> {
   const signerAddress = await signer.getAddress();
   const vaultAddress = getAddress(address);
-  const vault = new Contract(vaultAddress, vaultAbi, signer);
+  const readProvider = readProviderFor(signer);
+  const vault = new Contract(vaultAddress, vaultAbi, readProvider);
   const memberCount: bigint = await vault.getFunction("memberCount")();
   let positionId = requestedPositionId;
   if (positionId === undefined) {
@@ -594,6 +753,7 @@ export async function loadVault(
     stored,
     positionOwner,
     completed,
+    createdAt,
     maturity,
     isGroup,
     mode,
@@ -610,6 +770,7 @@ export async function loadVault(
     vault.getFunction("position")(positionId),
     vault.getFunction("positionOwner")(positionId),
     vault.getFunction("goalComplete")(positionId),
+    vault.getFunction("createdAt")(),
     vault.getFunction("maturity")(),
     vault.getFunction("isGroup")(),
     vault.getFunction("mode")(),
@@ -685,7 +846,7 @@ export async function loadVault(
       const adapter = new Contract(
         String(yieldAdapter),
         aaveAdapterAbi,
-        signer
+        readProvider
       );
       const reserve = await adapter.getFunction("reserveStatus")();
       const availableLiquidity = BigInt(reserve.availableLiquidity);
@@ -729,6 +890,7 @@ export async function loadVault(
     emergencyPercent: Number(stored.emergencyBps) / 100,
     goalComplete: completed,
     lockedWithdrawn: stored.lockedWithdrawn,
+    createdAt: new Date(Number(createdAt) * 1_000),
     maturity: new Date(Number(maturity) * 1_000),
     isGroup,
     groupCreator: getAddress(groupCreator),
@@ -744,13 +906,15 @@ export async function loadVault(
 }
 
 export async function loadVaultsForSigner(
-  signer: Signer
+  signer: Signer,
+  knownCompletedTrades?: CompletedTrade[]
 ): Promise<VaultSummary[]> {
   // Original membership and current economic ownership are different after a
   // market sale. Join the factory member index with funded trades so the saver
   // keeps only emergency access while the provider discovers the bought claim.
   await assertFactoryDeployment(signer);
-  const factory = factoryFor(signer);
+  const readProvider = readProviderFor(signer);
+  const factory = new Contract(factoryAddress(), factoryAbi, readProvider);
   const signerAddress = await signer.getAddress();
   const memberAddresses: string[] = await factory.getFunction("vaultsOf")(
     signerAddress
@@ -759,18 +923,20 @@ export async function loadVaultsForSigner(
     memberAddresses.map(async (address) => ({
       address: getAddress(address),
       positionId: BigInt(
-        await new Contract(address, vaultAbi, signer).getFunction("positionOf")(
+        await new Contract(address, vaultAbi, readProvider).getFunction("positionOf")(
           signerAddress
         )
       ),
     }))
   );
-  let completedTrades: CompletedTrade[] = [];
-  try {
-    completedTrades = await loadCompletedTrades(signer);
-  } catch {
-    // Original member vault discovery remains usable if historical log reads
-    // are temporarily unavailable. A later refresh restores bought positions.
+  let completedTrades: CompletedTrade[] = knownCompletedTrades ?? [];
+  if (knownCompletedTrades === undefined) {
+    try {
+      completedTrades = await loadCompletedTrades(signer);
+    } catch {
+      // Original member vault discovery remains usable if historical log reads
+      // are temporarily unavailable. A later refresh restores bought positions.
+    }
   }
   const purchasedPositions = completedTrades
     .filter((trade) => trade.provider.toLowerCase() === signerAddress.toLowerCase())
@@ -785,13 +951,16 @@ export async function loadVaultsForSigner(
 
   const summaries = await Promise.all(
     [...candidates.values()].map(async ({ address, positionId }) => {
-      const vault = new Contract(address, vaultAbi, signer);
-      const [isGroup, maturity, memberCount, stored, owner] = await Promise.all([
+      const vault = new Contract(address, vaultAbi, readProvider);
+      const [isGroup, maturity, createdAt, memberCount, mode, stored, owner, currentValue] = await Promise.all([
         vault.getFunction("isGroup")(),
         vault.getFunction("maturity")(),
+        vault.getFunction("createdAt")(),
         vault.getFunction("memberCount")(),
+        vault.getFunction("mode")(),
         vault.getFunction("position")(positionId),
         vault.getFunction("positionOwner")(positionId),
+        vault.getFunction("positionValue")(positionId),
       ]);
       const ownsPosition = String(owner).toLowerCase() === signerAddress.toLowerCase();
       const hasOwnedClaim = ownsPosition && !stored.lockedWithdrawn;
@@ -799,17 +968,147 @@ export async function loadVaultsForSigner(
         String(stored.member).toLowerCase() === signerAddress.toLowerCase();
       const hasEmergency = BigInt(stored.emergencyBalance) > 0n;
       if (!hasOwnedClaim && (!isOriginalMember || !hasEmergency)) return null;
+      const target = BigInt(stored.target);
+      const deposited = BigInt(stored.deposited);
+      const progressBps = target === 0n ? 0n : (deposited * 10_000n) / target;
+      const nowSeconds = BigInt(Math.floor(Date.now() / 1_000));
+      const duration = BigInt(maturity) - BigInt(createdAt);
+      const elapsed = nowSeconds <= BigInt(createdAt)
+        ? 0n
+        : nowSeconds >= BigInt(maturity)
+          ? duration
+          : nowSeconds - BigInt(createdAt);
+      const expectedBps = duration <= 0n ? 10_000n : (elapsed * 10_000n) / duration;
+      const progressPercent = Math.min(100, Number(progressBps) / 100);
+      const expectedProgressPercent = Math.min(100, Number(expectedBps) / 100);
       return {
         address: getAddress(address),
         positionId,
         access: hasOwnedClaim ? ("owner" as const) : ("emergency-only" as const),
+        isOriginalMember,
         isGroup,
+        createdAt: new Date(Number(createdAt) * 1_000),
         maturity: new Date(Number(maturity) * 1_000),
         memberCount: Number(memberCount),
+        target: formatUnits(target, USDT_DECIMALS),
+        deposited: formatUnits(deposited, USDT_DECIMALS),
+        currentValue: formatUnits(currentValue, USDT_DECIMALS),
+        progressPercent,
+        expectedProgressPercent,
+        pace: progressPercent >= 100
+          ? ("complete" as const)
+          : progressPercent + 2 >= expectedProgressPercent
+            ? ("on-track" as const)
+            : ("behind" as const),
+        vaultMode: Number(mode) === 1 ? ("earn" as const) : ("safe" as const),
       };
     })
   );
   return summaries.filter((summary): summary is VaultSummary => summary !== null);
+}
+
+/**
+ * Reads group circles from the factory without asking for wallet access.
+ * Protocol 0.6 public groups can be joined permissionlessly until capacity or
+ * the first deposit closes enrollment. Older invitation groups remain visible
+ * and are explicitly reported as non-public.
+ */
+export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
+  const provider = publicReadProvider();
+  const factory = new Contract(factoryAddress(), factoryAbi, provider);
+  const [countValue, protocolVersion] = await Promise.all([
+    factory.getFunction("vaultCount")(),
+    factory.getFunction("PROTOCOL_VERSION")(),
+  ]);
+  const count = BigInt(countValue);
+  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.6.0";
+  // Factory address reads are independent. Resolve them concurrently so the
+  // discovery screen does not wait on one RPC round trip per historic vault.
+  const addresses = await Promise.all(
+    Array.from({ length: Number(count) }, (_, index) =>
+      factory.getFunction("vaultAt")(index).then((address: string) => getAddress(address))
+    )
+  );
+
+  const groups = await Promise.all(
+    addresses.map(async (address) => {
+      const vault = new Contract(address, vaultAbi, provider);
+      const isGroup = Boolean(await vault.getFunction("isGroup")());
+      if (!isGroup) return null;
+      const [creator, maturity, mode, memberCount, acceptedCount, lifecycle, publicJoining, publicJoinClosed, maxMemberCount] =
+        await Promise.all([
+          vault.getFunction("groupCreator")(),
+          vault.getFunction("maturity")(),
+          vault.getFunction("mode")(),
+          vault.getFunction("memberCount")(),
+          vault.getFunction("acceptedMemberCount")(),
+          vault.getFunction("groupLifecycle")(),
+          supportsPublicJoining ? vault.getFunction("publicJoining")() : false,
+          supportsPublicJoining ? vault.getFunction("publicJoinClosed")() : true,
+          supportsPublicJoining ? vault.getFunction("maxMemberCount")() : 0n,
+        ]);
+      const members = await Promise.all(
+        Array.from({ length: Number(memberCount) }, async (_, index) => {
+          const stored = await vault.getFunction("position")(index);
+          const target = BigInt(stored.target);
+          const deposited = BigInt(stored.deposited);
+          return {
+            address: getAddress(stored.member),
+            positionId: BigInt(index),
+            target,
+            deposited,
+            progressPercent:
+              target === 0n
+                ? 0
+                : Math.min(100, Number((deposited * 10_000n) / target) / 100),
+          };
+        })
+      );
+      const totalTarget = members.reduce((sum, member) => sum + member.target, 0n);
+      const totalDeposited = members.reduce(
+        (sum, member) => sum + member.deposited,
+        0n
+      );
+      const groupLifecycle = groupLifecycleLabel(BigInt(lifecycle));
+      return {
+        address,
+        creator: getAddress(creator),
+        maturity: new Date(Number(maturity) * 1_000),
+        memberCount: Number(memberCount),
+        acceptedMemberCount: Number(acceptedCount),
+        maxMemberCount: publicJoining
+          ? Number(maxMemberCount)
+          : Number(memberCount),
+        publicJoining,
+        joiningOpen:
+          publicJoining &&
+          !publicJoinClosed &&
+          Number(memberCount) < Number(maxMemberCount) &&
+          Date.now() < Number(maturity) * 1_000,
+        memberTarget: formatUnits(
+          members[0]?.target ?? 0n,
+          USDT_DECIMALS
+        ),
+        progressPercent:
+          totalTarget === 0n
+            ? 0
+            : Math.min(100, Number((totalDeposited * 10_000n) / totalTarget) / 100),
+        totalDeposited: formatUnits(totalDeposited, USDT_DECIMALS),
+        totalTarget: formatUnits(totalTarget, USDT_DECIMALS),
+        vaultMode: Number(mode) === 1 ? "earn" : "safe",
+        lifecycle:
+          groupLifecycle === "not-applicable" ? "pending" : groupLifecycle,
+        members: members.map((member) => ({
+          address: member.address,
+          positionId: member.positionId,
+          progressPercent: member.progressPercent,
+        })),
+      } satisfies PublicGroupSummary;
+    })
+  );
+  return groups
+    .filter((group): group is PublicGroupSummary => group !== null)
+    .sort((left, right) => right.maturity.getTime() - left.maturity.getTime());
 }
 
 export async function depositToVault(
@@ -819,30 +1118,39 @@ export async function depositToVault(
   value: string
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const readVault = new Contract(
+    getAddress(vaultAddress),
+    vaultAbi,
+    readProviderFor(signer)
+  );
   const token = new Contract(
-    await vault.getFunction("asset")(),
+    await readVault.getFunction("asset")(),
     tokenAbi,
     signer
   );
   const parsed = amount(value);
   const overrides = await transactionOverrides(signer);
-  await (
-    await token.getFunction("approve")(
-      await vault.getAddress(),
-      parsed,
-      overrides
-    )
-  ).wait();
-  await (
-    await vault.getFunction("deposit")(positionId, parsed, overrides)
-  ).wait();
+  const approval = await token.getFunction("approve")(
+    await vault.getAddress(),
+    parsed,
+    overrides
+  );
+  await confirmTransaction(signer, approval.hash);
+  const deposit = await vault.getFunction("deposit")(
+    positionId,
+    parsed,
+    overrides
+  );
+  await confirmTransaction(signer, deposit.hash);
 }
 
 export async function loadMockUsdtBalance(signer: Signer): Promise<string> {
+  const readProvider = readProviderFor(signer);
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
   const token = new Contract(
-    await factoryFor(signer).getFunction("asset")(),
+    await readFactory.getFunction("asset")(),
     tokenAbi,
-    signer
+    readProvider
   );
   const [symbol, decimals, balance] = await Promise.all([
     token.getFunction("symbol")(),
@@ -861,10 +1169,12 @@ export async function loadUsdtBalance(signer: Signer): Promise<string> {
 
 /** Returns the connected wallet's vault-asset balance in six-decimal base units. */
 export async function loadUsdtBalanceUnits(signer: Signer): Promise<bigint> {
+  const readProvider = readProviderFor(signer);
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
   const token = new Contract(
-    await factoryFor(signer).getFunction("asset")(),
+    await readFactory.getFunction("asset")(),
     tokenAbi,
-    signer
+    readProvider
   );
   const [decimals, balance] = await Promise.all([
     token.getFunction("decimals")(),
@@ -879,26 +1189,29 @@ export async function requestMockUsdt(
   signer: Signer,
   value = "250"
 ): Promise<void> {
-  const token = new Contract(
-    await factoryFor(signer).getFunction("asset")(),
+  const readProvider = readProviderFor(signer);
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
+  const tokenAddress = await readFactory.getFunction("asset")();
+  const readToken = new Contract(
+    tokenAddress,
     tokenAbi,
-    signer
+    readProvider
   );
   const [symbol, decimals] = await Promise.all([
-    token.getFunction("symbol")(),
-    token.getFunction("decimals")(),
+    readToken.getFunction("symbol")(),
+    readToken.getFunction("decimals")(),
   ]);
   if (symbol !== "mUSDT" || Number(decimals) !== USDT_DECIMALS) {
     throw new Error("Mock-token minting is unavailable for this deployment.");
   }
+  const token = new Contract(tokenAddress, tokenAbi, signer);
   const overrides = await transactionOverrides(signer);
-  await (
-    await token.getFunction("mint")(
-      await signer.getAddress(),
-      amount(value),
-      overrides
-    )
-  ).wait();
+  const transaction = await token.getFunction("mint")(
+    await signer.getAddress(),
+    amount(value),
+    overrides
+  );
+  await confirmTransaction(signer, transaction.hash);
 }
 
 export async function withdrawEmergency(
@@ -909,13 +1222,12 @@ export async function withdrawEmergency(
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
   const overrides = await transactionOverrides(signer);
-  await (
-    await vault.getFunction("withdrawEmergency")(
-      positionId,
-      amount(value),
-      overrides
-    )
-  ).wait();
+  const transaction = await vault.getFunction("withdrawEmergency")(
+    positionId,
+    amount(value),
+    overrides
+  );
+  await confirmTransaction(signer, transaction.hash);
 }
 
 export async function withdrawLocked(
@@ -925,9 +1237,11 @@ export async function withdrawLocked(
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
   const overrides = await transactionOverrides(signer);
-  await (
-    await vault.getFunction("withdrawLocked")(positionId, overrides)
-  ).wait();
+  const transaction = await vault.getFunction("withdrawLocked")(
+    positionId,
+    overrides
+  );
+  await confirmTransaction(signer, transaction.hash);
 }
 
 /** Loads each member's latest cooperative request directly from vault state. */
@@ -935,7 +1249,11 @@ export async function loadGroupExitRequests(
   signer: Signer,
   vaultAddress: string
 ): Promise<GroupExitRequestSnapshot[]> {
-  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const vault = new Contract(
+    getAddress(vaultAddress),
+    vaultAbi,
+    readProviderFor(signer)
+  );
   if (!(await vault.getFunction("isGroup")())) return [];
   const [memberCount, connectedAddress] = await Promise.all([
     vault.getFunction("memberCount")(),
@@ -1000,7 +1318,7 @@ async function sendGroupExitTransaction(
     requestId === undefined
       ? await vault.getFunction(functionName)(overrides)
       : await vault.getFunction(functionName)(requestId, overrides);
-  await transaction.wait();
+  await confirmTransaction(signer, transaction.hash);
 }
 
 export async function requestGroupExit(
@@ -1107,7 +1425,7 @@ export async function loadExitMarket(
   signer: Signer,
   vault: VaultSnapshot
 ): Promise<ExitListingSnapshot> {
-  const market = await marketFor(signer);
+  const market = await marketReaderFor(signer);
   const marketAddress = await market.getAddress();
   const reference = await market.getFunction("referenceDiscount")(
     vault.address,
@@ -1133,7 +1451,7 @@ export async function loadExitListing(
   signer: Signer,
   listingId: bigint
 ): Promise<ExitListingSnapshot> {
-  const market = await marketFor(signer);
+  const market = await marketReaderFor(signer);
   const listing = await market.getFunction("listings")(listingId);
   if (listing.vault === "0x0000000000000000000000000000000000000000") {
     throw new Error("Listing does not exist.");
@@ -1166,9 +1484,14 @@ function mapReferenceDiscount(
 
 async function mapListing(signer: Signer, market: Contract, listingId: bigint) {
   const listing = await market.getFunction("listings")(listingId);
-  const vault = new Contract(listing.vault, vaultAbi, signer);
-  const [isGroup, currentClaimValue, pricing] = await Promise.all([
+  const vault = new Contract(
+    listing.vault,
+    vaultAbi,
+    readProviderFor(signer)
+  );
+  const [isGroup, maturity, currentClaimValue, pricing] = await Promise.all([
     vault.getFunction("isGroup")(),
+    vault.getFunction("maturity")(),
     vault.getFunction("positionValue")(listing.positionId),
     market.getFunction("referenceDiscount")(listing.vault, listing.positionId),
   ]);
@@ -1209,6 +1532,7 @@ async function mapListing(signer: Signer, market: Contract, listingId: bigint) {
       USDT_DECIMALS
     ),
     minimumPayout: formatUnits(listing.minimumPayout, USDT_DECIMALS),
+    maturity: new Date(Number(maturity) * 1_000),
     expiresAt: new Date(Number(listing.expiresAt) * 1_000),
     active,
     status: active
@@ -1224,7 +1548,7 @@ export async function loadAllExitListings(
 ): Promise<ExitListingSnapshot[]> {
   // This direct on-chain scan is acceptable for the local MVP. A production
   // indexer can cache these immutable IDs without becoming settlement authority.
-  const market = await marketFor(signer);
+  const market = await marketReaderFor(signer);
   const count: bigint = await market.getFunction("nextListingId")();
   return Promise.all(
     Array.from({ length: Number(count) }, (_, index) =>
@@ -1243,15 +1567,14 @@ export async function createExitListing(
   const expiration = BigInt(Math.floor(new Date(expiresAt).getTime() / 1_000));
   const payoutFloor = amount(minimumPayout);
   const overrides = await transactionOverrides(signer);
-  await (
-    await market.getFunction("createListing")(
-      vault.address,
-      vault.positionId,
-      expiration,
-      payoutFloor,
-      overrides
-    )
-  ).wait();
+  const transaction = await market.getFunction("createListing")(
+    vault.address,
+    vault.positionId,
+    expiration,
+    payoutFloor,
+    overrides
+  );
+  await confirmTransaction(signer, transaction.hash);
 }
 
 // Funds the live system quote. The approval is deliberately exact, while the contract
@@ -1262,36 +1585,47 @@ export async function fundExitListing(
   maximumTotalPayment?: bigint
 ): Promise<void> {
   const market = await marketFor(signer);
-  const listing = await market.getFunction("listings")(listingId);
-  const vault = new Contract(listing.vault, vaultAbi, signer);
+  const readProvider = readProviderFor(signer);
+  const readMarket = await marketReaderFor(signer);
+  const listing = await readMarket.getFunction("listings")(listingId);
+  const vault = new Contract(listing.vault, vaultAbi, readProvider);
   const [currentValue, reference] = await Promise.all([
     vault.getFunction("positionValue")(listing.positionId),
-    market.getFunction("referenceDiscount")(listing.vault, listing.positionId),
+    readMarket.getFunction("referenceDiscount")(
+      listing.vault,
+      listing.positionId
+    ),
   ]);
-  const saverPayout: bigint = await market.getFunction("payoutFor")(
+  const saverPayout: bigint = await readMarket.getFunction("payoutFor")(
     currentValue,
     reference.discountBps
   );
-  const providerFee: bigint = await market.getFunction("feeFor")(saverPayout);
+  const providerFee: bigint = await readMarket.getFunction("feeFor")(
+    saverPayout
+  );
   const totalPayment = saverPayout + providerFee;
   if (!listing.active || Number(listing.expiresAt) * 1_000 <= Date.now())
     throw new Error("The listing is no longer available. Converted USDT remains in your wallet.");
   if (maximumTotalPayment !== undefined && totalPayment > maximumTotalPayment)
     throw new Error("The live listing price increased after the swap. Converted USDT remains in your wallet.");
+  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
   const token = new Contract(
-    await factoryFor(signer).getFunction("asset")(),
+    await readFactory.getFunction("asset")(),
     tokenAbi,
     signer
   );
   const overrides = await transactionOverrides(signer);
-  await (
-    await token.getFunction("approve")(
-      await market.getAddress(),
-      totalPayment,
-      overrides
-    )
-  ).wait();
-  await (await market.getFunction("fundListing")(listingId, overrides)).wait();
+  const approval = await token.getFunction("approve")(
+    await market.getAddress(),
+    totalPayment,
+    overrides
+  );
+  await confirmTransaction(signer, approval.hash);
+  const funding = await market.getFunction("fundListing")(
+    listingId,
+    overrides
+  );
+  await confirmTransaction(signer, funding.hash);
 }
 
 export async function cancelExitListing(
@@ -1300,9 +1634,11 @@ export async function cancelExitListing(
 ): Promise<void> {
   const market = await marketFor(signer);
   const overrides = await transactionOverrides(signer);
-  await (
-    await market.getFunction("cancelListing")(listingId, overrides)
-  ).wait();
+  const transaction = await market.getFunction("cancelListing")(
+    listingId,
+    overrides
+  );
+  await confirmTransaction(signer, transaction.hash);
 }
 
 function parsedEvent(log: Log, abi: readonly string[]) {
@@ -1316,7 +1652,10 @@ function parsedEvent(log: Log, abi: readonly string[]) {
   }
 }
 
-const MAX_LOG_BLOCK_RANGE = 10_000;
+// Stay below the advertised 10,000-block ceiling. Some RPC gateways count
+// both boundary blocks or apply a small internal safety margin and reject an
+// otherwise exact 10,000-block request.
+const MAX_LOG_BLOCK_RANGE = 9_500;
 
 /**
  * Public Amoy RPC services commonly reject `eth_getLogs` requests spanning
@@ -1358,11 +1697,10 @@ async function getLogsInChunks(
 export async function loadCompletedTrades(
   signer: Signer
 ): Promise<CompletedTrade[]> {
-  const provider = signer.provider;
-  if (!provider)
-    throw new Error("The connected wallet has no readable provider.");
-  const market = await marketFor(signer);
-  return scanCompletedTrades(provider, await market.getAddress());
+  const provider = readProviderFor(signer);
+  const factory = new Contract(factoryAddress(), factoryAbi, provider);
+  const marketAddress: string = await factory.getFunction("earlyExitMarket")();
+  return scanCompletedTrades(provider, getAddress(marketAddress));
 }
 
 /**
@@ -1373,9 +1711,12 @@ export async function loadCompletedTrades(
 export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
-    "https://polygon-amoy.g.alchemy.com/v2/demo";
+    "https://polygon-amoy.gateway.tenderly.co";
   const provider: Provider = publicRpcUrl
-    ? new JsonRpcProvider(publicRpcUrl)
+    ? new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
+        staticNetwork: true,
+        batchMaxCount: 3,
+      })
     : typeof window !== "undefined" && window.ethereum
       ? new BrowserProvider(window.ethereum)
       : (() => {
@@ -1517,11 +1858,9 @@ export async function loadActivity(
 ): Promise<ActivityItem[]> {
   // Activity is reconstructed from canonical logs. A future database may index
   // the same events for speed, but clients must be able to verify its results.
-  const provider = signer.provider;
-  if (!provider)
-    throw new Error("The connected wallet has no readable provider.");
+  const provider = readProviderFor(signer);
   const fromBlock = Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0);
-  const market = await marketFor(signer);
+  const market = await marketReaderFor(signer);
   const marketAddress = await market.getAddress();
   const latestBlock = await provider.getBlockNumber();
   const normalizedVaults = new Set(

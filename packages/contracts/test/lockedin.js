@@ -272,8 +272,22 @@ describe('LockedIn Circle Phase 1', function () {
     await expect(vault.deposit(0, 10n * UNIT)).to.be.revertedWithCustomError(vault, 'DepositsClosed')
   })
 
+  it('never accepts a single or cumulative deposit above the position target', async function () {
+    const vault = await personalVault()
+    await fundAndApprove(creator, await vault.getAddress(), 101n * UNIT)
+
+    await expect(vault.deposit(0, 101n * UNIT))
+      .to.be.revertedWithCustomError(vault, 'TargetExceeded')
+
+    await vault.deposit(0, 60n * UNIT)
+    await expect(vault.deposit(0, 41n * UNIT))
+      .to.be.revertedWithCustomError(vault, 'TargetExceeded')
+    await vault.deposit(0, 40n * UNIT)
+    expect((await vault.position(0)).deposited).to.equal(100n * UNIT)
+  })
+
   it('isolates different deposits and balances across multiple members', async function () {
-    const vault = await groupVault([100n * UNIT, 200n * UNIT], [1_000, 1_500])
+    const vault = await groupVault([120n * UNIT, 200n * UNIT], [1_000, 1_500])
     await fundAndApprove(creator, await vault.getAddress(), 120n * UNIT)
     await fundAndApprove(memberTwo, await vault.getAddress(), 80n * UNIT)
     await vault.deposit(0, 120n * UNIT)

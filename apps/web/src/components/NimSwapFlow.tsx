@@ -84,6 +84,10 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
 
   async function quote(): Promise<void> {
     if (!props.adapter) return;
+    if (nimFundingError) {
+      setState((current) => withStage(current, "FAILED", { error: nimFundingError }));
+      return;
+    }
     setState((current) => withStage(current, "QUOTING", { error: null }));
     try {
       const direction = props.kind === "WITHDRAW_AS_NIM" ? "POLYGON_USDT_TO_NIM" : "NIM_TO_POLYGON_USDT";
@@ -107,9 +111,23 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
 
   async function execute(): Promise<void> {
     if (!props.adapter || !state.quote) return;
+    const quoteToExecute = state.quote;
+    if (props.kind !== "WITHDRAW_AS_NIM") {
+      const nimBalance = props.nimBalanceLuna;
+      if (nimBalance === null) {
+        setState((current) => withStage(current, "FAILED", { error: "Your NIM balance is still loading." }));
+        return;
+      }
+      if (quoteToExecute.sourceAmount > nimBalance) {
+        setState((current) => withStage(current, "FAILED", {
+          error: `Insufficient NIM. This action needs ${formatAssetAmount(quoteToExecute.sourceAmount, 5)} NIM, but your wallet has ${formatAssetAmount(nimBalance, 5)} NIM.`,
+        }));
+        return;
+      }
+    }
     setState((current) => withStage(current, "SOURCE_APPROVAL_PENDING", { error: null }));
     try {
-      const execution = await props.adapter.executeSwap(state.quote.id);
+      const execution = await props.adapter.executeSwap(quoteToExecute.id);
       setState((current) => withStage(current, "SWAP_SUBMITTED", { execution }));
     } catch (error) {
       setState((current) => withStage(current, "FAILED", { error: error instanceof Error ? error.message : "Swap submission failed." }));
@@ -139,6 +157,24 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
   const destinationDecimals = props.kind === "WITHDRAW_AS_NIM" ? 5 : 6;
   const contractFirst = props.kind === "WITHDRAW_AS_NIM";
   const canRetryContract = state.stage === "FAILED" && state.execution?.status === "COMPLETED" && !contractFirst;
+  const enteredNimAmount = props.kind === "SAVE_WITH_NIM"
+    ? (() => {
+        try {
+          return parseAssetAmount(amount, 5);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+  const nimFundingError = props.kind === "SAVE_WITH_NIM"
+    ? enteredNimAmount === null || enteredNimAmount <= 0n
+      ? "Enter a valid NIM amount."
+      : props.nimBalanceLuna === null
+        ? "Your NIM balance is still loading."
+        : enteredNimAmount > props.nimBalanceLuna
+          ? `Insufficient NIM. Your wallet has ${formatAssetAmount(props.nimBalanceLuna, 5)} NIM.`
+          : null
+    : null;
 
   if (!props.adapter) {
     return (
@@ -170,10 +206,14 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
       </ol>
       {state.stage === "IDLE" && contractFirst && <button className="primary" onClick={() => void contractAction(true)}>1. {props.contractActionLabel}</button>}
       {state.stage === "IDLE" && !contractFirst && props.kind === "SAVE_WITH_NIM" && (
-        <label><span>NIM amount</span><input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" /></label>
+        <label>
+          <span>NIM amount</span>
+          <input aria-invalid={Boolean(nimFundingError)} value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" />
+          {nimFundingError && <small className="field-error" role="alert">{nimFundingError}</small>}
+        </label>
       )}
       {((state.stage === "IDLE" && !contractFirst) || state.stage === "DESTINATION_ASSET_CONFIRMED" || state.stage === "QUOTE_EXPIRED") && (
-        <button className="secondary" disabled={!props.adapter} onClick={() => void quote()}>{state.stage === "QUOTE_EXPIRED" ? "Refresh quote" : "Get NIM/USDT quote"}</button>
+        <button className="secondary" disabled={!props.adapter || Boolean(nimFundingError)} onClick={() => void quote()}>{state.stage === "QUOTE_EXPIRED" ? "Refresh quote" : "Get NIM/USDT quote"}</button>
       )}
       {state.stage === "QUOTING" && <p role="status">Requesting quote…</p>}
       {state.quote && ["QUOTE_READY", "SOURCE_APPROVAL_PENDING"].includes(state.stage) && (

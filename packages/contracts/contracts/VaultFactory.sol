@@ -18,13 +18,14 @@ import {SafetyController} from "./SafetyController.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/0.5.0";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/0.6.0";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 
     error InvalidConfiguration();
     error CreatorNotMember();
     error UnsupportedToken();
+    error VaultOnly();
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
@@ -58,6 +59,7 @@ contract VaultFactory {
         IAToken aToken_,
         uint256 deploymentChainId_,
         IYieldAdapterFactory testYieldAdapterFactory_,
+        SavingsVaultDeployer vaultDeployer_,
         SafetyController safetyController_,
         RewardPool rewardPool_
     ) {
@@ -68,6 +70,11 @@ contract VaultFactory {
             riskReserve_ == maintenanceTreasury_ || riskReserve_ == address(asset_) ||
             maintenanceTreasury_ == address(asset_) || riskReserve_ == address(this) ||
             maintenanceTreasury_ == address(this)
+        ) revert InvalidConfiguration();
+        if (
+            address(vaultDeployer_) == address(0) ||
+            address(vaultDeployer_).code.length == 0 ||
+            vaultDeployer_.factory() != address(this)
         ) revert InvalidConfiguration();
         try IERC20Metadata(address(asset_)).decimals() returns (uint8 tokenDecimals) {
             if (tokenDecimals != 6) revert UnsupportedToken();
@@ -95,7 +102,7 @@ contract VaultFactory {
         aToken = aToken_;
         deploymentChainId = deploymentChainId_;
         testYieldAdapterFactory = testYieldAdapterFactory_;
-        vaultDeployer = new SavingsVaultDeployer();
+        vaultDeployer = vaultDeployer_;
         safetyController = safetyController_;
         rewardPool = rewardPool_;
         earlyExitMarket = new EarlyExitMarket(
@@ -138,7 +145,7 @@ contract VaultFactory {
         targets[0] = target;
         uint16[] memory allocations = new uint16[](1);
         allocations[0] = emergencyBps;
-        vault = _create(false, msg.sender, members, targets, allocations, maturity, mode);
+        vault = _create(false, msg.sender, members, targets, allocations, maturity, mode, false, 1, 0, 0);
     }
 
     function createGroupVault(
@@ -159,7 +166,45 @@ contract VaultFactory {
             if (members[i] == msg.sender) creatorIncluded = true;
         }
         if (!creatorIncluded) revert CreatorNotMember();
-        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode);
+        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode, false, uint32(count), 0, 0);
+    }
+
+    function createPublicGroupVault(
+        uint256 target,
+        uint16 emergencyBps,
+        uint32 maxMembers,
+        uint64 maturity,
+        SavingsVault.VaultMode mode
+    ) external returns (address vault) {
+        safetyController.requireNotPaused();
+        if (maxMembers < MIN_GROUP_MEMBERS || maxMembers > MAX_GROUP_MEMBERS) {
+            revert InvalidConfiguration();
+        }
+        address[] memory members = new address[](1);
+        members[0] = msg.sender;
+        uint256[] memory targets = new uint256[](1);
+        targets[0] = target;
+        uint16[] memory allocations = new uint16[](1);
+        allocations[0] = emergencyBps;
+        vault = _create(
+            true,
+            msg.sender,
+            members,
+            targets,
+            allocations,
+            maturity,
+            mode,
+            true,
+            maxMembers,
+            target,
+            emergencyBps
+        );
+    }
+
+    /// @notice Adds a public joiner to the factory's address index.
+    function recordPublicGroupJoin(address member) external {
+        if (!isVault[msg.sender] || member == address(0)) revert VaultOnly();
+        _memberVaults[member].push(msg.sender);
     }
 
     function vaultCount() external view returns (uint256) {
@@ -181,7 +226,11 @@ contract VaultFactory {
         uint256[] memory targets,
         uint16[] memory emergencyBps,
         uint64 maturity,
-        SavingsVault.VaultMode mode
+        SavingsVault.VaultMode mode,
+        bool publicJoining,
+        uint32 maxMemberCount,
+        uint256 publicMemberTarget,
+        uint16 publicEmergencyBps
     ) internal returns (address vault) {
         IYieldAdapter adapter;
         if (mode == SavingsVault.VaultMode.Earn) {
@@ -210,7 +259,12 @@ contract VaultFactory {
             adapter,
             members,
             targets,
-            emergencyBps
+            emergencyBps,
+            address(this),
+            publicJoining,
+            maxMemberCount,
+            publicMemberTarget,
+            publicEmergencyBps
         );
         // Binding is a one-time factory operation; after this point only the vault can
         // supply or redeem adapter assets.

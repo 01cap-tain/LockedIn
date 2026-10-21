@@ -94,10 +94,11 @@ describe('Deterministic protocol-revenue epochs', function () {
     const secondMembers = accounts.slice(4, 8)
     const first = await createCompletedGroup(firstMembers, firstMembers.map(() => 10n * UNIT))
     const second = await createCompletedGroup(secondMembers, secondMembers.map(() => 20n * UNIT))
-    // Excess contributions complete the goal but cannot increase epoch weight.
+    // A completed target cannot be exceeded, so epoch weight cannot be inflated.
     await token.mint(await firstMembers[0].getAddress(), 10n * UNIT)
     await token.connect(firstMembers[0]).approve(await first.getAddress(), 10n * UNIT)
-    await first.connect(firstMembers[0]).deposit(0, 10n * UNIT)
+    await expect(first.connect(firstMembers[0]).deposit(0, 10n * UNIT))
+      .to.be.revertedWithCustomError(first, 'TargetExceeded')
     await fundProtocolRevenue(120n * UNIT)
 
     await networkHelpers.time.increaseTo(maturity)

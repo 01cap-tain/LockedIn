@@ -12,9 +12,12 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@lottiefiles/dotlottie-react": "^0.20.0",
     "@nimiq/mini-app-sdk": "0.2.4",
     "ethers": "6.17.0",
+    "lucide-react": "^1.60.0",
     "react": "19.3.0",
+    "react-calendar": "^6.0.1",
     "react-dom": "19.3.0"
   },
   "devDependencies": {

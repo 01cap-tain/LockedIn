@@ -130,12 +130,12 @@ const safetyNonce = await ethers.provider.getTransactionCount(
   deployerAddress,
   "pending"
 );
-// SafetyController and RewardPool need an immutable factory address, so both bind
-// to the third CREATE address (after their own deployments). The factory constructor
-// checks both reciprocal bindings and rejects any mismatch.
+// SafetyController, RewardPool and SavingsVaultDeployer bind to the immutable
+// fourth CREATE address. Keeping vault creation bytecode outside the factory is
+// required to remain below the real EVM initcode limit.
 const predictedFactoryAddress = ethers.getCreateAddress({
   from: deployerAddress,
-  nonce: safetyNonce + 2,
+  nonce: safetyNonce + 3,
 });
 const safetyArguments = [
   predictedFactoryAddress,
@@ -162,6 +162,12 @@ const rewardArguments = [
 const rewardPoolFactory = await ethers.getContractFactory("RewardPool", deployer);
 const unsignedRewardDeployment =
   await rewardPoolFactory.getDeployTransaction(...rewardArguments);
+const vaultDeployerFactory = await ethers.getContractFactory(
+  "SavingsVaultDeployer",
+  deployer
+);
+const unsignedVaultDeployerDeployment =
+  await vaultDeployerFactory.getDeployTransaction(predictedFactoryAddress);
 
 const factoryArguments = [
   await token.getAddress(),
@@ -184,7 +190,7 @@ const deploymentGasPrice = feeData.gasPrice;
 if (!deploymentGasPrice) {
   throw new Error("The Amoy RPC did not return a usable legacy gas price.");
 }
-const [estimatedSafetyGas, estimatedRewardGas] = await Promise.all([
+const [estimatedSafetyGas, estimatedRewardGas, estimatedVaultDeployerGas] = await Promise.all([
   ethers.provider.estimateGas({
     ...unsignedSafetyDeployment,
     from: deployerAddress,
@@ -193,15 +199,20 @@ const [estimatedSafetyGas, estimatedRewardGas] = await Promise.all([
     ...unsignedRewardDeployment,
     from: deployerAddress,
   }),
+  ethers.provider.estimateGas({
+    ...unsignedVaultDeployerDeployment,
+    from: deployerAddress,
+  }),
 ]);
 const safetyGasLimit = (estimatedSafetyGas * 120n) / 100n;
 const rewardGasLimit = (estimatedRewardGas * 120n) / 100n;
+const vaultDeployerGasLimit = (estimatedVaultDeployerGas * 120n) / 100n;
 // The factory validates the controller's deployed bytecode, so its live gas
 // estimate is only possible after the controller exists. Reserve a conservative
 // testnet budget before sending the first transaction to avoid an orphaned setup.
 const factoryPreflightGasBudget = 12_000_000n;
 const minimumDeploymentBalance =
-  (safetyGasLimit + rewardGasLimit + factoryPreflightGasBudget) * deploymentGasPrice;
+  (safetyGasLimit + rewardGasLimit + vaultDeployerGasLimit + factoryPreflightGasBudget) * deploymentGasPrice;
 if (deployerBalance < minimumDeploymentBalance) {
   throw new Error(
     `The Amoy deployer is underfunded for SafetyController, RewardPool and VaultFactory. ` +
@@ -233,7 +244,16 @@ await rewardPoolContract.waitForDeployment();
 const rewardPoolRecord = await deploymentRecord(rewardPoolContract);
 console.log(`RewardPool confirmed at ${rewardPoolRecord.address}.`);
 
-factoryArguments.push(safetyRecord.address, rewardPoolRecord.address);
+console.log("Deploying the immutable factory-only SavingsVaultDeployer...");
+const vaultDeployerContract = await vaultDeployerFactory.deploy(
+  predictedFactoryAddress,
+  { gasLimit: vaultDeployerGasLimit, gasPrice: deploymentGasPrice }
+);
+await vaultDeployerContract.waitForDeployment();
+const vaultDeployerRecord = await deploymentRecord(vaultDeployerContract);
+console.log(`SavingsVaultDeployer confirmed at ${vaultDeployerRecord.address}.`);
+
+factoryArguments.push(vaultDeployerRecord.address, safetyRecord.address, rewardPoolRecord.address);
 const unsignedFactoryDeployment = await factoryContract.getDeployTransaction(
   ...factoryArguments
 );
@@ -250,7 +270,7 @@ if ((await ethers.provider.getBalance(deployerAddress)) < factoryGasLimit * depl
 }
 
 console.log(
-  "Deploying VaultFactory and its RewardPool/EarlyExitMarket/SavingsVaultDeployer..."
+  "Deploying VaultFactory and its EarlyExitMarket..."
 );
 const factory = await factoryContract.deploy(...factoryArguments, {
   gasLimit: factoryGasLimit,
@@ -296,9 +316,8 @@ const manifest = {
       blockNumber: factoryReceipt.blockNumber,
     },
     savingsVaultDeployer: {
+      ...vaultDeployerRecord,
       address: vaultDeployer,
-      transactionHash: factoryRecord.transactionHash,
-      blockNumber: factoryReceipt.blockNumber,
     },
   },
   factoryConfiguration: {

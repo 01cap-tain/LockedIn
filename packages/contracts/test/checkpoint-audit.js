@@ -107,7 +107,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   it('freezes deposits during a live listing and permits them again after expiry', async function () {
     const vault = await personalVault()
     await fundAndApprove(saver, await vault.getAddress(), 101n * UNIT)
-    await vault.deposit(0, 100n * UNIT)
+    await vault.deposit(0, 99n * UNIT)
     const expires = BigInt(await networkHelpers.time.latest()) + 100n
     const reference = await market.referenceDiscount(await vault.getAddress(), 0)
     const payout = await market.payoutFor(await vault.positionValue(0), reference.discountBps)
@@ -116,7 +116,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await expect(vault.deposit(0, UNIT)).to.be.revertedWithCustomError(vault, 'PositionListed')
     await networkHelpers.time.increaseTo(expires + 1n)
     await vault.deposit(0, UNIT)
-    expect((await vault.position(0)).deposited).to.equal(101n * UNIT)
+    expect((await vault.position(0)).deposited).to.equal(100n * UNIT)
   })
 
   it('revokes reward eligibility on sale while preserving the remaining active group campaign', async function () {

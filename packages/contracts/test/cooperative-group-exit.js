@@ -274,7 +274,7 @@ describe('Cooperative group exits', function () {
     await vault.connect(members[1]).withdrawEmergency(1, UNIT)
     await expect(vault.connect(members[0]).completeGroupExit(0))
       .to.be.revertedWithCustomError(vault, 'InsufficientApprovalProgress')
-    await deposit(vault, members[1], 1, 76n * UNIT)
+    await deposit(vault, members[1], 1, 74n * UNIT)
     for (let index = 2; index < 5; index += 1) {
       await deposit(vault, members[index], index, 75n * UNIT)
     }

@@ -15,8 +15,9 @@ contract SavingsVaultDeployer {
 
     address public immutable factory;
 
-    constructor() {
-        factory = msg.sender;
+    constructor(address factory_) {
+        if (factory_ == address(0)) revert FactoryOnly();
+        factory = factory_;
     }
 
     function deployVault(
@@ -31,7 +32,12 @@ contract SavingsVaultDeployer {
         IYieldAdapter yieldAdapter,
         address[] memory members,
         uint256[] memory targets,
-        uint16[] memory emergencyBps
+        uint16[] memory emergencyBps,
+        address factoryAddress,
+        bool publicJoining,
+        uint32 maxMemberCount,
+        uint256 publicMemberTarget,
+        uint16 publicEmergencyBps
     ) external returns (address vault) {
         if (msg.sender != factory) revert FactoryOnly();
         vault = address(
@@ -47,7 +53,12 @@ contract SavingsVaultDeployer {
                 yieldAdapter,
                 members,
                 targets,
-                emergencyBps
+                emergencyBps,
+                factoryAddress,
+                publicJoining,
+                maxMemberCount,
+                publicMemberTarget,
+                publicEmergencyBps
             )
         );
     }

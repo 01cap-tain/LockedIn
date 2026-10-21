@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 5,
+  "network": "polygon-amoy",
+  "chainId": 80002,
+  "protocolVersion": "lockedin-circle/0.5.0",
+  "deploymentId": "0x277f664c85989be8cfe4382d33176437a3f28f887c2eb0e59acc4fc6825e46a8",
+  "deploymentBlock": 50633826,
+  "explorer": "https://amoy.polygonscan.com",
+  "gitCommit": "4dfb672a635db9bf459c96457edf81daf8e6501b",
+  "deploymentTimestamp": "2026-10-20T00:33:09.692Z",
+  "tokenDecimals": 6,
+  "contracts": {
+    "mockUsdt": {
+      "address": "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
+      "transactionHash": "0x5553897611b25d408ddadc970a1ba6383d3a5457665e6e1bc5bb29e309c14f7b",
+      "blockNumber": 50538011
+    },
+    "mockYieldAdapterFactory": {
+      "address": "0xC4faBc46347b9081ca95a8B9D8014C3394016c11",
+      "transactionHash": "0x8a1efeb749ec1ab6de0032bffeea9a756371de7b495138b4c440ecb77e28c85e",
+      "blockNumber": 50538014
+    },
+    "safetyController": {
+      "address": "0xf97A7892D38f6E169cD883b0A3455854E3060F26",
+      "transactionHash": "0x64cbc707c481495432afae2b6405a94194240aeac209ec30a6fc4dfb8e181f6b",
+      "blockNumber": 50633818
+    },
+    "vaultFactory": {
+      "address": "0xd018DBE28406357c5225c18B74feF33c6F964b5f",
+      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
+      "blockNumber": 50633826
+    },
+    "rewardPool": {
+      "address": "0xeeF8166170b4Ff66b2360D34aa0273e8E22A753C",
+      "transactionHash": "0x725dd16016b96eb2f62388bd55468abb8841515e62f23aa5fac38f1928d5a4dc",
+      "blockNumber": 50633822
+    },
+    "earlyExitMarket": {
+      "address": "0xBE41e5759bB5eb48471Af461B995ABff9516b0B1",
+      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
+      "blockNumber": 50633826
+    },
+    "savingsVaultDeployer": {
+      "address": "0x55bF4Afe71674d8F03Ce5198C44a1ce05A86Fc7c",
+      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
+      "blockNumber": 50633826
+    }
+  },
+  "factoryConfiguration": {
+    "savingsVaultDeployment": "non-upgradeable-per-vault",
+    "yieldAdapter": "MockYieldAdapter",
+    "riskReserve": "0x76965f9b6a7d388F9e47DC46d115F55b860a203D",
+    "maintenanceTreasury": "0x7c5ba0eE0e5aE7E426CfeE5B09C4380Ee10216Ad",
+    "safety": {
+      "authority": "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
+      "authorityType": "test-only-deployer",
+      "timelockSeconds": 86400,
+      "maxPositionPrincipal": "1000000000000",
+      "maxVaultPrincipal": "10000000000000",
+      "maxProtocolPrincipal": "100000000000000"
+    },
+    "rewards": {
+      "epochSeconds": 86400,
+      "registrationGraceSeconds": 21600,
+      "minimumRewardTarget": "10000000",
+      "minimumSavingDurationSeconds": 604800,
+      "environment": "test-only-amoy"
+    }
+  }
+}

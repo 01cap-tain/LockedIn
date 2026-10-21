@@ -169,7 +169,7 @@ describe('LockedIn Circle Phase 2B', function () {
   })
 
   it('mints shares and handles deposits at different exchange rates', async function () {
-    const vault = await createVault()
+    const vault = await createVault(1, 200n * UNIT)
     await fundAndApprove(saver, await vault.getAddress(), 200n * UNIT)
     await vault.deposit(0, 100n * UNIT)
     const adapterAddress = await vault.yieldAdapter()

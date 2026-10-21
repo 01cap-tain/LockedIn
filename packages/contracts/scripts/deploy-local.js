@@ -29,7 +29,7 @@ const deployerAddress = await deployer.getAddress()
 const safetyNonce = await ethers.provider.getTransactionCount(deployerAddress)
 const predictedFactory = ethers.getCreateAddress({
   from: deployerAddress,
-  nonce: safetyNonce + 2,
+  nonce: safetyNonce + 3,
 })
 const safetyControllerContract = await ethers.deployContract('SafetyController', [
   predictedFactory,
@@ -51,6 +51,11 @@ const rewardPoolContract = await ethers.deployContract('RewardPool', [
 ])
 await rewardPoolContract.waitForDeployment()
 
+const vaultDeployerContract = await ethers.deployContract('SavingsVaultDeployer', [
+  predictedFactory,
+])
+await vaultDeployerContract.waitForDeployment()
+
 const factory = await ethers.deployContract('VaultFactory', [
   await token.getAddress(),
   await riskReserve.getAddress(),
@@ -59,6 +64,7 @@ const factory = await ethers.deployContract('VaultFactory', [
   await aToken.getAddress(),
   31_337,
   ethers.ZeroAddress,
+  await vaultDeployerContract.getAddress(),
   await safetyControllerContract.getAddress(),
   await rewardPoolContract.getAddress(),
 ])
@@ -76,6 +82,7 @@ const tokenRecord = await deploymentRecord(token)
 const factoryRecord = await deploymentRecord(factory)
 const rewardPoolRecord = await deploymentRecord(rewardPoolContract)
 const safetyControllerRecord = await deploymentRecord(safetyControllerContract)
+const vaultDeployerRecord = await deploymentRecord(vaultDeployerContract)
 
 console.log(`Deployer: ${await deployer.getAddress()}`)
 console.log(`Mock USDT: ${await token.getAddress()}`)
@@ -117,9 +124,8 @@ await writeFile(
           blockNumber: factoryRecord.blockNumber,
         },
         savingsVaultDeployer: {
+          ...vaultDeployerRecord,
           address: vaultDeployer,
-          transactionHash: factoryRecord.transactionHash,
-          blockNumber: factoryRecord.blockNumber,
         },
         safetyController: safetyControllerRecord,
       },

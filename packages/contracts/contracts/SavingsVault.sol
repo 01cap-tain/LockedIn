@@ -13,6 +13,10 @@ interface IEarlyExitMarketStatus {
     function isPositionListed(address vault, uint256 positionId) external view returns (bool);
 }
 
+interface IPublicGroupFactory {
+    function recordPublicGroupJoin(address member) external;
+}
+
 /// @notice Non-upgradeable savings vault separating emergency ownership from a transferable locked claim.
 /// @dev Safe mode holds locked assets locally; Earn mode represents them with adapter shares.
 contract SavingsVault is ReentrancyGuard {
@@ -59,6 +63,7 @@ contract SavingsVault is ReentrancyGuard {
     error PositionOwnerOnly();
     error MarketOnly();
     error InvalidAmount();
+    error TargetExceeded();
     error DepositsClosed();
     error InsufficientEmergencyBalance();
     error NotMatured();
@@ -85,6 +90,7 @@ contract SavingsVault is ReentrancyGuard {
     error ApprovalMissing();
     error TokenAccountingMismatch();
     error Insolvent();
+    error PublicJoiningUnavailable();
 
     IERC20 public immutable asset;
     RewardPool public immutable rewardPool;
@@ -97,6 +103,10 @@ contract SavingsVault is ReentrancyGuard {
     VaultMode public immutable mode;
     IYieldAdapter public immutable yieldAdapter;
     SafetyController public immutable safetyController;
+    address public immutable factory;
+    bool public immutable publicJoining;
+    uint32 public immutable maxMemberCount;
+    bool public publicJoinClosed;
     GroupLifecycle public groupLifecycle;
     uint32 public acceptedMemberCount;
 
@@ -165,6 +175,8 @@ contract SavingsVault is ReentrancyGuard {
     event GroupActivated(uint64 activatedAt);
     event GroupInvitationExpired(uint64 expiredAt);
     event UnactivatedGroupCancelled(address indexed creator);
+    event PublicGroupJoined(address indexed member, uint256 indexed positionId, uint32 memberCount);
+    event PublicGroupJoiningClosed(uint32 finalMemberCount);
 
     constructor(
         IERC20 asset_,
@@ -178,15 +190,23 @@ contract SavingsVault is ReentrancyGuard {
         IYieldAdapter yieldAdapter_,
         address[] memory members_,
         uint256[] memory targets_,
-        uint16[] memory emergencyBps_
+        uint16[] memory emergencyBps_,
+        address factory_,
+        bool publicJoining_,
+        uint32 maxMemberCount_,
+        uint256 publicMemberTarget_,
+        uint16 publicEmergencyBps_
     ) {
         uint256 count = members_.length;
         if (
             address(asset_) == address(0) || address(rewardPool_) == address(0) ||
-            groupCreator_ == address(0) || address(safetyController_) == address(0) ||
+            groupCreator_ == address(0) || address(safetyController_) == address(0) || factory_ == address(0) ||
             maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
-            (isGroup_ && (count < MIN_GROUP_SIZE || maturity_ <= block.timestamp + GROUP_INVITATION_LIFETIME)) ||
+            (isGroup_ && !publicJoining_ && (count < MIN_GROUP_SIZE || maturity_ <= block.timestamp + GROUP_INVITATION_LIFETIME)) ||
+            (publicJoining_ && (!isGroup_ || count != 1 || maxMemberCount_ < MIN_GROUP_SIZE ||
+                maxMemberCount_ < count || publicMemberTarget_ != targets_[0] ||
+                publicEmergencyBps_ != emergencyBps_[0])) ||
             (mode_ == VaultMode.Safe && address(yieldAdapter_) != address(0)) ||
             (mode_ == VaultMode.Earn && address(yieldAdapter_) == address(0))
         ) revert InvalidConfiguration();
@@ -204,6 +224,9 @@ contract SavingsVault is ReentrancyGuard {
         safetyController = safetyController_;
         mode = mode_;
         yieldAdapter = yieldAdapter_;
+        factory = factory_;
+        publicJoining = publicJoining_;
+        maxMemberCount = publicJoining_ ? maxMemberCount_ : uint32(count);
 
         bool creatorIncluded;
         for (uint256 i; i < count; ++i) {
@@ -228,7 +251,13 @@ contract SavingsVault is ReentrancyGuard {
             if (members_[i] == groupCreator_) creatorIncluded = true;
         }
 
-        if (isGroup_) {
+        if (isGroup_ && publicJoining_) {
+            if (!creatorIncluded) revert InvalidConfiguration();
+            groupLifecycle = GroupLifecycle.Active;
+            groupInvitationAccepted[groupCreator_] = true;
+            acceptedMemberCount = 1;
+            emit GroupActivated(uint64(block.timestamp));
+        } else if (isGroup_) {
             if (!creatorIncluded) revert InvalidConfiguration();
             groupLifecycle = GroupLifecycle.Pending;
             groupInvitationAccepted[groupCreator_] = true;
@@ -260,6 +289,33 @@ contract SavingsVault is ReentrancyGuard {
         uint256 value = _memberPosition[member];
         if (value == 0) revert UnknownPosition();
         return value - 1;
+    }
+
+    /// @notice Joins a bounded public circle before savings activity begins.
+    /// @dev Membership freezes on the first deposit so reward and exit sets cannot change mid-plan.
+    function joinPublicGroup() external {
+        if (
+            !publicJoining || publicJoinClosed || groupLifecycle != GroupLifecycle.Active ||
+            block.timestamp >= maturity || _positions.length >= maxMemberCount ||
+            _memberPosition[msg.sender] != 0
+        ) revert PublicJoiningUnavailable();
+        uint256 positionId = _positions.length;
+        _positions.push(Position({
+            member: msg.sender,
+            target: _positions[0].target,
+            deposited: 0,
+            emergencyBalance: 0,
+            lockedBalance: 0,
+            lockedShares: 0,
+            emergencyBps: _positions[0].emergencyBps,
+            lockedWithdrawn: false
+        }));
+        _memberPosition[msg.sender] = positionId + 1;
+        positionOwner[positionId] = msg.sender;
+        groupInvitationAccepted[msg.sender] = true;
+        ++acceptedMemberCount;
+        IPublicGroupFactory(factory).recordPublicGroupJoin(msg.sender);
+        emit PublicGroupJoined(msg.sender, positionId, uint32(_positions.length));
     }
 
     /// @notice Accepts the complete immutable group terms presented by this vault.
@@ -579,10 +635,15 @@ contract SavingsVault is ReentrancyGuard {
         if (IEarlyExitMarketStatus(earlyExitMarket).isPositionListed(address(this), positionId)) {
             revert PositionListed();
         }
+        if (publicJoining && !publicJoinClosed) {
+            publicJoinClosed = true;
+            emit PublicGroupJoiningClosed(uint32(_positions.length));
+        }
 
         // The shared controller enforces position, vault and protocol caps from
         // net outstanding principal. Any later revert rolls this reservation back.
         safetyController.recordDeposit(activePrincipalSavings(positionId), amount);
+        if (stored.deposited + amount > stored.target) revert TargetExceeded();
 
         // Integer rounding intentionally benefits the locked portion: emergency receives the
         // truncated basis-point amount and every remaining unit is counted as locked principal.
