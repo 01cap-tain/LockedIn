@@ -21,6 +21,7 @@ import {
   joinPublicGroup,
   loadExitListing,
   fundExitListing,
+  groupCreationUnsupportedReason,
   loadExitMarket,
   loadGroupExitRequests,
   loadMockUsdtBalance,
@@ -636,6 +637,12 @@ export function App() {
   const publicGroupsSupported =
     deployment.status === "valid" &&
     deployment.value.protocolVersion === "lockedin-circle/0.7.0";
+  const groupCreationBlockReason = deployment.status === "valid"
+    ? groupCreationUnsupportedReason(
+        deployment.value.protocolVersion,
+        groupVisibility
+      )
+    : null;
   const estimatedMaturity = useMemo(
     () => estimatePlanMaturity({
       target: Number(target),
@@ -2260,17 +2267,17 @@ export function App() {
                   <div><dt>Estimated outcome</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>
               </fieldset>}
-              {estimatedMaturity && Number(planContribution) > 0 && mode === "group" && !publicGroupsSupported && (
+              {estimatedMaturity && Number(planContribution) > 0 && mode === "group" && groupCreationBlockReason && (
                 <div className="notice warning-notice full-width" role="status">
-                  <strong>Public groups are unavailable</strong>
-                  <span>This Amoy deployment was created before public groups were added. Public-group creation will become available after the updated contracts are deployed.</span>
+                  <strong>{groupVisibility === "public" ? "Public circles need newer contracts" : "This invite-only flow is not supported by the current factory"}</strong>
+                  <span>{groupCreationBlockReason}</span>
                 </div>
               )}
               {estimatedMaturity && Number(planContribution) > 0 && <button
                 className="primary full-width"
                 disabled={
                   riskActionsDisabled ||
-                  (mode === "group" && !publicGroupsSupported) ||
+                  (mode === "group" && Boolean(groupCreationBlockReason)) ||
                   (yieldMode === "earn" && !earnRiskAccepted)
                 }
                 type="submit"

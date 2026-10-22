@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { assertDeploymentMatches, describeContractError } from "./contracts";
+import {
+  assertDeploymentMatches,
+  describeContractError,
+  groupCreationUnsupportedReason,
+} from "./contracts";
 
 const actual = {
   protocolVersion: "lockedin-circle/0.5.0",
@@ -40,6 +44,24 @@ describe("contract error copy", () => {
   ])("turns low-level read failures into a recovery message", (message) => {
     expect(describeContractError(new Error(message))).toMatch(
       /could not be read on the selected network/i
+    );
+  });
+});
+
+describe("group creation compatibility", () => {
+  it("allows the creator-first group flow on protocol 0.7", () => {
+    expect(groupCreationUnsupportedReason("lockedin-circle/0.7.0", "invite-only")).toBeNull();
+  });
+
+  it("explains the fixed-member limitation on the deployed 0.5 factory", () => {
+    expect(groupCreationUnsupportedReason("lockedin-circle/0.5.0", "invite-only")).toMatch(
+      /at least four member addresses, targets and emergency allocations/i
+    );
+  });
+
+  it("distinguishes unsupported public enrollment", () => {
+    expect(groupCreationUnsupportedReason("lockedin-circle/0.5.0", "public")).toMatch(
+      /require protocol 0\.7\.0/i
     );
   });
 });

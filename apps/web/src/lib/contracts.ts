@@ -203,6 +203,22 @@ export interface CreateVaultInput {
   enrollmentDeadline?: string;
 }
 
+/**
+ * Explains whether the connected immutable factory can serve the current
+ * creator-first group flow. Protocol 0.5 can create only a fixed member array;
+ * it cannot let invited members choose their own financial terms later.
+ */
+export function groupCreationUnsupportedReason(
+  protocolVersion: string,
+  visibility: "public" | "invite-only"
+): string | null {
+  if (protocolVersion === "lockedin-circle/0.7.0") return null;
+  if (visibility === "public") {
+    return `Public circles require protocol 0.7.0; the connected factory is ${protocolVersion}.`;
+  }
+  return `Invite-only creation is blocked on ${protocolVersion}: this factory requires at least four member addresses, targets and emergency allocations at creation. It cannot support invited members choosing their own savings terms later.`;
+}
+
 export interface VaultSnapshot {
   address: string;
   signerAddress: string;
@@ -713,6 +729,14 @@ export async function createVault(
       overrides
     );
   } else {
+    const protocolVersion = String(
+      await factory.getFunction("PROTOCOL_VERSION")()
+    );
+    const unsupportedReason = groupCreationUnsupportedReason(
+      protocolVersion,
+      input.groupVisibility ?? "invite-only"
+    );
+    if (unsupportedReason) throw new Error(unsupportedReason);
     const maxParticipants = input.maxParticipants ?? 4;
     if (!Number.isInteger(maxParticipants) || maxParticipants < 4 || maxParticipants > 50)
       throw new Error("Public group capacity must be between 4 and 50 participants.");
