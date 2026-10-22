@@ -1403,6 +1403,169 @@ footer {
   }
 }
 
+/* Discover opens with a visual savings trajectory, not marketing copy. */
+.discover-hero {
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.savings-journey-chart {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  border: 1px solid rgba(201, 169, 93, 0.18);
+  border-radius: 18px;
+  padding: 14px 10px 8px;
+  background:
+    radial-gradient(circle at 86% 12%, rgba(201, 169, 93, 0.14), transparent 27%),
+    #11120f;
+}
+
+.savings-journey-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.journey-grid path {
+  fill: none;
+  stroke: rgba(235, 230, 213, 0.075);
+  stroke-width: 1;
+  stroke-dasharray: 3 7;
+}
+
+.journey-area {
+  fill: url(#journey-area);
+  opacity: 0;
+  animation: journey-area-in 900ms 280ms ease-out forwards;
+}
+
+.journey-line {
+  fill: none;
+  stroke: #d2b461;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: journey-line-in 1.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.journey-points circle {
+  fill: #0d0e0c;
+  stroke: #d2b461;
+  stroke-width: 3;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: journey-point-in 340ms ease-out forwards;
+}
+
+.journey-points circle:nth-child(1) { animation-delay: 360ms; }
+.journey-points circle:nth-child(2) { animation-delay: 650ms; }
+.journey-points circle:nth-child(3) { animation-delay: 900ms; }
+.journey-points .journey-goal-glow {
+  fill: rgba(210, 180, 97, 0.35);
+  stroke: none;
+  filter: url(#journey-glow);
+  animation-delay: 1.18s;
+}
+.journey-points .journey-goal {
+  fill: #d2b461;
+  stroke: #f0dc9f;
+  animation-delay: 1.18s;
+}
+
+@keyframes journey-line-in { to { stroke-dashoffset: 0; } }
+@keyframes journey-area-in { to { opacity: 1; } }
+@keyframes journey-point-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Notifications remain centered above navigation on every phone width. */
+.transaction {
+  right: auto;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  left: 50%;
+  display: flex;
+  width: min(430px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
+  max-height: min(220px, calc(100vh - 130px));
+  align-items: flex-start;
+  gap: 10px;
+  overflow: auto;
+  border-radius: 16px;
+  padding: 14px 42px 14px 15px;
+  transform: translateX(-50%);
+  overflow-wrap: anywhere;
+}
+
+.transaction-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
+.transaction-copy > span {
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transaction-copy p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.transaction-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.transaction-dismiss {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.transaction > .outline-action {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+@media (max-width: 420px) {
+  .discover-hero {
+    padding: 22px 12px 20px;
+  }
+
+  .savings-journey-chart {
+    padding: 10px 7px 5px;
+  }
+
+  .transaction > .outline-action {
+    display: none;
+  }
+}
+
 /* Swipeable savings views and progressive creation ----------------------- */
 .swipe-tabs {
   touch-action: pan-y;
@@ -6607,4 +6770,50 @@ select,
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* These declarations must remain last so older mobile rules cannot offset them. */
+.discover-hero {
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.transaction {
+  right: auto;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  left: 50%;
+  display: flex;
+  width: min(430px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
+  max-height: min(220px, calc(100vh - 130px));
+  align-items: flex-start;
+  gap: 10px;
+  overflow: auto;
+  border-radius: 16px;
+  padding: 14px 42px 14px 15px;
+  transform: translateX(-50%);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 420px) {
+  .discover-hero {
+    padding: 22px 12px 20px;
+  }
+
+  .transaction {
+    right: auto;
+    left: 50%;
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    transform: translateX(-50%);
+  }
+}
+
+.transaction.error {
+  animation: toast-life-centered 6s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.transaction.success {
+  animation: toast-life-centered 3s cubic-bezier(.22, 1, .36, 1) both;
 }

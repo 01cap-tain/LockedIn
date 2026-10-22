@@ -2330,16 +2330,39 @@ function shortAddress(value: string): string {
 }
 
 export function describeContractError(error: unknown): string {
-  if (error instanceof Error) {
-    const reason =
-      "reason" in error && typeof error.reason === "string"
-        ? error.reason
-        : null;
-    const message = reason ?? error.message.replace(/^execution reverted:\s*/i, "");
-    if (/require\(false\)|missing revert data|could not decode result data|BAD_DATA/i.test(message)) {
-      return "This savings vault could not be read on the selected network. Refresh your wallet connection and confirm that the app is using the latest deployment.";
-    }
-    return message;
-  }
-  return "The contract transaction failed.";
+  const details = error && typeof error === "object"
+    ? error as Record<string, unknown>
+    : {};
+  const raw = [
+    details.shortMessage,
+    details.reason,
+    details.message,
+    details.code,
+    error instanceof Error ? error.message : error,
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+
+  if (/user rejected|user denied|action_rejected|4001/i.test(raw))
+    return "The request was cancelled in your wallet. Nothing was changed.";
+  if (/insufficient funds.*gas|intrinsic transaction cost|gas required exceeds/i.test(raw))
+    return "Your wallet needs more POL to cover the Polygon network fee.";
+  if (/transfer amount exceeds balance|erc20insufficientbalance|insufficient token|insufficient wallet funds/i.test(raw))
+    return "Your wallet does not have enough USDT for this action.";
+  if (/targetexceeded|exceeds your goal/i.test(raw))
+    return "This contribution would exceed your savings goal. Enter a smaller amount.";
+  if (/depositsclosed/i.test(raw))
+    return "This savings period has ended, so new contributions are closed.";
+  if (/positionlisted/i.test(raw))
+    return "This position is already listed for an early exit. Cancel the listing before contributing again.";
+  if (/wrong network|unsupported chain|chain mismatch|network mismatch/i.test(raw))
+    return "Your wallet is on the wrong network. Switch to Polygon Amoy and try again.";
+  if (/require\(false\)|missing revert data|could not decode result data|bad_data/i.test(raw))
+    return "This savings vault could not be read on Polygon Amoy. Refresh your wallet connection and try again.";
+  if (/failed to fetch|timeout|network error|server_error|unknown_error|could not coalesce|json-?rpc|econn|rate limit|429/i.test(raw))
+    return "Polygon Amoy is taking longer than expected. Your funds are unchanged; please try again shortly.";
+  if (/execution reverted|call exception|custom error/i.test(raw))
+    return "The savings contract declined this action. Refresh the vault details and check that the amount and current status are still valid.";
+
+  return "The action could not be completed. Nothing was changed. Please try again.";
 }

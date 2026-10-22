@@ -292,6 +292,50 @@ function PaceIcon({ status, size = 15 }: { status: SavingsPaceStatus; size?: num
   return <CircleCheckBig aria-hidden="true" size={size} />;
 }
 
+/** Decorative, data-inspired journey from a first deposit to a completed goal. */
+function SavingsJourneyChart() {
+  return (
+    <figure
+      className="savings-journey-chart"
+      aria-label="An upward savings journey reaching four milestones"
+    >
+      <svg aria-hidden="true" viewBox="0 0 360 180">
+        <defs>
+          <linearGradient id="journey-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#d2b461" stopOpacity="0.42" />
+            <stop offset="100%" stopColor="#d2b461" stopOpacity="0" />
+          </linearGradient>
+          <filter id="journey-glow" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="5" />
+          </filter>
+        </defs>
+        <g className="journey-grid">
+          <path d="M18 35H342" />
+          <path d="M18 78H342" />
+          <path d="M18 121H342" />
+          <path d="M18 164H342" />
+        </g>
+        <path
+          className="journey-area"
+          d="M18 157C45 151 61 143 82 137C111 128 122 117 148 112C180 105 187 82 216 78C247 73 258 55 284 49C309 43 326 28 342 17V164H18Z"
+        />
+        <path
+          className="journey-line"
+          pathLength="1"
+          d="M18 157C45 151 61 143 82 137C111 128 122 117 148 112C180 105 187 82 216 78C247 73 258 55 284 49C309 43 326 28 342 17"
+        />
+        <g className="journey-points">
+          <circle cx="82" cy="137" r="5" />
+          <circle cx="148" cy="112" r="5" />
+          <circle cx="216" cy="78" r="5" />
+          <circle className="journey-goal-glow" cx="342" cy="17" r="14" />
+          <circle className="journey-goal" cx="342" cy="17" r="7" />
+        </g>
+      </svg>
+    </figure>
+  );
+}
+
 function CurrencyToggle({
   value,
   onChange,
@@ -907,7 +951,7 @@ export function App() {
       return;
     const timer = window.setTimeout(
       () => setTransaction({ status: "idle" }),
-      3_000
+      transaction.status === "error" ? 6_000 : 3_000
     );
     return () => window.clearTimeout(timer);
   }, [transaction.status]);
@@ -1910,8 +1954,7 @@ export function App() {
         <section className="route-page discover-page">
           <div className="discover-hero">
             <span className="eyebrow">Save better, together</span>
-            <h1>Find your circle.<br />Stay locked in.</h1>
-            <p>Explore public savings circles, understand the shared goal, and connect only when you are ready to join.</p>
+            <SavingsJourneyChart />
           </div>
           <div className="discover-section-heading">
             <div><h2>Group savings circles</h2><p>Live from the current testnet deployment.</p></div>
@@ -3931,17 +3974,36 @@ export function App() {
               <Check />
             </span>
           )}
-          <span>{transaction.status}</span>
-          <p>{transaction.message}</p>
+          {transaction.status === "error" && (
+            <AlertTriangle className="transaction-icon" aria-hidden="true" size={18} />
+          )}
+          <div className="transaction-copy">
+            <span>
+              {transaction.status === "error"
+                ? "Something went wrong"
+                : transaction.status === "pending"
+                  ? "Confirm in your wallet"
+                  : "Completed"}
+            </span>
+            <p>{transaction.message}</p>
+          </div>
           {transaction.status === "error" && evmSession && deployment.status === "valid" && (
             <button
-              className="secondary compact"
+              className="outline-action compact"
               onClick={() => void refreshPortfolio()}
               type="button"
             >
-              Retry chain reads
+              Refresh data
             </button>
           )}
+          <button
+            aria-label="Dismiss notification"
+            className="transaction-dismiss"
+            onClick={() => setTransaction({ status: "idle" })}
+            type="button"
+          >
+            <X aria-hidden="true" size={15} />
+          </button>
         </div>
       )}
       <nav className="bottom-nav" aria-label="Quick navigation">

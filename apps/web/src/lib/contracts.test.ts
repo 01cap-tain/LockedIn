@@ -43,7 +43,21 @@ describe("contract error copy", () => {
     "code=BAD_DATA",
   ])("turns low-level read failures into a recovery message", (message) => {
     expect(describeContractError(new Error(message))).toMatch(
-      /could not be read on the selected network/i
+      /could not be read on Polygon Amoy/i
+    );
+  });
+
+  it("never exposes JSON-RPC payloads or provider codes", () => {
+    const message = describeContractError(
+      new Error('could not coalesce error (error={ "code": -32603 }, payload={ "method": "eth_sendTransaction" })')
+    );
+    expect(message).toMatch(/Polygon Amoy is taking longer/i);
+    expect(message).not.toMatch(/-32603|payload|eth_sendTransaction/i);
+  });
+
+  it("explains a rejected wallet request without treating it as a failure", () => {
+    expect(describeContractError(new Error("ACTION_REJECTED code=4001"))).toBe(
+      "The request was cancelled in your wallet. Nothing was changed."
     );
   });
 });
