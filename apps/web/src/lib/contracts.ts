@@ -150,7 +150,7 @@ function readProviderFor(signer: Signer): Provider {
   ) {
     amoyReadProvider ??= new JsonRpcProvider(
       import.meta.env.VITE_PUBLIC_RPC_URL ??
-        "https://polygon-amoy-bor-rpc.publicnode.com",
+        "https://polygon-amoy.drpc.org",
       Number(POLYGON_AMOY_CHAIN_ID),
       {
         staticNetwork: true,
@@ -175,7 +175,7 @@ function publicReadProvider(preferredProvider?: Provider | null): Provider {
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
     import.meta.env.VITE_HARDHAT_RPC_URL ??
-    "https://polygon-amoy-bor-rpc.publicnode.com";
+    "https://polygon-amoy.drpc.org";
   if (publicRpcUrl) {
     const configuredChainId = BigInt(import.meta.env.VITE_EVM_CHAIN_ID ?? "0x13882");
     return new JsonRpcProvider(publicRpcUrl, Number(configuredChainId), {
@@ -1884,7 +1884,7 @@ export async function loadCompletedTrades(
 export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
-    "https://polygon-amoy-bor-rpc.publicnode.com";
+    "https://polygon-amoy.drpc.org";
   const provider: Provider = publicRpcUrl
     ? new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
         staticNetwork: true,
