@@ -18,7 +18,7 @@ import {SafetyController} from "./SafetyController.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/0.6.0";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/0.7.0";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 
@@ -41,6 +41,7 @@ contract VaultFactory {
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
     mapping(address vault => bool) public isVault;
+    mapping(address vault => string name) private _groupNames;
 
     event VaultCreated(
         address indexed vault,
@@ -145,7 +146,7 @@ contract VaultFactory {
         targets[0] = target;
         uint16[] memory allocations = new uint16[](1);
         allocations[0] = emergencyBps;
-        vault = _create(false, msg.sender, members, targets, allocations, maturity, mode, false, 1, 0, 0);
+        vault = _create(false, msg.sender, members, targets, allocations, maturity, mode, false, 1, 0, 0, false, "", 0);
     }
 
     function createGroupVault(
@@ -166,20 +167,24 @@ contract VaultFactory {
             if (members[i] == msg.sender) creatorIncluded = true;
         }
         if (!creatorIncluded) revert CreatorNotMember();
-        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode, false, uint32(count), 0, 0);
+        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode, false, uint32(count), 0, 0, false, "", 0);
     }
 
     function createPublicGroupVault(
+        string calldata groupName_,
         uint256 target,
         uint16 emergencyBps,
         uint32 maxMembers,
+        uint64 enrollmentDeadline,
         uint64 maturity,
-        SavingsVault.VaultMode mode
+        SavingsVault.VaultMode mode,
+        bool publicJoining
     ) external returns (address vault) {
         safetyController.requireNotPaused();
         if (maxMembers < MIN_GROUP_MEMBERS || maxMembers > MAX_GROUP_MEMBERS) {
             revert InvalidConfiguration();
         }
+        if (bytes(groupName_).length == 0 || bytes(groupName_).length > 64) revert InvalidConfiguration();
         address[] memory members = new address[](1);
         members[0] = msg.sender;
         uint256[] memory targets = new uint256[](1);
@@ -194,10 +199,13 @@ contract VaultFactory {
             allocations,
             maturity,
             mode,
-            true,
+            publicJoining,
             maxMembers,
             target,
-            emergencyBps
+            emergencyBps,
+            true,
+            groupName_,
+            enrollmentDeadline
         );
     }
 
@@ -219,6 +227,10 @@ contract VaultFactory {
         return _memberVaults[member];
     }
 
+    function groupName(address vault) external view returns (string memory) {
+        return _groupNames[vault];
+    }
+
     function _create(
         bool group,
         address creator,
@@ -230,7 +242,10 @@ contract VaultFactory {
         bool publicJoining,
         uint32 maxMemberCount,
         uint256 publicMemberTarget,
-        uint16 publicEmergencyBps
+        uint16 publicEmergencyBps,
+        bool openEnrollment,
+        string memory groupName_,
+        uint64 enrollmentDeadline
     ) internal returns (address vault) {
         IYieldAdapter adapter;
         if (mode == SavingsVault.VaultMode.Earn) {
@@ -264,13 +279,16 @@ contract VaultFactory {
             publicJoining,
             maxMemberCount,
             publicMemberTarget,
-            publicEmergencyBps
+            publicEmergencyBps,
+            openEnrollment,
+            enrollmentDeadline
         );
         // Binding is a one-time factory operation; after this point only the vault can
         // supply or redeem adapter assets.
         if (mode == SavingsVault.VaultMode.Earn) adapter.bindVault(vault);
         _vaults.push(vault);
         isVault[vault] = true;
+        if (group) _groupNames[vault] = groupName_;
         safetyController.registerVault(vault);
 
         for (uint256 i; i < members.length; ++i) {

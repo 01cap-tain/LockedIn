@@ -1,4 +1,5 @@
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import { PiggyBank } from "lucide-react";
 
 const SAVER_LISTING_ANIMATION =
   "https://lottie.host/e7822073-a144-42ed-bcce-697b043140ef/9mULjTCJBH.lottie";
@@ -7,6 +8,7 @@ const SAVER_LISTING_ANIMATION =
 export function SaverListingAnimation() {
   return (
     <div className="saver-listing-animation" aria-hidden="true">
+      <span className="saver-animation-fallback"><PiggyBank /></span>
       <DotLottieReact autoplay loop src={SAVER_LISTING_ANIMATION} />
     </div>
   );

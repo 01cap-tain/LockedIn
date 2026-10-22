@@ -55,9 +55,6 @@ describe('LockedIn Circle Phase 1', function () {
     const allBps = [...bps, ...Array(4 - bps.length).fill(1_000)]
     await factory.createGroupVault(members, allTargets, allBps, maturity, 0)
     const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
-    for (let index = 1; index < signers.length; index += 1) {
-      await vault.connect(signers[index]).acceptGroupInvitation()
-    }
     return vault
   }
 
@@ -145,9 +142,6 @@ describe('LockedIn Circle Phase 1', function () {
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n),
     )
-    for (let index = 1; index < groupMembers.length; index += 1) {
-      await vault.connect(groupMembers[index]).acceptGroupInvitation()
-    }
     for (const [index, member] of groupMembers.entries()) {
       await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
       if (index === 0) await vault.deposit(index, 100n * UNIT)
@@ -226,9 +220,6 @@ describe('LockedIn Circle Phase 1', function () {
     const vault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
 
     await attacker.configure(await vault.getAddress(), await callbackToken.getAddress(), 1)
-    await attacker.acceptInvitation()
-    await vault.connect(memberTwo).acceptGroupInvitation()
-    await vault.connect(memberThree).acceptGroupInvitation()
     await callbackToken.mint(await attacker.getAddress(), 100n * UNIT)
     await attacker.deposit(100n * UNIT)
     await callbackToken.setCallbacksEnabled(true)

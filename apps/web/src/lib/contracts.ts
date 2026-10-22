@@ -23,10 +23,11 @@ const factoryAbi = [
   "function asset() view returns (address)",
   "function createPersonalVault(uint256 target,uint64 maturity,uint16 emergencyBps,uint8 mode) returns (address)",
   "function createGroupVault(address[] members,uint256[] targets,uint16[] emergencyBps,uint64 maturity,uint8 mode) returns (address)",
-  "function createPublicGroupVault(uint256 target,uint16 emergencyBps,uint32 maxMembers,uint64 maturity,uint8 mode) returns (address)",
+  "function createPublicGroupVault(string groupName,uint256 target,uint16 emergencyBps,uint32 maxMembers,uint64 enrollmentDeadline,uint64 maturity,uint8 mode,bool publicJoining) returns (address)",
   "function vaultCount() view returns (uint256)",
   "function vaultAt(uint256 index) view returns (address)",
   "function vaultsOf(address member) view returns (address[])",
+  "function groupName(address vault) view returns (string)",
   "function earlyExitMarket() view returns (address)",
   "function rewardPool() view returns (address)",
   "function safetyController() view returns (address)",
@@ -51,21 +52,18 @@ const vaultAbi = [
   "function memberCount() view returns (uint256)",
   "function acceptedMemberCount() view returns (uint32)",
   "function publicJoining() view returns (bool)",
+  "function openEnrollment() view returns (bool)",
   "function publicJoinClosed() view returns (bool)",
   "function maxMemberCount() view returns (uint32)",
-  "function joinPublicGroup()",
+  "function enrollmentDeadline() view returns (uint64)",
+  "function joinPublicGroup(uint256 target,uint16 emergencyBps)",
+  "function activateGroup()",
   "function memberAt(uint256 positionId) view returns (address)",
   "function positionOwner(uint256 positionId) view returns (address)",
   "function rewardDisqualified(uint256 positionId) view returns (bool)",
   "function memberStatus(uint256 positionId) view returns (uint8)",
   "function groupCreator() view returns (address)",
-  "function invitationExpiresAt() view returns (uint64)",
   "function groupLifecycle() view returns (uint8)",
-  "function groupInvitationAccepted(address member) view returns (bool)",
-  "function groupInvitationDeclined(address member) view returns (bool)",
-  "function acceptGroupInvitation()",
-  "function declineGroupInvitation()",
-  "function cancelUnactivatedGroup()",
   "function positionOf(address member) view returns (uint256)",
   "function position(uint256 positionId) view returns (address member,uint256 target,uint256 deposited,uint256 emergencyBalance,uint256 lockedBalance,uint256 lockedShares,uint16 emergencyBps,bool lockedWithdrawn)",
   "function positionValue(uint256 positionId) view returns (uint256)",
@@ -169,12 +167,18 @@ function readProviderFor(signer: Signer): Provider {
   return signer.provider;
 }
 
-function publicReadProvider(): Provider {
+function publicReadProvider(preferredProvider?: Provider | null): Provider {
+  // Once a wallet is connected, prefer its already-confirmed Amoy provider.
+  // This avoids making the discovery catalogue depend on a separate public RPC
+  // when the wallet can read the same authoritative contracts directly.
+  if (preferredProvider) return preferredProvider;
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
+    import.meta.env.VITE_HARDHAT_RPC_URL ??
     "https://polygon-amoy.gateway.tenderly.co";
   if (publicRpcUrl) {
-    return new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
+    const configuredChainId = BigInt(import.meta.env.VITE_EVM_CHAIN_ID ?? "0x13882");
+    return new JsonRpcProvider(publicRpcUrl, Number(configuredChainId), {
       staticNetwork: true,
       batchMaxCount: 3,
     });
@@ -194,6 +198,9 @@ export interface CreateVaultInput {
   emergencyPercent: number;
   additionalMembers: string[];
   maxParticipants?: number;
+  groupName?: string;
+  groupVisibility?: "public" | "invite-only";
+  enrollmentDeadline?: string;
 }
 
 export interface VaultSnapshot {
@@ -220,6 +227,12 @@ export interface VaultSnapshot {
   maturity: Date;
   isGroup: boolean;
   groupCreator: string;
+  groupName: string;
+  publicJoining: boolean;
+  openEnrollment: boolean;
+  maxMemberCount: number;
+  enrollmentDeadline: Date | null;
+  circleState: "open" | "ready" | "active" | "matured" | "completed";
   groupLifecycle:
     | "not-applicable"
     | "pending"
@@ -335,18 +348,20 @@ export interface VaultSummary {
 export interface PublicGroupSummary {
   address: string;
   creator: string;
+  groupName: string;
+  enrollmentDeadline: Date;
   maturity: Date;
   memberCount: number;
   acceptedMemberCount: number;
   maxMemberCount: number;
   publicJoining: boolean;
   joiningOpen: boolean;
-  memberTarget: string;
+  creatorTarget: string;
   progressPercent: number;
   totalDeposited: string;
   totalTarget: string;
   vaultMode: "safe" | "earn";
-  lifecycle: "pending" | "active" | "declined" | "expired" | "cancelled";
+  lifecycle: "open" | "ready" | "active" | "matured" | "completed";
   members: Array<{
     address: string;
     positionId: bigint;
@@ -580,6 +595,19 @@ function groupLifecycleLabel(
   return "not-applicable";
 }
 
+function derivedCircleState(input: {
+  lifecycle: bigint;
+  acceptedMembers: number;
+  maturity: bigint;
+  allLockedWithdrawn?: boolean;
+}): VaultSnapshot["circleState"] {
+  if (BigInt(Math.floor(Date.now() / 1_000)) >= input.maturity)
+    return input.allLockedWithdrawn ? "completed" : "matured";
+  if (input.lifecycle === 2n) return "active";
+  if (input.acceptedMembers >= 4) return "ready";
+  return "open";
+}
+
 function groupExitStatusLabel(
   status: bigint,
   expiresAt: Date,
@@ -688,12 +716,22 @@ export async function createVault(
     const maxParticipants = input.maxParticipants ?? 4;
     if (!Number.isInteger(maxParticipants) || maxParticipants < 4 || maxParticipants > 50)
       throw new Error("Public group capacity must be between 4 and 50 participants.");
+    const groupName = input.groupName?.trim() ?? "";
+    if (!groupName) throw new Error("Group name is required.");
+    const enrollmentDeadline = BigInt(
+      Math.floor(new Date(input.enrollmentDeadline ?? "").getTime() / 1_000)
+    );
+    if (enrollmentDeadline <= BigInt(Math.floor(Date.now() / 1_000)) || enrollmentDeadline >= maturity)
+      throw new Error("Enrollment must close after today and before maturity.");
     transaction = await factory.getFunction("createPublicGroupVault")(
+      groupName,
       target,
       emergencyBps,
       maxParticipants,
+      enrollmentDeadline,
       maturity,
       yieldMode,
+      input.groupVisibility !== "invite-only",
       overrides
     );
   }
@@ -711,12 +749,35 @@ export async function createVault(
 
 export async function joinPublicGroup(
   signer: Signer,
+  vaultAddress: string,
+  targetValue: string,
+  emergencyPercent: number
+): Promise<bigint> {
+  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const transaction = await vault.getFunction("joinPublicGroup")(
+    amount(targetValue),
+    emergencyPercent * 100,
+    {
+    ...(await transactionOverrides(signer)),
+    gasLimit: 450_000n,
+    }
+  );
+  const receipt = await confirmTransaction(signer, transaction.hash);
+  for (const log of receipt.logs) {
+    const event = parsedEvent(log, vaultAbi);
+    if (event?.name === "PublicGroupJoined") return BigInt(event.args.positionId);
+  }
+  throw new Error("The join transaction confirmed, but the new position could not be identified.");
+}
+
+export async function activateGroup(
+  signer: Signer,
   vaultAddress: string
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
-  const transaction = await vault.getFunction("joinPublicGroup")({
+  const transaction = await vault.getFunction("activateGroup")({
     ...(await transactionOverrides(signer)),
-    gasLimit: 450_000n,
+    gasLimit: 300_000n,
   });
   await confirmTransaction(signer, transaction.hash);
 }
@@ -730,6 +791,12 @@ export async function loadVault(
   const vaultAddress = getAddress(address);
   const readProvider = readProviderFor(signer);
   const vault = new Contract(vaultAddress, vaultAbi, readProvider);
+  const factory = new Contract(factoryAddress(), factoryAbi, readProvider);
+  const protocolVersion = String(
+    await factory.getFunction("PROTOCOL_VERSION")()
+  );
+  const supportsPublicJoining = protocolVersion !== "lockedin-circle/0.5.0";
+  const supportsEnrollment = protocolVersion === "lockedin-circle/0.7.0";
   const memberCount: bigint = await vault.getFunction("memberCount")();
   let positionId = requestedPositionId;
   if (positionId === undefined) {
@@ -762,10 +829,13 @@ export async function loadVault(
     accruedYield,
     liquidityRate,
     groupCreator,
-    invitationExpiresAt,
     groupLifecycle,
-    connectedInvitationAccepted,
-    connectedInvitationDeclined,
+    groupName,
+    acceptedMemberCount,
+    publicJoining,
+    openEnrollment,
+    maxMemberCount,
+    enrollmentDeadline,
   ] = await Promise.all([
     vault.getFunction("position")(positionId),
     vault.getFunction("positionOwner")(positionId),
@@ -779,10 +849,17 @@ export async function loadVault(
     vault.getFunction("accruedYield")(positionId),
     vault.getFunction("currentLiquidityRate")(),
     vault.getFunction("groupCreator")(),
-    vault.getFunction("invitationExpiresAt")(),
     vault.getFunction("groupLifecycle")(),
-    vault.getFunction("groupInvitationAccepted")(signerAddress),
-    vault.getFunction("groupInvitationDeclined")(signerAddress),
+    supportsEnrollment ? factory.getFunction("groupName")(vaultAddress) : "",
+    vault.getFunction("acceptedMemberCount")(),
+    supportsPublicJoining ? vault.getFunction("publicJoining")() : false,
+    supportsEnrollment
+      ? vault.getFunction("openEnrollment")()
+      : supportsPublicJoining
+        ? vault.getFunction("publicJoinClosed")().then((closed: boolean) => !closed)
+        : false,
+    supportsPublicJoining ? vault.getFunction("maxMemberCount")() : memberCount,
+    supportsEnrollment ? vault.getFunction("enrollmentDeadline")() : 0n,
   ]);
   const members: VaultMemberSnapshot[] = await Promise.all(
     Array.from({ length: Number(memberCount) }, async (_, index) => {
@@ -794,8 +871,6 @@ export async function loadVault(
         status,
         activePrincipal,
         approvalEligible,
-        invitationAccepted,
-        invitationDeclined,
       ] =
         await Promise.all([
           vault.getFunction("positionOwner")(index),
@@ -804,8 +879,6 @@ export async function loadVault(
           vault.getFunction("memberStatus")(index),
           vault.getFunction("activePrincipalSavings")(index),
           vault.getFunction("groupExitApprovalEligible")(index),
-          vault.getFunction("groupInvitationAccepted")(memberPosition.member),
-          vault.getFunction("groupInvitationDeclined")(memberPosition.member),
         ]);
       const memberValue: bigint = await vault.getFunction("positionValue")(
         index
@@ -828,8 +901,8 @@ export async function loadVault(
             ? 0
             : (Number(activePrincipal) / Number(memberPosition.target)) * 100,
         approvalEligible,
-        invitationAccepted,
-        invitationDeclined,
+        invitationAccepted: true,
+        invitationDeclined: false,
         goalComplete: memberComplete,
         rewardDisqualified,
         lockedWithdrawn: memberPosition.lockedWithdrawn,
@@ -894,13 +967,23 @@ export async function loadVault(
     maturity: new Date(Number(maturity) * 1_000),
     isGroup,
     groupCreator: getAddress(groupCreator),
+    groupName: String(groupName),
+    publicJoining: Boolean(publicJoining),
+    openEnrollment: Boolean(openEnrollment),
+    maxMemberCount: Number(maxMemberCount),
+    enrollmentDeadline: Number(enrollmentDeadline) === 0
+      ? null
+      : new Date(Number(enrollmentDeadline) * 1_000),
+    circleState: derivedCircleState({
+      lifecycle: BigInt(groupLifecycle),
+      acceptedMembers: Number(acceptedMemberCount),
+      maturity: BigInt(maturity),
+      allLockedWithdrawn: members.every((member) => member.lockedWithdrawn || Number(member.lockedBalance) === 0),
+    }),
     groupLifecycle: groupLifecycleLabel(groupLifecycle),
-    invitationExpiresAt:
-      Number(invitationExpiresAt) === 0
-        ? null
-        : new Date(Number(invitationExpiresAt) * 1_000),
-    connectedInvitationAccepted,
-    connectedInvitationDeclined,
+    invitationExpiresAt: null,
+    connectedInvitationAccepted: true,
+    connectedInvitationDeclined: false,
     members,
   };
 }
@@ -1009,19 +1092,20 @@ export async function loadVaultsForSigner(
 
 /**
  * Reads group circles from the factory without asking for wallet access.
- * Protocol 0.6 public groups can be joined permissionlessly until capacity or
- * the first deposit closes enrollment. Older invitation groups remain visible
- * and are explicitly reported as non-public.
+ * Protocol 0.7 circles expose immutable shared metadata and keep enrollment
+ * separate from deposits. Older deployments are not presented as joinable.
  */
-export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
-  const provider = publicReadProvider();
+export async function loadPublicGroups(
+  preferredProvider?: Provider | null
+): Promise<PublicGroupSummary[]> {
+  const provider = publicReadProvider(preferredProvider);
   const factory = new Contract(factoryAddress(), factoryAbi, provider);
   const [countValue, protocolVersion] = await Promise.all([
     factory.getFunction("vaultCount")(),
     factory.getFunction("PROTOCOL_VERSION")(),
   ]);
   const count = BigInt(countValue);
-  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.6.0";
+  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.7.0";
   // Factory address reads are independent. Resolve them concurrently so the
   // discovery screen does not wait on one RPC round trip per historic vault.
   const addresses = await Promise.all(
@@ -1035,7 +1119,7 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
       const vault = new Contract(address, vaultAbi, provider);
       const isGroup = Boolean(await vault.getFunction("isGroup")());
       if (!isGroup) return null;
-      const [creator, maturity, mode, memberCount, acceptedCount, lifecycle, publicJoining, publicJoinClosed, maxMemberCount] =
+      const [creator, maturity, mode, memberCount, acceptedCount, lifecycle, publicJoining, publicJoinClosed, maxMemberCount, groupName, enrollmentDeadline] =
         await Promise.all([
           vault.getFunction("groupCreator")(),
           vault.getFunction("maturity")(),
@@ -1046,6 +1130,8 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
           supportsPublicJoining ? vault.getFunction("publicJoining")() : false,
           supportsPublicJoining ? vault.getFunction("publicJoinClosed")() : true,
           supportsPublicJoining ? vault.getFunction("maxMemberCount")() : 0n,
+          supportsPublicJoining ? factory.getFunction("groupName")(address) : "",
+          supportsPublicJoining ? vault.getFunction("enrollmentDeadline")() : 0n,
         ]);
       const members = await Promise.all(
         Array.from({ length: Number(memberCount) }, async (_, index) => {
@@ -1057,6 +1143,7 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
             positionId: BigInt(index),
             target,
             deposited,
+            lockedWithdrawn: Boolean(stored.lockedWithdrawn),
             progressPercent:
               target === 0n
                 ? 0
@@ -1069,10 +1156,17 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
         (sum, member) => sum + member.deposited,
         0n
       );
-      const groupLifecycle = groupLifecycleLabel(BigInt(lifecycle));
+      const circleState = derivedCircleState({
+        lifecycle: BigInt(lifecycle),
+        acceptedMembers: Number(acceptedCount),
+        maturity: BigInt(maturity),
+        allLockedWithdrawn: members.every((member) => member.lockedWithdrawn || member.deposited === 0n),
+      });
       return {
         address,
         creator: getAddress(creator),
+        groupName: String(groupName),
+        enrollmentDeadline: new Date(Number(enrollmentDeadline) * 1_000),
         maturity: new Date(Number(maturity) * 1_000),
         memberCount: Number(memberCount),
         acceptedMemberCount: Number(acceptedCount),
@@ -1083,9 +1177,10 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
         joiningOpen:
           publicJoining &&
           !publicJoinClosed &&
+          (circleState === "open" || circleState === "ready") &&
           Number(memberCount) < Number(maxMemberCount) &&
-          Date.now() < Number(maturity) * 1_000,
-        memberTarget: formatUnits(
+          Date.now() < Number(enrollmentDeadline) * 1_000,
+        creatorTarget: formatUnits(
           members[0]?.target ?? 0n,
           USDT_DECIMALS
         ),
@@ -1096,8 +1191,7 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
         totalDeposited: formatUnits(totalDeposited, USDT_DECIMALS),
         totalTarget: formatUnits(totalTarget, USDT_DECIMALS),
         vaultMode: Number(mode) === 1 ? "earn" : "safe",
-        lifecycle:
-          groupLifecycle === "not-applicable" ? "pending" : groupLifecycle,
+        lifecycle: circleState,
         members: members.map((member) => ({
           address: member.address,
           positionId: member.positionId,
@@ -1107,6 +1201,8 @@ export async function loadPublicGroups(): Promise<PublicGroupSummary[]> {
     })
   );
   return groups
+    // Discovery includes public and invite-only circles. Visibility controls
+    // enrollment permission; it should not hide the circle itself.
     .filter((group): group is PublicGroupSummary => group !== null)
     .sort((left, right) => right.maturity.getTime() - left.maturity.getTime());
 }
@@ -2073,7 +2169,11 @@ export function describeContractError(error: unknown): string {
       "reason" in error && typeof error.reason === "string"
         ? error.reason
         : null;
-    return reason ?? error.message.replace(/^execution reverted:\s*/i, "");
+    const message = reason ?? error.message.replace(/^execution reverted:\s*/i, "");
+    if (/require\(false\)|missing revert data|could not decode result data|BAD_DATA/i.test(message)) {
+      return "This savings vault could not be read on the selected network. Refresh your wallet connection and confirm that the app is using the latest deployment.";
+    }
+    return message;
   }
   return "The contract transaction failed.";
 }

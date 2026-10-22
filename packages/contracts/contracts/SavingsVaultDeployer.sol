@@ -37,7 +37,9 @@ contract SavingsVaultDeployer {
         bool publicJoining,
         uint32 maxMemberCount,
         uint256 publicMemberTarget,
-        uint16 publicEmergencyBps
+        uint16 publicEmergencyBps,
+        bool openEnrollment,
+        uint64 enrollmentDeadline
     ) external returns (address vault) {
         if (msg.sender != factory) revert FactoryOnly();
         vault = address(
@@ -58,7 +60,9 @@ contract SavingsVaultDeployer {
                 publicJoining,
                 maxMemberCount,
                 publicMemberTarget,
-                publicEmergencyBps
+                publicEmergencyBps,
+                openEnrollment,
+                enrollmentDeadline
             )
         );
     }

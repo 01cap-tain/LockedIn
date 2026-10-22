@@ -66,9 +66,6 @@ describe('Deterministic protocol-revenue epochs', function () {
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n),
     )
-    for (let index = 1; index < members.length; index += 1) {
-      await vault.connect(members[index]).acceptGroupInvitation()
-    }
     for (let index = 0; index < members.length; index += 1) {
       await token.mint(await members[index].getAddress(), targets[index])
       await token.connect(members[index]).approve(await vault.getAddress(), targets[index])
@@ -197,9 +194,6 @@ describe('Deterministic protocol-revenue epochs', function () {
         'SavingsVault',
         await strict.factory.vaultAt(0),
       )
-      for (let index = 1; index < members.length; index += 1) {
-        await vault.connect(members[index]).acceptGroupInvitation()
-      }
       for (let index = 0; index < members.length; index += 1) {
         await token.mint(await members[index].getAddress(), 10n * UNIT)
         await token.connect(members[index]).approve(await vault.getAddress(), 10n * UNIT)

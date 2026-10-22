@@ -26,7 +26,6 @@ contract SavingsVault is ReentrancyGuard {
     uint16 public constant MAX_EMERGENCY_BPS = 1_500;
     uint64 public constant GROUP_EXIT_REQUEST_LIFETIME = 24 hours;
     uint64 public constant GROUP_EXIT_AUTHORIZATION_LIFETIME = 24 hours;
-    uint64 public constant GROUP_INVITATION_LIFETIME = 72 hours;
     uint16 public constant MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS = 2_500;
     uint256 public constant MIN_GROUP_SIZE = 4;
 
@@ -73,9 +72,6 @@ contract SavingsVault is ReentrancyGuard {
     error GroupOnly();
     error GroupNotActive();
     error InvitationUnavailable();
-    error InvitationExpired();
-    error InvitationAlreadyAnswered();
-    error CreatorOnly();
     error GroupEarlyUnlockDisabled();
     error GroupExitUnavailable();
     error GroupExitUnresolved();
@@ -98,14 +94,15 @@ contract SavingsVault is ReentrancyGuard {
     uint64 public immutable createdAt;
     bool public immutable isGroup;
     address public immutable groupCreator;
-    uint64 public immutable invitationExpiresAt;
     address public immutable earlyExitMarket;
     VaultMode public immutable mode;
     IYieldAdapter public immutable yieldAdapter;
     SafetyController public immutable safetyController;
     address public immutable factory;
     bool public immutable publicJoining;
+    bool public immutable openEnrollment;
     uint32 public immutable maxMemberCount;
+    uint64 public immutable enrollmentDeadline;
     bool public publicJoinClosed;
     GroupLifecycle public groupLifecycle;
     uint32 public acceptedMemberCount;
@@ -122,8 +119,7 @@ contract SavingsVault is ReentrancyGuard {
     mapping(uint256 positionId => uint256 requestIdPlusOne) public currentGroupExitRequest;
     mapping(uint256 requestId => mapping(address member => bool approved)) public groupExitApproval;
     mapping(uint256 requestId => mapping(address member => bool required)) public groupExitRequiredApprover;
-    mapping(address member => bool accepted) public groupInvitationAccepted;
-    mapping(address member => bool declined) public groupInvitationDeclined;
+    mapping(address member => bool invited) public groupInvitation;
     uint256 public nextGroupExitRequestId;
     uint256 public totalEmergencyLiability;
     uint256 public totalLockedLiability;
@@ -169,14 +165,10 @@ contract SavingsVault is ReentrancyGuard {
         MemberStatus previousStatus,
         MemberStatus newStatus
     );
-    event GroupInvitationCreated(address indexed member, uint64 expiresAt);
-    event GroupInvitationAccepted(address indexed member, uint32 acceptedCount, uint32 requiredCount);
-    event GroupInvitationDeclined(address indexed member);
     event GroupActivated(uint64 activatedAt);
-    event GroupInvitationExpired(uint64 expiredAt);
-    event UnactivatedGroupCancelled(address indexed creator);
     event PublicGroupJoined(address indexed member, uint256 indexed positionId, uint32 memberCount);
     event PublicGroupJoiningClosed(uint32 finalMemberCount);
+    event GroupMemberInvited(address indexed member);
 
     constructor(
         IERC20 asset_,
@@ -195,7 +187,9 @@ contract SavingsVault is ReentrancyGuard {
         bool publicJoining_,
         uint32 maxMemberCount_,
         uint256 publicMemberTarget_,
-        uint16 publicEmergencyBps_
+        uint16 publicEmergencyBps_,
+        bool openEnrollment_,
+        uint64 enrollmentDeadline_
     ) {
         uint256 count = members_.length;
         if (
@@ -203,10 +197,12 @@ contract SavingsVault is ReentrancyGuard {
             groupCreator_ == address(0) || address(safetyController_) == address(0) || factory_ == address(0) ||
             maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
-            (isGroup_ && !publicJoining_ && (count < MIN_GROUP_SIZE || maturity_ <= block.timestamp + GROUP_INVITATION_LIFETIME)) ||
-            (publicJoining_ && (!isGroup_ || count != 1 || maxMemberCount_ < MIN_GROUP_SIZE ||
-                maxMemberCount_ < count || publicMemberTarget_ != targets_[0] ||
-                publicEmergencyBps_ != emergencyBps_[0])) ||
+            (isGroup_ && !openEnrollment_ && count < MIN_GROUP_SIZE) ||
+            (openEnrollment_ && (!isGroup_ || count != 1 || maxMemberCount_ < MIN_GROUP_SIZE ||
+                maxMemberCount_ < count ||
+                enrollmentDeadline_ <= block.timestamp || enrollmentDeadline_ >= maturity_ ||
+                publicMemberTarget_ != targets_[0] || publicEmergencyBps_ != emergencyBps_[0])) ||
+            (publicJoining_ && !openEnrollment_) ||
             (mode_ == VaultMode.Safe && address(yieldAdapter_) != address(0)) ||
             (mode_ == VaultMode.Earn && address(yieldAdapter_) == address(0))
         ) revert InvalidConfiguration();
@@ -217,16 +213,15 @@ contract SavingsVault is ReentrancyGuard {
         createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
         groupCreator = groupCreator_;
-        invitationExpiresAt = isGroup_
-            ? uint64(block.timestamp) + GROUP_INVITATION_LIFETIME
-            : 0;
         earlyExitMarket = earlyExitMarket_;
         safetyController = safetyController_;
         mode = mode_;
         yieldAdapter = yieldAdapter_;
         factory = factory_;
         publicJoining = publicJoining_;
-        maxMemberCount = publicJoining_ ? maxMemberCount_ : uint32(count);
+        openEnrollment = openEnrollment_;
+        maxMemberCount = openEnrollment_ ? maxMemberCount_ : uint32(count);
+        enrollmentDeadline = openEnrollment_ ? enrollmentDeadline_ : 0;
 
         bool creatorIncluded;
         for (uint256 i; i < count; ++i) {
@@ -251,23 +246,15 @@ contract SavingsVault is ReentrancyGuard {
             if (members_[i] == groupCreator_) creatorIncluded = true;
         }
 
-        if (isGroup_ && publicJoining_) {
-            if (!creatorIncluded) revert InvalidConfiguration();
-            groupLifecycle = GroupLifecycle.Active;
-            groupInvitationAccepted[groupCreator_] = true;
-            acceptedMemberCount = 1;
-            emit GroupActivated(uint64(block.timestamp));
-        } else if (isGroup_) {
+        if (isGroup_ && openEnrollment_) {
             if (!creatorIncluded) revert InvalidConfiguration();
             groupLifecycle = GroupLifecycle.Pending;
-            groupInvitationAccepted[groupCreator_] = true;
             acceptedMemberCount = 1;
-            emit GroupInvitationAccepted(groupCreator_, 1, uint32(count));
-            for (uint256 i; i < count; ++i) {
-                if (members_[i] != groupCreator_) {
-                    emit GroupInvitationCreated(members_[i], invitationExpiresAt);
-                }
-            }
+        } else if (isGroup_) {
+            if (!creatorIncluded) revert InvalidConfiguration();
+            groupLifecycle = GroupLifecycle.Active;
+            acceptedMemberCount = uint32(count);
+            emit GroupActivated(uint64(block.timestamp));
         } else {
             groupLifecycle = GroupLifecycle.NotApplicable;
         }
@@ -291,99 +278,58 @@ contract SavingsVault is ReentrancyGuard {
         return value - 1;
     }
 
-    /// @notice Joins a bounded public circle before savings activity begins.
-    /// @dev Membership freezes on the first deposit so reward and exit sets cannot change mid-plan.
-    function joinPublicGroup() external {
+    /// @notice Joins an open circle with personal financial terms selected by the joiner.
+    /// @dev Shared circle rules stay immutable while target and emergency allocation are position-specific.
+    function joinPublicGroup(uint256 target, uint16 emergencyBps) external {
         if (
-            !publicJoining || publicJoinClosed || groupLifecycle != GroupLifecycle.Active ||
-            block.timestamp >= maturity || _positions.length >= maxMemberCount ||
+            !openEnrollment || (!publicJoining && !groupInvitation[msg.sender]) ||
+            publicJoinClosed || groupLifecycle != GroupLifecycle.Pending ||
+            block.timestamp >= enrollmentDeadline || _positions.length >= maxMemberCount ||
+            target == 0 || emergencyBps < MIN_EMERGENCY_BPS || emergencyBps > MAX_EMERGENCY_BPS ||
             _memberPosition[msg.sender] != 0
         ) revert PublicJoiningUnavailable();
         uint256 positionId = _positions.length;
         _positions.push(Position({
             member: msg.sender,
-            target: _positions[0].target,
+            target: target,
             deposited: 0,
             emergencyBalance: 0,
             lockedBalance: 0,
             lockedShares: 0,
-            emergencyBps: _positions[0].emergencyBps,
+            emergencyBps: emergencyBps,
             lockedWithdrawn: false
         }));
         _memberPosition[msg.sender] = positionId + 1;
         positionOwner[positionId] = msg.sender;
-        groupInvitationAccepted[msg.sender] = true;
         ++acceptedMemberCount;
         IPublicGroupFactory(factory).recordPublicGroupJoin(msg.sender);
         emit PublicGroupJoined(msg.sender, positionId, uint32(_positions.length));
     }
 
-    /// @notice Accepts the complete immutable group terms presented by this vault.
-    function acceptGroupInvitation() external {
-        if (!isGroup) revert GroupOnly();
-        if (groupLifecycle != GroupLifecycle.Pending) revert InvitationUnavailable();
-        if (block.timestamp >= invitationExpiresAt) revert InvitationExpired();
-        _positionIdForMember(msg.sender);
-        if (groupInvitationAccepted[msg.sender] || groupInvitationDeclined[msg.sender]) {
-            revert InvitationAlreadyAnswered();
-        }
-
-        // Earlier acceptances may be recorded while paused, but the final
-        // acceptance cannot activate a new savings group until unpaused.
-        if (acceptedMemberCount + 1 == _positions.length) {
-            safetyController.requireNotPaused();
-        }
-
-        groupInvitationAccepted[msg.sender] = true;
-        ++acceptedMemberCount;
-        emit GroupInvitationAccepted(msg.sender, acceptedMemberCount, uint32(_positions.length));
-        if (acceptedMemberCount == _positions.length) {
-            groupLifecycle = GroupLifecycle.Active;
-            emit GroupActivated(uint64(block.timestamp));
-        }
-    }
-
-    /// @notice Permanently prevents activation when an invited wallet rejects the terms.
-    function declineGroupInvitation() external {
-        if (!isGroup) revert GroupOnly();
-        if (groupLifecycle != GroupLifecycle.Pending) revert InvitationUnavailable();
-        if (block.timestamp >= invitationExpiresAt) revert InvitationExpired();
-        _positionIdForMember(msg.sender);
-        if (msg.sender == groupCreator || groupInvitationAccepted[msg.sender]) {
-            revert InvitationAlreadyAnswered();
-        }
-        groupInvitationDeclined[msg.sender] = true;
-        groupLifecycle = GroupLifecycle.Declined;
-        emit GroupInvitationDeclined(msg.sender);
-    }
-
-    /// @notice Materializes an unanswered invitation's expiry for indexers.
-    function expireGroupInvitation() external {
+    /// @notice Invites an address to a private circle while membership remains open.
+    function inviteGroupMember(address member) external {
         if (
-            !isGroup || groupLifecycle != GroupLifecycle.Pending ||
-            block.timestamp < invitationExpiresAt
+            msg.sender != groupCreator || !openEnrollment || publicJoining || publicJoinClosed ||
+            groupLifecycle != GroupLifecycle.Pending || member == address(0) ||
+            _memberPosition[member] != 0 || block.timestamp >= enrollmentDeadline
         ) revert InvitationUnavailable();
-        groupLifecycle = GroupLifecycle.Expired;
-        emit GroupInvitationExpired(uint64(block.timestamp));
+        groupInvitation[member] = true;
+        emit GroupMemberInvited(member);
     }
 
-    /// @notice Lets only the creator close a declined or expired, never-funded group.
-    function cancelUnactivatedGroup() external {
-        if (msg.sender != groupCreator) revert CreatorOnly();
-        if (!isGroup) revert GroupOnly();
+    /// @notice Freezes membership and enables deposits once four or more members have joined.
+    /// @dev Any joined member can activate; the creator receives no post-activation financial authority.
+    function activateGroup() external {
         if (
-            groupLifecycle == GroupLifecycle.Pending &&
-            block.timestamp >= invitationExpiresAt
-        ) {
-            groupLifecycle = GroupLifecycle.Expired;
-            emit GroupInvitationExpired(uint64(block.timestamp));
-        }
-        if (
-            groupLifecycle != GroupLifecycle.Declined &&
-            groupLifecycle != GroupLifecycle.Expired
-        ) revert InvitationUnavailable();
-        groupLifecycle = GroupLifecycle.Cancelled;
-        emit UnactivatedGroupCancelled(msg.sender);
+            !openEnrollment || publicJoinClosed || groupLifecycle != GroupLifecycle.Pending ||
+            _memberPosition[msg.sender] == 0 || acceptedMemberCount < MIN_GROUP_SIZE ||
+            block.timestamp >= maturity
+        ) revert GroupNotActive();
+        safetyController.requireNotPaused();
+        publicJoinClosed = true;
+        groupLifecycle = GroupLifecycle.Active;
+        emit PublicGroupJoiningClosed(uint32(_positions.length));
+        emit GroupActivated(uint64(block.timestamp));
     }
 
     function groupIsActive() public view returns (bool) {
@@ -635,11 +581,6 @@ contract SavingsVault is ReentrancyGuard {
         if (IEarlyExitMarketStatus(earlyExitMarket).isPositionListed(address(this), positionId)) {
             revert PositionListed();
         }
-        if (publicJoining && !publicJoinClosed) {
-            publicJoinClosed = true;
-            emit PublicGroupJoiningClosed(uint32(_positions.length));
-        }
-
         // The shared controller enforces position, vault and protocol caps from
         // net outstanding principal. Any later revert rolls this reservation back.
         safetyController.recordDeposit(activePrincipalSavings(positionId), amount);

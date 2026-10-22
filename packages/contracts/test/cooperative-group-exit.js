@@ -56,9 +56,6 @@ describe('Cooperative group exits', function () {
       'SavingsVault',
       await selectedFactory.vaultAt((await selectedFactory.vaultCount()) - 1n),
     )
-    for (let index = 1; index < selectedMembers.length; index += 1) {
-      await vault.connect(selectedMembers[index]).acceptGroupInvitation()
-    }
     return vault
   }
 

@@ -78,9 +78,6 @@ describe('LockedIn Circle Phase 2B', function () {
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n)
     )
-    for (let index = 1; index < groupSigners.length; index += 1) {
-      await vault.connect(groupSigners[index]).acceptGroupInvitation()
-    }
     return vault
   }
 

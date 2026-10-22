@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculatePlanProjection, calculateSavingsPace } from "./vault-plan";
+import { calculatePlanProjection, calculateSavingsPace, estimatePlanMaturity } from "./vault-plan";
 
 describe("vault planning projections", () => {
   it("warns when a daily plan cannot reach its target", () => {
@@ -76,5 +76,28 @@ describe("vault planning projections", () => {
     });
     expect(pace.status).toBe("completed");
     expect(pace.nextSuggestedContribution).toBe(0);
+  });
+
+  it("estimates maturity from a weekly contribution habit", () => {
+    const maturity = estimatePlanMaturity({
+      target: 100,
+      contributionAmount: 20,
+      frequency: "weekly",
+      preferredDays: [5],
+      startDate: "2027-01-01",
+    });
+    expect(maturity?.getFullYear()).toBe(2027);
+    expect(maturity?.getMonth()).toBe(0);
+    expect(maturity?.getDate()).toBe(29);
+  });
+
+  it("cannot estimate maturity without a contribution amount", () => {
+    expect(estimatePlanMaturity({
+      target: 100,
+      contributionAmount: null,
+      frequency: "monthly",
+      preferredDays: [],
+      startDate: "2027-01-01",
+    })).toBeNull();
   });
 });

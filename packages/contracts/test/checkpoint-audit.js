@@ -130,9 +130,6 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       0,
     )
     const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
-    for (let index = 1; index < groupMembers.length; index += 1) {
-      await vault.connect(groupMembers[index]).acceptGroupInvitation()
-    }
     for (const [index, member] of groupMembers.entries()) {
       await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
       await vault.connect(member).deposit(index, 100n * UNIT)

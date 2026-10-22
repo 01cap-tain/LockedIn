@@ -46,7 +46,7 @@ function contextFor(props: NimSwapFlowProps) {
  */
 export function NimSwapFlow(props: NimSwapFlowProps) {
   const context = useMemo(() => contextFor(props), [props.kind, props.nimiqAddress, props.polygonAddress, props.nimiqNetwork, props.polygonNetwork]);
-  const [amount, setAmount] = useState("10");
+  const [amount, setAmount] = useState("");
   const [clock, setClock] = useState(Date.now());
   const [state, setState] = useState<SwapFlowState>(() => {
     const initial = newSwapFlow(props.flowKey, props.kind, context.sourceAddress, context.destinationAddress, context.sourceNetwork, context.destinationNetwork);
@@ -208,7 +208,10 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
       {state.stage === "IDLE" && !contractFirst && props.kind === "SAVE_WITH_NIM" && (
         <label>
           <span>NIM amount</span>
-          <input aria-invalid={Boolean(nimFundingError)} value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" />
+          <input aria-invalid={Boolean(nimFundingError)} value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="Example: 20" />
+          <div className="quick-amounts" aria-label="Suggested NIM amounts">
+            {[10, 20, 50].map((suggestion) => <button aria-pressed={Number(amount) === suggestion} className={Number(amount) === suggestion ? "selected" : ""} key={suggestion} onClick={() => setAmount(String(suggestion))} type="button">{suggestion} NIM</button>)}
+          </div>
           {nimFundingError && <small className="field-error" role="alert">{nimFundingError}</small>}
         </label>
       )}

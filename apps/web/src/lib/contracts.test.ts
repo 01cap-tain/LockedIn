@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assertDeploymentMatches } from "./contracts";
+import { assertDeploymentMatches, describeContractError } from "./contracts";
 
 const actual = {
   protocolVersion: "lockedin-circle/0.5.0",
@@ -28,5 +28,18 @@ describe("deployment manifest verification", () => {
     expect(() =>
       assertDeploymentMatches(actual, { ...actual, [field]: value })
     ).toThrow(/Deployment mismatch/);
+  });
+});
+
+describe("contract error copy", () => {
+  it.each([
+    "execution reverted: require(false)",
+    "missing revert data",
+    "could not decode result data",
+    "code=BAD_DATA",
+  ])("turns low-level read failures into a recovery message", (message) => {
+    expect(describeContractError(new Error(message))).toMatch(
+      /could not be read on the selected network/i
+    );
   });
 });

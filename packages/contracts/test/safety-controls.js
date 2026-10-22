@@ -75,9 +75,6 @@ describe('Protocol safety controls and exposure caps', function () {
       'SavingsVault',
       await factory.vaultAt((await factory.vaultCount()) - 1n),
     )
-    for (let index = 1; index < members.length; index += 1) {
-      await vault.connect(members[index]).acceptGroupInvitation()
-    }
     return { vault, members }
   }
 
@@ -124,25 +121,28 @@ describe('Protocol safety controls and exposure caps', function () {
 
   it('blocks only final group activation while paused and allows cooperative execution', async function () {
     const members = accounts.slice(2, 7)
-    const addresses = await Promise.all(members.map((member) => member.getAddress()))
-    await factory.connect(members[0]).createGroupVault(
-      addresses,
-      addresses.map(() => 20n * UNIT),
-      addresses.map(() => 1_000),
+    const enrollmentDeadline = BigInt(await networkHelpers.time.latest()) + 2n * DAY
+    await factory.connect(members[0]).createPublicGroupVault(
+      'Safety circle',
+      20n * UNIT,
+      1_000,
+      5,
+      enrollmentDeadline,
       maturity,
       0,
+      true,
     )
     const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
-    for (let index = 1; index < members.length - 1; index += 1) {
-      await vault.connect(members[index]).acceptGroupInvitation()
+    for (let index = 1; index < members.length; index += 1) {
+      await vault.connect(members[index]).joinPublicGroup(20n * UNIT, 1_000)
     }
     await safety.connect(safetyCouncil).pause()
-    await expect(vault.connect(members[4]).acceptGroupInvitation())
+    await expect(vault.connect(members[4]).activateGroup())
       .to.be.revertedWithCustomError(safety, 'ProtocolIsPaused')
     await safety.connect(safetyCouncil).scheduleUnpause()
     await networkHelpers.time.increase(100)
     await safety.executeUnpause()
-    await vault.connect(members[4]).acceptGroupInvitation()
+    await vault.connect(members[4]).activateGroup()
 
     for (let index = 0; index < members.length; index += 1) {
       await fund(members[index], await vault.getAddress(), 20n * UNIT)

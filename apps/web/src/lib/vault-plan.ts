@@ -85,6 +85,45 @@ function scheduledDates(
   return dates;
 }
 
+/**
+ * Estimates the first date on which the selected habit can reach the target.
+ * This is planning guidance only; the resulting date is still written to the
+ * vault as its normal immutable maturity when the user confirms creation.
+ */
+export function estimatePlanMaturity(input: {
+  target: number;
+  contributionAmount: number | null;
+  frequency: ContributionFrequency;
+  preferredDays: number[];
+  startDate: string | Date;
+}): Date | null {
+  const target = Math.max(0, input.target);
+  const amount = Math.max(0, input.contributionAmount ?? 0);
+  if (target <= 0 || amount <= 0) return null;
+
+  const periodsNeeded = Math.ceil(target / amount);
+  const start = startOfDay(input.startDate);
+  // Search a generous ten-year planning horizon. This avoids inventing an
+  // arbitrary maturity while still protecting the UI from unbounded loops.
+  const horizon = new Date(start.getFullYear() + 10, start.getMonth(), start.getDate());
+  const dates = scheduledDates(
+    start,
+    horizon,
+    input.frequency,
+    input.preferredDays
+  );
+  const estimated = dates[periodsNeeded - 1];
+  if (!estimated) return null;
+  // Contracts require a future timestamp even when one contribution reaches
+  // the goal. Use tomorrow as the earliest intuitive maturity boundary.
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(12, 0, 0, 0);
+  if (estimated.getTime() < tomorrow.getTime()) return tomorrow;
+  estimated.setHours(12, 0, 0, 0);
+  return estimated;
+}
+
 export function calculatePlanProjection(input: {
   target: number;
   contributionAmount: number | null;
