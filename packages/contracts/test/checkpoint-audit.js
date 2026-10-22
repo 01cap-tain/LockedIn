@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 
@@ -121,15 +121,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
 
   it('revokes reward eligibility on sale while preserving the remaining active group campaign', async function () {
     const groupMembers = [saver, memberTwo, memberThree, memberFour, memberFive]
-    const members = await Promise.all(groupMembers.map((member) => member.getAddress()))
-    await factory.createGroupVault(
-      members,
-      members.map(() => 100n * UNIT),
-      members.map(() => 1_000),
-      maturity,
-      0,
+    const vault = await createActivatedGroup(
+      ethers, factory, groupMembers, groupMembers.map(() => 100n * UNIT),
+      groupMembers.map(() => 1_000), maturity,
     )
-    const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
     for (const [index, member] of groupMembers.entries()) {
       await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
       await vault.connect(member).deposit(index, 100n * UNIT)
@@ -403,10 +398,10 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       ], await riskReserve.getAddress()),
     ).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
 
-    const duplicate = [await saver.getAddress(), await saver.getAddress()]
-    await expect(
-      factory.createGroupVault(duplicate, [UNIT, UNIT], [1_000, 1_000], maturity, 0),
-    ).to.revert(ethers)
+    const now = BigInt(await networkHelpers.time.latest())
+    await expect(factory.createPublicGroupVault(
+      'Too small', UNIT, 1_000, 3, now + 1_000n, maturity, 0, true,
+    )).to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
   })
 
   it('binds immutable deployment authorities and gives none of them principal-withdrawal access', async function () {

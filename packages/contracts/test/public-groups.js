@@ -41,6 +41,28 @@ describe('Open group enrollment with independent positions', function () {
     expect((await vault.position(2)).emergencyBps).to.equal(1_500n)
   })
 
+  it('creates only the creator position and keeps shared rules immutable', async function () {
+    const vault = await createPublicGroup(4)
+    expect(await vault.memberCount()).to.equal(1n)
+    expect(await vault.memberAt(0)).to.equal(await creator.getAddress())
+    expect(await vault.maturity()).to.equal(maturity)
+    expect(await vault.maxMemberCount()).to.equal(4n)
+    expect(await vault.openEnrollment()).to.equal(true)
+    expect(await vault.publicJoining()).to.equal(true)
+    expect(await vault.mode()).to.equal(0n)
+    expect(await factory.groupName(await vault.getAddress())).to.equal('Builders Circle')
+    expect(factory.interface.hasFunction('createGroupVault')).to.equal(false)
+  })
+
+  it('enforces capacity before activation', async function () {
+    const vault = await createPublicGroup(4)
+    for (let index = 0; index < 3; index += 1) {
+      await vault.connect(joiners[index]).joinPublicGroup(100n * UNIT, 1_000)
+    }
+    await expect(vault.connect(joiners[3]).joinPublicGroup(100n * UNIT, 1_000))
+      .to.be.revertedWithCustomError(vault, 'PublicJoiningUnavailable')
+  })
+
   it('cannot activate below four members and permanently freezes membership after activation', async function () {
     const vault = await createPublicGroup()
     await vault.connect(joiners[0]).joinPublicGroup(120n * UNIT, 1_000)

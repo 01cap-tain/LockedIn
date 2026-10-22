@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
@@ -44,19 +44,15 @@ describe('Cooperative group exits', function () {
 
   async function createGroup(count = 5, mode = 0, selectedFactory = factory) {
     const selectedMembers = members.slice(0, count)
-    const addresses = await Promise.all(selectedMembers.map((member) => member.getAddress()))
-    await selectedFactory.connect(selectedMembers[0]).createGroupVault(
-      addresses,
-      addresses.map(() => 100n * UNIT),
-      addresses.map(() => 1_000),
+    return createActivatedGroup(
+      ethers,
+      selectedFactory,
+      selectedMembers,
+      selectedMembers.map(() => 100n * UNIT),
+      selectedMembers.map(() => 1_000),
       maturity,
       mode,
     )
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await selectedFactory.vaultAt((await selectedFactory.vaultCount()) - 1n),
-    )
-    return vault
   }
 
   async function deposit(vault, member, positionId, value = 100n * UNIT) {

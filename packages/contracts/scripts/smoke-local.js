@@ -16,7 +16,6 @@ const deployment = JSON.parse(
 const { ethers } = await network.create('localhost')
 const [creator, memberTwo, memberThree, memberFour, memberFive] = await ethers.getSigners()
 const members = [creator, memberTwo, memberThree, memberFour, memberFive]
-const addresses = await Promise.all(members.map((member) => member.getAddress()))
 const token = await ethers.getContractAt('MockUSDT', deployment.contracts.mockUsdt.address)
 const factory = await ethers.getContractAt(
   'VaultFactory',
@@ -26,22 +25,20 @@ const factory = await ethers.getContractAt(
 const latestBlock = await ethers.provider.getBlock('latest')
 const maturity = BigInt(latestBlock.timestamp) + 30n * 24n * 60n * 60n
 
-await (
-  await factory.createGroupVault(
-    addresses,
-    addresses.map(() => 100n * UNIT),
-    addresses.map(() => 1_000),
-    maturity,
-    0
-  )
-).wait()
+const enrollmentDeadline = BigInt(latestBlock.timestamp) + 7n * 24n * 60n * 60n
+await (await factory.createPublicGroupVault(
+  'Local smoke circle', 100n * UNIT, 1_000, members.length,
+  enrollmentDeadline, maturity, 0, false,
+)).wait()
 const vault = await ethers.getContractAt(
   'SavingsVault',
   await factory.vaultAt((await factory.vaultCount()) - 1n)
 )
 for (const member of members.slice(1)) {
-  await (await vault.connect(member).acceptGroupInvitation()).wait()
+  await (await vault.inviteGroupMember(await member.getAddress())).wait()
+  await (await vault.connect(member).joinPublicGroup(100n * UNIT, 1_000)).wait()
 }
+await (await vault.activateGroup()).wait()
 for (const [index, member] of members.entries()) {
   await (await token.mint(await member.getAddress(), 100n * UNIT)).wait()
   await (await token.connect(member).approve(await vault.getAddress(), 100n * UNIT)).wait()

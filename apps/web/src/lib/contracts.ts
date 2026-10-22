@@ -22,7 +22,6 @@ const factoryAbi = [
   "function deploymentChainId() view returns (uint256)",
   "function asset() view returns (address)",
   "function createPersonalVault(uint256 target,uint64 maturity,uint16 emergencyBps,uint8 mode) returns (address)",
-  "function createGroupVault(address[] members,uint256[] targets,uint16[] emergencyBps,uint64 maturity,uint8 mode) returns (address)",
   "function createPublicGroupVault(string groupName,uint256 target,uint16 emergencyBps,uint32 maxMembers,uint64 enrollmentDeadline,uint64 maturity,uint8 mode,bool publicJoining) returns (address)",
   "function vaultCount() view returns (uint256)",
   "function vaultAt(uint256 index) view returns (address)",
@@ -212,9 +211,9 @@ export function groupCreationUnsupportedReason(
   protocolVersion: string,
   visibility: "public" | "invite-only"
 ): string | null {
-  if (protocolVersion === "lockedin-circle/0.7.0") return null;
+  if (protocolVersion === "lockedin-circle/0.8.0") return null;
   if (visibility === "public") {
-    return `Public circles require protocol 0.7.0; the connected factory is ${protocolVersion}.`;
+    return `Public circles require protocol 0.8.0; the connected factory is ${protocolVersion}.`;
   }
   return `Invite-only creation is blocked on ${protocolVersion}: this factory requires at least four member addresses, targets and emergency allocations at creation. It cannot support invited members choosing their own savings terms later.`;
 }
@@ -820,7 +819,7 @@ export async function loadVault(
     await factory.getFunction("PROTOCOL_VERSION")()
   );
   const supportsPublicJoining = protocolVersion !== "lockedin-circle/0.5.0";
-  const supportsEnrollment = protocolVersion === "lockedin-circle/0.7.0";
+  const supportsEnrollment = protocolVersion === "lockedin-circle/0.8.0";
   const memberCount: bigint = await vault.getFunction("memberCount")();
   let positionId = requestedPositionId;
   if (positionId === undefined) {
@@ -1129,7 +1128,7 @@ export async function loadPublicGroups(
     factory.getFunction("PROTOCOL_VERSION")(),
   ]);
   const count = BigInt(countValue);
-  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.7.0";
+  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.8.0";
   // Factory address reads are independent. Resolve them concurrently so the
   // discovery screen does not wait on one RPC round trip per historic vault.
   const addresses = await Promise.all(

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
 
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
@@ -63,17 +63,9 @@ describe('Protocol safety controls and exposure caps', function () {
 
   async function activeGroup(count = 5) {
     const members = accounts.slice(2, 2 + count)
-    const addresses = await Promise.all(members.map((member) => member.getAddress()))
-    await factory.connect(members[0]).createGroupVault(
-      addresses,
-      addresses.map(() => 100n * UNIT),
-      addresses.map(() => 1_000),
-      maturity,
-      0,
-    )
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await factory.vaultAt((await factory.vaultCount()) - 1n),
+    const vault = await createActivatedGroup(
+      ethers, factory, members, members.map(() => 100n * UNIT),
+      members.map(() => 1_000), maturity,
     )
     return { vault, members }
   }

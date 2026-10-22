@@ -18,12 +18,11 @@ import {SafetyController} from "./SafetyController.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/0.7.0";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/0.8.0";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 
     error InvalidConfiguration();
-    error CreatorNotMember();
     error UnsupportedToken();
     error VaultOnly();
 
@@ -149,27 +148,8 @@ contract VaultFactory {
         vault = _create(false, msg.sender, members, targets, allocations, maturity, mode, false, 1, 0, 0, false, "", 0);
     }
 
-    function createGroupVault(
-        address[] calldata members,
-        uint256[] calldata targets,
-        uint16[] calldata emergencyBps,
-        uint64 maturity,
-        SavingsVault.VaultMode mode
-    ) external returns (address vault) {
-        safetyController.requireNotPaused();
-        uint256 count = members.length;
-        if (count < MIN_GROUP_MEMBERS || count > MAX_GROUP_MEMBERS) {
-            revert InvalidConfiguration();
-        }
-
-        bool creatorIncluded;
-        for (uint256 i; i < count; ++i) {
-            if (members[i] == msg.sender) creatorIncluded = true;
-        }
-        if (!creatorIncluded) revert CreatorNotMember();
-        vault = _create(true, msg.sender, members, targets, emergencyBps, maturity, mode, false, uint32(count), 0, 0, false, "", 0);
-    }
-
+    /// @notice Creates a pending circle with only the creator's position.
+    /// @dev Other members must join later from their own wallets and choose their own terms.
     function createPublicGroupVault(
         string calldata groupName_,
         uint256 target,

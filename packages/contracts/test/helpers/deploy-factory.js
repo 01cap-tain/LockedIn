@@ -53,3 +53,50 @@ export async function deployFactory(
   ])
   return { factory, safetyController, rewardPool, vaultDeployer }
 }
+
+/**
+ * Creates a circle through the production creator-first flow. The creator only
+ * supplies their own terms; every other signer joins from their own wallet and
+ * selects their own target/allocation before a member activates the circle.
+ */
+export async function createActivatedGroup(
+  ethers,
+  factory,
+  signers,
+  targets,
+  emergencyBps,
+  maturity,
+  mode = 0,
+  { publicJoining = false, name = 'Test circle' } = {},
+) {
+  const creator = signers[0]
+  const latest = await ethers.provider.getBlock('latest')
+  const enrollmentDeadline = BigInt(latest.timestamp) +
+    (BigInt(maturity) - BigInt(latest.timestamp)) / 2n
+  await factory.connect(creator).createPublicGroupVault(
+    name,
+    targets[0],
+    emergencyBps[0],
+    signers.length,
+    enrollmentDeadline,
+    maturity,
+    mode,
+    publicJoining,
+  )
+  const vault = await ethers.getContractAt(
+    'SavingsVault',
+    await factory.vaultAt((await factory.vaultCount()) - 1n),
+  )
+  for (let index = 1; index < signers.length; index += 1) {
+    if (!publicJoining) {
+      await vault.connect(creator).inviteGroupMember(await signers[index].getAddress())
+    }
+    if (typeof signers[index].joinGroup === 'function') {
+      await signers[index].joinGroup(vault, targets[index], emergencyBps[index])
+    } else {
+      await vault.connect(signers[index]).joinPublicGroup(targets[index], emergencyBps[index])
+    }
+  }
+  await vault.connect(creator).activateGroup()
+  return vault
+}

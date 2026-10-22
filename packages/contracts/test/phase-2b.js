@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
 import { polygonAaveConfig } from '../scripts/polygon-aave-config.js'
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const RAY = 10n ** 27n
@@ -66,19 +66,10 @@ describe('LockedIn Circle Phase 2B', function () {
 
   async function createGroupVault() {
     const groupSigners = [saver, memberTwo, buyer, outsider]
-    const members = await Promise.all(groupSigners.map((member) => member.getAddress()))
-    await factory.createGroupVault(
-      members,
-      members.map(() => 100n * UNIT),
-      members.map(() => 1_000),
-      maturity,
-      1
+    return createActivatedGroup(
+      ethers, factory, groupSigners, groupSigners.map(() => 100n * UNIT),
+      groupSigners.map(() => 1_000), maturity, 1,
     )
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await factory.vaultAt((await factory.vaultCount()) - 1n)
-    )
-    return vault
   }
 
   async function fundAndApprove(account, spender, amount) {

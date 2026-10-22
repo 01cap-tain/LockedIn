@@ -50,7 +50,7 @@ describe("contract error copy", () => {
 
 describe("group creation compatibility", () => {
   it("allows the creator-first group flow on protocol 0.7", () => {
-    expect(groupCreationUnsupportedReason("lockedin-circle/0.7.0", "invite-only")).toBeNull();
+    expect(groupCreationUnsupportedReason("lockedin-circle/0.8.0", "invite-only")).toBeNull();
   });
 
   it("explains the fixed-member limitation on the deployed 0.5 factory", () => {
@@ -61,7 +61,7 @@ describe("group creation compatibility", () => {
 
   it("distinguishes unsupported public enrollment", () => {
     expect(groupCreationUnsupportedReason("lockedin-circle/0.5.0", "public")).toMatch(
-      /require protocol 0\.7\.0/i
+      /require protocol 0\.8\.0/i
     );
   });
 });

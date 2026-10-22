@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 
@@ -50,12 +50,9 @@ describe('LockedIn Circle Phase 1', function () {
 
   async function groupVault(targets = [100n * UNIT, 100n * UNIT], bps = [1_000, 1_000]) {
     const signers = [creator, memberTwo, memberThree, memberFour]
-    const members = await Promise.all(signers.map((member) => member.getAddress()))
     const allTargets = [...targets, ...Array(4 - targets.length).fill(100n * UNIT)]
     const allBps = [...bps, ...Array(4 - bps.length).fill(1_000)]
-    await factory.createGroupVault(members, allTargets, allBps, maturity, 0)
-    const vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt((await factory.vaultCount()) - 1n))
-    return vault
+    return createActivatedGroup(ethers, factory, signers, allTargets, allBps, maturity)
   }
 
   async function fundAndApprove(signer, spender, amount) {
@@ -130,17 +127,9 @@ describe('LockedIn Circle Phase 1', function () {
 
   it('activates equal group rewards only after every member completes', async function () {
     const groupMembers = [creator, memberTwo, memberThree, memberFour]
-    const addresses = await Promise.all(groupMembers.map((member) => member.getAddress()))
-    await factory.createGroupVault(
-      addresses,
-      addresses.map(() => 100n * UNIT),
-      addresses.map(() => 1_000),
-      maturity,
-      0,
-    )
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await factory.vaultAt((await factory.vaultCount()) - 1n),
+    const vault = await createActivatedGroup(
+      ethers, factory, groupMembers, groupMembers.map(() => 100n * UNIT),
+      groupMembers.map(() => 1_000), maturity,
     )
     for (const [index, member] of groupMembers.entries()) {
       await fundAndApprove(member, await vault.getAddress(), 100n * UNIT)
@@ -204,20 +193,16 @@ describe('LockedIn Circle Phase 1', function () {
       31_337,
       ethers.ZeroAddress,
     ], await riskReserve.getAddress())
-    const members = [
-      await creator.getAddress(),
-      await attacker.getAddress(),
-      await memberTwo.getAddress(),
-      await memberThree.getAddress(),
-    ]
-    await callbackFactory.createGroupVault(
-      members,
+    const groupSigners = [creator, attacker, memberTwo, memberThree]
+    const vault = await createActivatedGroup(
+      ethers,
+      callbackFactory,
+      groupSigners,
       [UNIT, 100n * UNIT, UNIT, UNIT],
       [1_000, 1_000, 1_000, 1_000],
       maturity,
       0,
     )
-    const vault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
 
     await attacker.configure(await vault.getAddress(), await callbackToken.getAddress(), 1)
     await callbackToken.mint(await attacker.getAddress(), 100n * UNIT)

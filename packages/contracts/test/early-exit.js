@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const RAY = 10n ** 27n
@@ -296,19 +296,15 @@ describe('EarlyExitMarket deterministic pricing', function () {
       ethers.ZeroAddress, ethers.ZeroAddress, 31_337, ethers.ZeroAddress,
     ], await riskReserve.getAddress())
     const callbackMarket = await ethers.getContractAt('EarlyExitMarket', await callbackFactory.earlyExitMarket())
-    await callbackFactory.createGroupVault(
-      [
-        await saver.getAddress(),
-        await sellerContract.getAddress(),
-        await providerTwo.getAddress(),
-        await outsider.getAddress(),
-      ],
+    const callbackVault = await createActivatedGroup(
+      ethers,
+      callbackFactory,
+      [saver, sellerContract, providerTwo, outsider],
       [UNIT, 100n * UNIT, UNIT, UNIT],
       [1_000, 1_000, 1_000, 1_000],
       maturity,
       0,
     )
-    const callbackVault = await ethers.getContractAt('SavingsVault', await callbackFactory.vaultAt(0))
     await sellerContract.configure(await callbackVault.getAddress(), await callbackToken.getAddress(), await callbackMarket.getAddress())
     await callbackToken.mint(await sellerContract.getAddress(), 100n * UNIT)
     await sellerContract.deposit(1, 100n * UNIT)

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { network } from 'hardhat'
 
-import { deployFactory } from './helpers/deploy-factory.js'
+import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
@@ -54,17 +54,8 @@ describe('Deterministic protocol-revenue epochs', function () {
   })
 
   async function createCompletedGroup(members, targets, vaultMaturity = maturity) {
-    const addresses = await Promise.all(members.map((member) => member.getAddress()))
-    await factory.connect(members[0]).createGroupVault(
-      addresses,
-      targets,
-      targets.map(() => 1_000),
-      vaultMaturity,
-      0,
-    )
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await factory.vaultAt((await factory.vaultCount()) - 1n),
+    const vault = await createActivatedGroup(
+      ethers, factory, members, targets, targets.map(() => 1_000), vaultMaturity,
     )
     for (let index = 0; index < members.length; index += 1) {
       await token.mint(await members[index].getAddress(), targets[index])
@@ -181,18 +172,10 @@ describe('Deterministic protocol-revenue epochs', function () {
         },
       )
       const members = accounts.slice(4, 8)
-      const addresses = await Promise.all(members.map((member) => member.getAddress()))
       const shortMaturity = BigInt(await networkHelpers.time.latest()) + 4n * DAY
-      await strict.factory.connect(members[0]).createGroupVault(
-        addresses,
-        members.map(() => 10n * UNIT),
-        members.map(() => 1_000),
-        shortMaturity,
-        0,
-      )
-      const vault = await ethers.getContractAt(
-        'SavingsVault',
-        await strict.factory.vaultAt(0),
+      const vault = await createActivatedGroup(
+        ethers, strict.factory, members, members.map(() => 10n * UNIT),
+        members.map(() => 1_000), shortMaturity,
       )
       for (let index = 0; index < members.length; index += 1) {
         await token.mint(await members[index].getAddress(), 10n * UNIT)

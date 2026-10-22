@@ -636,7 +636,7 @@ export function App() {
     !deploymentReady || deployment.status === "error";
   const publicGroupsSupported =
     deployment.status === "valid" &&
-    deployment.value.protocolVersion === "lockedin-circle/0.7.0";
+    deployment.value.protocolVersion === "lockedin-circle/0.8.0";
   const groupCreationBlockReason = deployment.status === "valid"
     ? groupCreationUnsupportedReason(
         deployment.value.protocolVersion,
