@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { defineConfig } from "vite";
 
@@ -60,6 +60,27 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     };
   }
 
+  const deploymentDirectory = path.dirname(manifestPath);
+  const deployments = readdirSync(deploymentDirectory)
+    .filter((name) => name.endsWith(".json") && name !== "latest.json" && name !== "latest-flow.json")
+    .flatMap((name) => {
+      try {
+        const candidate = JSON.parse(readFileSync(path.join(deploymentDirectory, name), "utf8")) as AmoyManifest;
+        if (candidate.schemaVersion < 5 || candidate.chainId !== manifest.chainId || !candidate.contracts?.vaultFactory?.address) return [];
+        return [{
+          deploymentId: candidate.deploymentId,
+          protocolVersion: candidate.protocolVersion,
+          factoryAddress: candidate.contracts.vaultFactory.address,
+          marketAddress: candidate.contracts.earlyExitMarket.address,
+          deploymentBlock: candidate.contracts.vaultFactory.blockNumber,
+          legacy: candidate.deploymentId !== manifest.deploymentId,
+        }];
+      } catch {
+        return [];
+      }
+    })
+    .filter((entry, index, entries) => entries.findIndex((other) => other.factoryAddress.toLowerCase() === entry.factoryAddress.toLowerCase()) === index);
+
   return {
     "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("true"),
     "import.meta.env.VITE_FACTORY_ADDRESS": JSON.stringify(
@@ -78,6 +99,7 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     "import.meta.env.VITE_EXPECTED_MARKET_ADDRESS": JSON.stringify(manifest.contracts.earlyExitMarket.address),
     "import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS": JSON.stringify(manifest.contracts.rewardPool.address),
     "import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS": JSON.stringify(manifest.contracts.safetyController.address),
+    "import.meta.env.VITE_DEPLOYMENTS_JSON": JSON.stringify(JSON.stringify(deployments)),
   };
 }
 

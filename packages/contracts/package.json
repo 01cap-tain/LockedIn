@@ -10,6 +10,8 @@
     "test:polygon-fork": "hardhat test test/polygon-fork.js --network polygonFork --no-compile",
     "test:amoy": "hardhat run scripts/test-amoy-flow.js --network amoy --no-compile",
     "test:amoy:persistence": "hardhat run scripts/check-amoy-persistence.js --network amoy --no-compile",
+    "test:amoy:group": "hardhat run scripts/test-amoy-group-flow.js --network amoy --no-compile",
+    "inspect:amoy:group": "hardhat run scripts/inspect-amoy-group-flow.js --network amoy --no-compile",
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.js --network localhost --no-compile",
     "smoke:local": "hardhat run scripts/smoke-local.js --network localhost --no-compile",

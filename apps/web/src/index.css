@@ -551,6 +551,12 @@ footer {
   color: #72531d;
   background: #fff1d4;
 }
+
+.tag.legacy {
+  color: #f4d56a;
+  background: rgba(244, 213, 106, 0.1);
+  border: 1px solid rgba(244, 213, 106, 0.32);
+}
 .tag.safe {
   color: #285b8b;
   background: #eaf3fb;

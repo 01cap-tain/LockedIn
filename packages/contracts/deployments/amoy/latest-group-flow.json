@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "deploymentId": "0x26ee3107b684c2f636fc2d8e7e5bede32b38e9218ed47d73c884eca8934107ba",
+  "protocolVersion": "lockedin-circle/0.8.0",
+  "checkedAt": "2026-10-22T15:09:37.341Z",
+  "groupVault": "0xCC257655ed314B921efd45aAb29Fb6f5355369aA",
+  "members": [
+    "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
+    "0x012b3D0F82b31Ca5D86beD9F4a9828CAECfC3eFf",
+    "0xD864bD8416A8a456db987D2D824C1d9FB151927C",
+    "0xB9b83fdA272A6AeA720a7D6Ba176b549CE17F24B"
+  ],
+  "independentTargets": [
+    "100.0",
+    "125.0",
+    "150.0",
+    "175.0"
+  ],
+  "independentEmergencyBps": [
+    1000,
+    1100,
+    1200,
+    1500
+  ],
+  "active": true,
+  "note": "Creation, three independent joins and activation confirmed. The optional first deposit was not completed because its temporary wallet lacked enough Amoy gas."
+}

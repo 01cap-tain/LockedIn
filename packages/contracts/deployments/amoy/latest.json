@@ -2,12 +2,12 @@
   "schemaVersion": 5,
   "network": "polygon-amoy",
   "chainId": 80002,
-  "protocolVersion": "lockedin-circle/0.5.0",
-  "deploymentId": "0x277f664c85989be8cfe4382d33176437a3f28f887c2eb0e59acc4fc6825e46a8",
-  "deploymentBlock": 50633826,
+  "protocolVersion": "lockedin-circle/0.8.0",
+  "deploymentId": "0x26ee3107b684c2f636fc2d8e7e5bede32b38e9218ed47d73c884eca8934107ba",
+  "deploymentBlock": 50858903,
   "explorer": "https://amoy.polygonscan.com",
-  "gitCommit": "4dfb672a635db9bf459c96457edf81daf8e6501b",
-  "deploymentTimestamp": "2026-10-20T00:33:09.692Z",
+  "gitCommit": "da176789d4aeb4b1a0953a56c51918973a6cbe48",
+  "deploymentTimestamp": "2026-10-22T15:04:29.156Z",
   "tokenDecimals": 6,
   "contracts": {
     "mockUsdt": {
@@ -21,29 +21,29 @@
       "blockNumber": 50538014
     },
     "safetyController": {
-      "address": "0xf97A7892D38f6E169cD883b0A3455854E3060F26",
-      "transactionHash": "0x64cbc707c481495432afae2b6405a94194240aeac209ec30a6fc4dfb8e181f6b",
-      "blockNumber": 50633818
+      "address": "0x1fb8fFf3fe392B9fe4Ade53F2ab1eA81f90169Ee",
+      "transactionHash": "0xc8ceb7e1b8fadd16b80261bc81c0120449bc2dbe697463505f3583cfc054a908",
+      "blockNumber": 50858894
     },
     "vaultFactory": {
-      "address": "0xd018DBE28406357c5225c18B74feF33c6F964b5f",
-      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
-      "blockNumber": 50633826
+      "address": "0x67fa5Aed567F1E3C094F68f23a90f9e8839DE5dB",
+      "transactionHash": "0x4071e2f33cd6ed50b3cb2d8213c227b3e29b2fab1b3b8b47d86fde164ec742ca",
+      "blockNumber": 50858903
     },
     "rewardPool": {
-      "address": "0xeeF8166170b4Ff66b2360D34aa0273e8E22A753C",
-      "transactionHash": "0x725dd16016b96eb2f62388bd55468abb8841515e62f23aa5fac38f1928d5a4dc",
-      "blockNumber": 50633822
+      "address": "0x847D6F3bd6743e9e53FD2F0bE21b77C5912ca807",
+      "transactionHash": "0x7d6976f1e44dda8f6cdd39ceccff7de3273aba64a0b6bd9b3922ebf0f17ab227",
+      "blockNumber": 50858897
     },
     "earlyExitMarket": {
-      "address": "0xBE41e5759bB5eb48471Af461B995ABff9516b0B1",
-      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
-      "blockNumber": 50633826
+      "address": "0x8fc1Ea1a264aBF003286B8b8A96b47a9E9324Fdc",
+      "transactionHash": "0x4071e2f33cd6ed50b3cb2d8213c227b3e29b2fab1b3b8b47d86fde164ec742ca",
+      "blockNumber": 50858903
     },
     "savingsVaultDeployer": {
-      "address": "0x55bF4Afe71674d8F03Ce5198C44a1ce05A86Fc7c",
-      "transactionHash": "0x00ee71d4f8643b09abcbaf286d6d736c6a9e7d778761dd29eabf92887c0450c8",
-      "blockNumber": 50633826
+      "address": "0xC1cce315b138635Fff3427fD488E214D3431aB62",
+      "transactionHash": "0x99313c681e28bdeb4130064bcd64328e586f6ad72567b3cfe77f5c87562ee1c7",
+      "blockNumber": 50858900
     }
   },
   "factoryConfiguration": {

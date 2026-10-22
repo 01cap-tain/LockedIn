@@ -26,6 +26,7 @@ const factoryAbi = [
   "function vaultCount() view returns (uint256)",
   "function vaultAt(uint256 index) view returns (address)",
   "function vaultsOf(address member) view returns (address[])",
+  "function isVault(address vault) view returns (bool)",
   "function groupName(address vault) view returns (string)",
   "function earlyExitMarket() view returns (address)",
   "function rewardPool() view returns (address)",
@@ -149,7 +150,7 @@ function readProviderFor(signer: Signer): Provider {
   ) {
     amoyReadProvider ??= new JsonRpcProvider(
       import.meta.env.VITE_PUBLIC_RPC_URL ??
-        "https://polygon-amoy.gateway.tenderly.co",
+        "https://polygon-amoy-bor-rpc.publicnode.com",
       Number(POLYGON_AMOY_CHAIN_ID),
       {
         staticNetwork: true,
@@ -174,7 +175,7 @@ function publicReadProvider(preferredProvider?: Provider | null): Provider {
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
     import.meta.env.VITE_HARDHAT_RPC_URL ??
-    "https://polygon-amoy.gateway.tenderly.co";
+    "https://polygon-amoy-bor-rpc.publicnode.com";
   if (publicRpcUrl) {
     const configuredChainId = BigInt(import.meta.env.VITE_EVM_CHAIN_ID ?? "0x13882");
     return new JsonRpcProvider(publicRpcUrl, Number(configuredChainId), {
@@ -358,6 +359,7 @@ export interface VaultSummary {
   expectedProgressPercent: number;
   pace: "on-track" | "behind" | "complete";
   vaultMode: "safe" | "earn";
+  legacy: boolean;
 }
 
 export interface PublicGroupSummary {
@@ -459,6 +461,48 @@ function factoryAddress(): string {
     );
   }
   return getAddress(configured);
+}
+
+interface ClientDeployment {
+  deploymentId: string;
+  protocolVersion: string;
+  factoryAddress: string;
+  marketAddress: string;
+  deploymentBlock: number;
+  legacy: boolean;
+}
+
+function configuredDeployments(): ClientDeployment[] {
+  try {
+    const parsed = JSON.parse(import.meta.env.VITE_DEPLOYMENTS_JSON ?? "[]") as ClientDeployment[];
+    if (parsed.length > 0) return parsed.map((entry) => ({
+      ...entry,
+      factoryAddress: getAddress(entry.factoryAddress),
+      marketAddress: getAddress(entry.marketAddress),
+    }));
+  } catch {
+    // A malformed optional registry must not weaken active-deployment checks.
+  }
+  return [{
+    deploymentId: import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID ?? "",
+    protocolVersion: import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION ?? "",
+    factoryAddress: factoryAddress(),
+    marketAddress: import.meta.env.VITE_EXPECTED_MARKET_ADDRESS ?? "",
+    deploymentBlock: Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0),
+    legacy: false,
+  }];
+}
+
+async function deploymentForVault(provider: Provider, vaultAddress: string): Promise<ClientDeployment> {
+  for (const deployment of configuredDeployments()) {
+    const factory = new Contract(deployment.factoryAddress, factoryAbi, provider);
+    try {
+      if (await factory.getFunction("isVault")(vaultAddress)) return deployment;
+    } catch {
+      // Continue through historic deployments when one RPC read is unavailable.
+    }
+  }
+  throw new Error("This vault is not registered by any configured LockedIn deployment.");
 }
 
 function factoryFor(signer: Signer): Contract {
@@ -814,10 +858,9 @@ export async function loadVault(
   const vaultAddress = getAddress(address);
   const readProvider = readProviderFor(signer);
   const vault = new Contract(vaultAddress, vaultAbi, readProvider);
-  const factory = new Contract(factoryAddress(), factoryAbi, readProvider);
-  const protocolVersion = String(
-    await factory.getFunction("PROTOCOL_VERSION")()
-  );
+  const deployment = await deploymentForVault(readProvider, vaultAddress);
+  const factory = new Contract(deployment.factoryAddress, factoryAbi, readProvider);
+  const protocolVersion = deployment.protocolVersion;
   const supportsPublicJoining = protocolVersion !== "lockedin-circle/0.5.0";
   const supportsEnrollment = protocolVersion === "lockedin-circle/0.8.0";
   const memberCount: bigint = await vault.getFunction("memberCount")();
@@ -1020,19 +1063,22 @@ export async function loadVaultsForSigner(
   // keeps only emergency access while the provider discovers the bought claim.
   await assertFactoryDeployment(signer);
   const readProvider = readProviderFor(signer);
-  const factory = new Contract(factoryAddress(), factoryAbi, readProvider);
   const signerAddress = await signer.getAddress();
-  const memberAddresses: string[] = await factory.getFunction("vaultsOf")(
-    signerAddress
-  );
+  const memberDeployments = await Promise.all(configuredDeployments().map(async (deployment) => {
+    const factory = new Contract(deployment.factoryAddress, factoryAbi, readProvider);
+    const addresses: string[] = await factory.getFunction("vaultsOf")(signerAddress);
+    return addresses.map((address) => ({ address: getAddress(address), deployment }));
+  }));
+  const memberAddresses = memberDeployments.flat();
   const memberPositions = await Promise.all(
-    memberAddresses.map(async (address) => ({
-      address: getAddress(address),
+    memberAddresses.map(async ({ address, deployment }) => ({
+      address,
       positionId: BigInt(
         await new Contract(address, vaultAbi, readProvider).getFunction("positionOf")(
           signerAddress
         )
       ),
+      deployment,
     }))
   );
   let completedTrades: CompletedTrade[] = knownCompletedTrades ?? [];
@@ -1044,10 +1090,16 @@ export async function loadVaultsForSigner(
       // are temporarily unavailable. A later refresh restores bought positions.
     }
   }
-  const purchasedPositions = completedTrades
-    .filter((trade) => trade.provider.toLowerCase() === signerAddress.toLowerCase())
-    .map((trade) => ({ address: trade.vault, positionId: trade.positionId }));
-  const candidates = new Map<string, { address: string; positionId: bigint }>();
+  const purchasedPositions = await Promise.all(
+    completedTrades
+      .filter((trade) => trade.provider.toLowerCase() === signerAddress.toLowerCase())
+      .map(async (trade) => ({
+        address: trade.vault,
+        positionId: trade.positionId,
+        deployment: await deploymentForVault(readProvider, trade.vault),
+      }))
+  );
+  const candidates = new Map<string, { address: string; positionId: bigint; deployment: ClientDeployment }>();
   for (const candidate of [...memberPositions, ...purchasedPositions]) {
     candidates.set(
       `${candidate.address.toLowerCase()}-${candidate.positionId.toString()}`,
@@ -1056,7 +1108,7 @@ export async function loadVaultsForSigner(
   }
 
   const summaries = await Promise.all(
-    [...candidates.values()].map(async ({ address, positionId }) => {
+    [...candidates.values()].map(async ({ address, positionId, deployment }) => {
       const vault = new Contract(address, vaultAbi, readProvider);
       const [isGroup, maturity, createdAt, memberCount, mode, stored, owner, currentValue] = await Promise.all([
         vault.getFunction("isGroup")(),
@@ -1107,6 +1159,7 @@ export async function loadVaultsForSigner(
             ? ("on-track" as const)
             : ("behind" as const),
         vaultMode: Number(mode) === 1 ? ("earn" as const) : ("safe" as const),
+        legacy: deployment.legacy,
       };
     })
   );
@@ -1817,9 +1870,10 @@ export async function loadCompletedTrades(
   signer: Signer
 ): Promise<CompletedTrade[]> {
   const provider = readProviderFor(signer);
-  const factory = new Contract(factoryAddress(), factoryAbi, provider);
-  const marketAddress: string = await factory.getFunction("earlyExitMarket")();
-  return scanCompletedTrades(provider, getAddress(marketAddress));
+  const trades = await Promise.all(configuredDeployments().map((deployment) =>
+    scanCompletedTrades(provider, deployment.marketAddress, deployment.deploymentBlock)
+  ));
+  return trades.flat().sort((left, right) => right.blockNumber - left.blockNumber);
 }
 
 /**
@@ -1830,7 +1884,7 @@ export async function loadCompletedTrades(
 export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
   const publicRpcUrl =
     import.meta.env.VITE_PUBLIC_RPC_URL ??
-    "https://polygon-amoy.gateway.tenderly.co";
+    "https://polygon-amoy-bor-rpc.publicnode.com";
   const provider: Provider = publicRpcUrl
     ? new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
         staticNetwork: true,
@@ -1843,21 +1897,22 @@ export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
             "Configure VITE_PUBLIC_RPC_URL to show public market history without a wallet."
           );
         })();
-  const factory = new Contract(factoryAddress(), factoryAbi, provider);
-  const marketAddress: string = await factory.getFunction("earlyExitMarket")();
-  return scanCompletedTrades(provider, getAddress(marketAddress));
+  const trades = await Promise.all(configuredDeployments().map((deployment) =>
+    scanCompletedTrades(provider, deployment.marketAddress, deployment.deploymentBlock)
+  ));
+  return trades.flat().sort((left, right) => right.blockNumber - left.blockNumber);
 }
 
 async function scanCompletedTrades(
   provider: Provider,
-  marketAddress: string
+  marketAddress: string,
+  deploymentBlock = Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0)
 ): Promise<CompletedTrade[]> {
-  const fromBlock = Number(import.meta.env.VITE_CONTRACT_START_BLOCK ?? 0);
   const latestBlock = await provider.getBlockNumber();
   const logs = await getLogsInChunks(
     provider,
     { address: marketAddress },
-    fromBlock,
+    deploymentBlock,
     latestBlock
   );
 

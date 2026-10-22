@@ -133,8 +133,8 @@ type DeploymentState =
   | { status: "idle" | "checking" }
   | { status: "valid"; value: DeploymentVerification }
   | { status: "error"; message: string };
-type ListingFilter = "all" | "personal" | "group" | "mine";
-type MarketView = "listings" | "recent";
+type ListingFilter = "all" | "personal" | "group";
+type MarketView = "fund" | "mine" | "recent";
 type HistoryView = "trades" | "events";
 type VaultView = "active" | "sold";
 type CelebrationState = {
@@ -162,11 +162,11 @@ const WEEK_DAYS = [
   { value: 0, label: "Sun" },
 ] as const;
 const PROFILE_VAULT_TABS = ["personal", "group", "purchased", "listed"] as const;
-const MARKET_TABS = ["listings", "recent"] as const;
+const MARKET_TABS = ["fund", "mine", "recent"] as const;
 const HISTORY_TABS = ["trades", "events"] as const;
 const VAULT_DETAIL_TABS = ["overview", "circle", "withdraw", "activity"] as const;
 const VAULT_VIEW_TABS = ["active", "sold"] as const;
-const LISTING_FILTER_TABS = ["all", "personal", "group", "mine"] as const;
+const LISTING_FILTER_TABS = ["all", "personal", "group"] as const;
 const CREATE_MODE_TABS = ["personal", "group"] as const;
 
 const routes: Array<{ id: AppRoute; label: string }> = [
@@ -544,7 +544,7 @@ export function App() {
   const [listings, setListings] = useState<ExitListingSnapshot[]>([]);
   const [exitState, setExitState] = useState<ExitListingSnapshot | null>(null);
   const [listingFilter, setListingFilter] = useState<ListingFilter>("all");
-  const [marketView, setMarketView] = useState<MarketView>("listings");
+  const [marketView, setMarketView] = useState<MarketView>("fund");
   const [exitExpiration, setExitExpiration] = useState(() => futureInput(7));
   const [minimumPayout, setMinimumPayout] = useState("0");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -799,13 +799,15 @@ export function App() {
         // Open Listings must never retain cancelled, expired or funded sales.
         if (!listing || !listing.active || listing.status !== "active")
           return false;
+        if (marketView === "mine")
+          return listing.seller.toLowerCase() === connectedAddress;
+        if (marketView === "fund" && listing.seller.toLowerCase() === connectedAddress)
+          return false;
         if (listingFilter === "personal") return !listing.isGroup;
         if (listingFilter === "group") return listing.isGroup;
-        if (listingFilter === "mine")
-          return listing.seller.toLowerCase() === connectedAddress;
         return true;
       }),
-    [listings, listingFilter, connectedAddress]
+    [listings, listingFilter, connectedAddress, marketView]
   );
   const myActiveListings = useMemo(
     () =>
@@ -1736,6 +1738,7 @@ export function App() {
                       >
                         <span>
                           <b>{vaultType(vault.isGroup)} claim #{vault.positionId.toString()}</b>
+                          {vault.legacy && <em className="tag legacy">Legacy vault</em>}
                           <em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em>
                         </span>
                         <strong>{vault.currentValue} mUSDT current value</strong>
@@ -1751,7 +1754,7 @@ export function App() {
                   const next = Math.min(remaining, plan?.contributionAmount ?? remaining);
                   return (
                     <button className="mini-vault-card companion-vault-card" key={`${vault.address}-${vault.positionId}`} onClick={() => { setProfileOpen(false); navigate(vault.isGroup ? "groups" : "position"); void openVault(vault.address, vault.positionId); }} type="button">
-                      <span><b><Target aria-hidden="true" size={15} />{plan?.vaultName || (vault.isGroup ? "Group savings goal" : "Personal savings goal")}</b><em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace.replace("-", " ")}</em></span>
+                      <span><b><Target aria-hidden="true" size={15} />{plan?.vaultName || (vault.isGroup ? "Group savings goal" : "Personal savings goal")}</b>{vault.legacy && <em className="tag legacy">Legacy vault</em>}<em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace.replace("-", " ")}</em></span>
                       <strong>{vault.deposited} of {vault.target} USDT</strong>
                       <i><span style={{ width: `${vault.progressPercent}%` }} /></i>
                       <div className="milestone-row" aria-label={`${vault.progressPercent.toFixed(0)} percent complete`}>{[25, 50, 75, 100].map((milestone) => <span className={vault.progressPercent >= milestone ? "reached" : ""} key={milestone}>{milestone}%</span>)}</div>
@@ -2385,6 +2388,7 @@ export function App() {
                     <span className="vault-collection-copy">
                       <span className="vault-collection-title">
                         <strong>{plan?.vaultName || (vault.isGroup ? "Group circle" : "Personal goal")}</strong>
+                        {vault.legacy && <em className="tag legacy">Legacy vault</em>}
                         <em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em>
                       </span>
                       <small>{short(vault.address)}</small>
@@ -3232,10 +3236,16 @@ export function App() {
           </div>
           <div className="panel view-switch swipe-tabs" aria-label="Early withdrawal view" {...marketTabSwipe}>
             <button
-              className={marketView === "listings" ? "active" : ""}
-              onClick={() => setMarketView("listings")}
+              className={marketView === "fund" ? "active" : ""}
+              onClick={() => setMarketView("fund")}
             >
-              Available exits
+              Fund an exit
+            </button>
+            <button
+              className={marketView === "mine" ? "active" : ""}
+              onClick={() => setMarketView("mine")}
+            >
+              My exit requests
             </button>
             <button
               className={marketView === "recent" ? "active" : ""}
@@ -3249,16 +3259,16 @@ export function App() {
               Recent exits
             </button>
           </div>
-          {marketView === "listings" ? (
+          {marketView !== "recent" ? (
             <>
             <div className="market-layout">
           <aside className="panel market-browser">
             <div className="section-title">
               <div>
-                <h2>Available early exits</h2>
-                <p>Help another saver exit early and receive their future savings claim.</p>
+                <h2>{marketView === "mine" ? "My exit requests" : "Fund an early withdrawal"}</h2>
+                <p>{marketView === "mine" ? "Create, review or cancel your own early-withdrawal requests." : "Help another saver withdraw early and receive their future savings claim."}</p>
               </div>
-              <button
+              {marketView === "mine" && <button
                 className="secondary compact icon-action"
                 disabled={riskActionsDisabled}
                 onClick={() => {
@@ -3269,7 +3279,7 @@ export function App() {
                 type="button"
               >
                 <HandCoins aria-hidden="true" size={14} /> Request early exit
-              </button>
+              </button>}
               <button
                 className="icon-button"
                 disabled={riskActionsDisabled}
@@ -3298,16 +3308,16 @@ export function App() {
                   <Suspense fallback={<div className="trade-animation-fallback" />}>
                     <TradeCompletionAnimation />
                   </Suspense>
-                  <strong>No early exits available right now</strong>
-                  <span>Savers can request an early exit; the system then calculates a fair 4.5%–8% discount.</span>
-                  <button
+                  <strong>{marketView === "mine" ? "You have no open exit requests" : "No early withdrawals need funding right now"}</strong>
+                  <span>{marketView === "mine" ? "Choose one of your active savings positions when you need to withdraw early." : "New saver requests will appear here at their contract-calculated payout."}</span>
+                  {marketView === "mine" && <button
                     className="secondary compact"
                     disabled={riskActionsDisabled}
                     onClick={() => setMarketPositionPickerOpen(true)}
                     type="button"
                   >
                     Request early exit
-                  </button>
+                  </button>}
                 </div>
               ) : (
                 filteredListings.map(
