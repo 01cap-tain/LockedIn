@@ -138,6 +138,46 @@ const USDT_DECIMALS = 6;
 const POLYGON_AMOY_CHAIN_ID = 80_002n;
 const AMOY_MIN_PRIORITY_FEE = parseUnits("25", "gwei");
 let amoyReadProvider: JsonRpcProvider | undefined;
+let amoyReadProviderIndex = 0;
+
+const AMOY_READ_FALLBACKS = [
+  "https://polygon-amoy.drpc.org",
+  "https://polygon-amoy-rpc.blockreq.com/v1/rpc/public",
+  "https://polygon-amoy-bor-rpc.publicnode.com",
+] as const;
+
+function amoyReadUrls(): string[] {
+  return [import.meta.env.VITE_PUBLIC_RPC_URL, ...AMOY_READ_FALLBACKS]
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function resetAmoyReadProvider(): void {
+  amoyReadProvider?.destroy();
+  amoyReadProvider = undefined;
+  amoyReadProviderIndex += 1;
+}
+
+async function withAmoyReadRetry<T>(
+  operation: () => Promise<T>,
+  shouldRetry: (error: unknown) => boolean = () => true
+): Promise<T> {
+  const isAmoy = (import.meta.env.VITE_EVM_CHAIN_ID ?? "").toLowerCase() === "0x13882";
+  if (!isAmoy) return operation();
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetry(error) || attempt === 2) break;
+      resetAmoyReadProvider();
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
 
 /**
  * Nimiq Pay remains the signer and transaction submitter. Public Amoy reads
@@ -148,9 +188,10 @@ function readProviderFor(signer: Signer): Provider {
   if (
     (import.meta.env.VITE_EVM_CHAIN_ID ?? "").toLowerCase() === "0x13882"
   ) {
+    const urls = amoyReadUrls();
+    const rpcUrl = urls[amoyReadProviderIndex % urls.length];
     amoyReadProvider ??= new JsonRpcProvider(
-      import.meta.env.VITE_PUBLIC_RPC_URL ??
-        "https://polygon-amoy.drpc.org",
+      rpcUrl,
       Number(POLYGON_AMOY_CHAIN_ID),
       {
         staticNetwork: true,
@@ -599,21 +640,15 @@ async function verifyDeploymentOnce(
 export async function verifyDeployment(
   signer: Signer
 ): Promise<DeploymentVerification> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await verifyDeploymentOnce(signer);
-    } catch (error) {
-      lastError = error;
+  return withAmoyReadRetry(
+    () => verifyDeploymentOnce(signer),
+    (error) => {
       const message = error instanceof Error ? error.message : String(error);
       // A genuine identity mismatch is deterministic and must never be hidden
       // behind retries intended only for temporary RPC transport failures.
-      if (message.includes("Deployment mismatch")) throw error;
-      if (attempt < 3)
-        await new Promise((resolve) => window.setTimeout(resolve, attempt * 300));
+      return !message.includes("Deployment mismatch");
     }
-  }
-  throw lastError;
+  );
 }
 
 async function marketFor(signer: Signer): Promise<Contract> {
@@ -854,6 +889,14 @@ export async function loadVault(
   address: string,
   requestedPositionId?: bigint
 ): Promise<VaultSnapshot> {
+  return withAmoyReadRetry(() => loadVaultOnce(signer, address, requestedPositionId));
+}
+
+async function loadVaultOnce(
+  signer: Signer,
+  address: string,
+  requestedPositionId?: bigint
+): Promise<VaultSnapshot> {
   const signerAddress = await signer.getAddress();
   const vaultAddress = getAddress(address);
   const readProvider = readProviderFor(signer);
@@ -1055,6 +1098,13 @@ export async function loadVault(
 }
 
 export async function loadVaultsForSigner(
+  signer: Signer,
+  knownCompletedTrades?: CompletedTrade[]
+): Promise<VaultSummary[]> {
+  return withAmoyReadRetry(() => loadVaultsForSignerOnce(signer, knownCompletedTrades));
+}
+
+async function loadVaultsForSignerOnce(
   signer: Signer,
   knownCompletedTrades?: CompletedTrade[]
 ): Promise<VaultSummary[]> {
