@@ -25,6 +25,7 @@ import {
   loadExitMarket,
   loadGroupExitRequests,
   loadMockUsdtBalance,
+  loadNativeGasStatus,
   loadUsdtBalance,
   loadUsdtBalanceUnits,
   loadVault,
@@ -1355,16 +1356,13 @@ export function App() {
   async function assertWalletCanAffordTransaction(
     session = requireSession()
   ): Promise<void> {
-    const provider = session.signer.provider;
-    if (!provider) throw new Error("The wallet network provider is unavailable.");
-    const [balance, feeData] = await Promise.all([
-      provider.getBalance(session.address),
-      provider.getFeeData(),
-    ]);
-    const feePerGas = feeData.maxFeePerGas ?? feeData.gasPrice ?? 25_000_000_000n;
-    // Covers the largest current vault-creation path. The wallet still performs
-    // its exact estimate before signing; this check prevents futile prompts.
-    const requiredReserve = feePerGas * 1_500_000n;
+    // Read the balance through the resilient Amoy provider pool. The connected
+    // wallet remains the signer, but a flaky wallet RPC must not prevent its
+    // transaction prompt from opening.
+    const { balance, requiredReserve } = await loadNativeGasStatus(
+      session.signer,
+      session.address
+    );
     setNativeTokenBalance(formatAssetAmount(balance, 18));
     if (balance < requiredReserve) {
       throw new Error(

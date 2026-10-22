@@ -6009,6 +6009,74 @@ body,
   box-shadow: none;
 }
 
+/* The open vault is a real foreground sheet, not another flattened route shell. */
+.dashboard-grid > .vault-main.vault-detail-sheet {
+  border: 1px solid #2c2d28;
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  background: #0d0e0c;
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.48);
+}
+
+.vault-detail-backdrop {
+  background: rgba(0, 0, 0, 0.84);
+  backdrop-filter: blur(3px) saturate(0.72);
+  -webkit-backdrop-filter: blur(3px) saturate(0.72);
+}
+
+/* Two true equal-width choices prevent the thumb and labels from colliding. */
+.currency-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 200px;
+  min-width: 200px;
+  padding: 3px;
+  isolation: isolate;
+}
+
+.currency-toggle button {
+  z-index: 2;
+  min-width: 0;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.currency-toggle > i {
+  z-index: 1;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  pointer-events: none;
+}
+
+.deposit-currency-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.deposit-currency-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.deposit-currency-heading small {
+  line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  .deposit-currency-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .deposit-currency-heading .currency-toggle,
+  .contribution-currency .currency-toggle {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .recent-trades-panel,
 .market-page .recent-trades-panel {
   padding: 4px 0 18px;

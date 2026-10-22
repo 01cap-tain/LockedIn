@@ -113,6 +113,7 @@ const vaultAbi = [
 const tokenAbi = [
   "function approve(address spender,uint256 amount) returns (bool)",
   "function balanceOf(address account) view returns (uint256)",
+  "function allowance(address owner,address spender) view returns (uint256)",
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
   "function mint(address recipient,uint256 amount)",
@@ -726,29 +727,47 @@ function groupExitStatusLabel(
 async function transactionOverrides(
   signer: Signer
 ): Promise<Record<string, bigint>> {
-  const provider = readProviderFor(signer);
+  return withAmoyReadRetry<Record<string, bigint>>(async () => {
+    const provider = readProviderFor(signer);
+    const network = await provider.getNetwork();
+    if (network.chainId !== POLYGON_AMOY_CHAIN_ID)
+      return {} as Record<string, bigint>;
 
-  const network = await provider.getNetwork();
-  if (network.chainId !== POLYGON_AMOY_CHAIN_ID) return {};
+    const [feeData, latestBlock] = await Promise.all([
+      provider.getFeeData(),
+      provider.getBlock("latest"),
+    ]);
+    const reportedPriority = feeData.maxPriorityFeePerGas ?? 0n;
+    const maxPriorityFeePerGas =
+      reportedPriority > AMOY_MIN_PRIORITY_FEE
+        ? reportedPriority
+        : AMOY_MIN_PRIORITY_FEE;
+    const baseFee = latestBlock?.baseFeePerGas ?? feeData.gasPrice ?? 0n;
+    const calculatedMaxFee = baseFee * 2n + maxPriorityFeePerGas;
+    const reportedMaxFee = feeData.maxFeePerGas ?? 0n;
 
-  const [feeData, latestBlock] = await Promise.all([
-    provider.getFeeData(),
-    provider.getBlock("latest"),
-  ]);
-  const reportedPriority = feeData.maxPriorityFeePerGas ?? 0n;
-  const maxPriorityFeePerGas =
-    reportedPriority > AMOY_MIN_PRIORITY_FEE
-      ? reportedPriority
-      : AMOY_MIN_PRIORITY_FEE;
-  const baseFee = latestBlock?.baseFeePerGas ?? feeData.gasPrice ?? 0n;
-  const calculatedMaxFee = baseFee * 2n + maxPriorityFeePerGas;
-  const reportedMaxFee = feeData.maxFeePerGas ?? 0n;
+    return {
+      maxPriorityFeePerGas,
+      maxFeePerGas:
+        reportedMaxFee > calculatedMaxFee ? reportedMaxFee : calculatedMaxFee,
+    };
+  });
+}
 
-  return {
-    maxPriorityFeePerGas,
-    maxFeePerGas:
-      reportedMaxFee > calculatedMaxFee ? reportedMaxFee : calculatedMaxFee,
-  };
+export async function loadNativeGasStatus(
+  signer: Signer,
+  address: string
+): Promise<{ balance: bigint; requiredReserve: bigint }> {
+  return withAmoyReadRetry(async () => {
+    const provider = readProviderFor(signer);
+    const [balance, feeData] = await Promise.all([
+      provider.getBalance(address),
+      provider.getFeeData(),
+    ]);
+    const feePerGas =
+      feeData.maxFeePerGas ?? feeData.gasPrice ?? AMOY_MIN_PRIORITY_FEE;
+    return { balance, requiredReserve: feePerGas * 1_500_000n };
+  });
 }
 
 /**
@@ -758,10 +777,8 @@ async function transactionOverrides(
  * is rate-limited.
  */
 async function confirmTransaction(signer: Signer, hash: string) {
-  const receipt = await readProviderFor(signer).waitForTransaction(
-    hash,
-    1,
-    180_000
+  const receipt = await withAmoyReadRetry(() =>
+    readProviderFor(signer).waitForTransaction(hash, 1, 60_000)
   );
   if (!receipt)
     throw new Error(
@@ -1351,17 +1368,25 @@ export async function depositToVault(
     signer
   );
   const parsed = amount(value);
-  const overrides = await transactionOverrides(signer);
-  const approval = await token.getFunction("approve")(
-    await vault.getAddress(),
-    parsed,
-    overrides
-  );
-  await confirmTransaction(signer, approval.hash);
+  const vaultAddressResolved = await vault.getAddress();
+  const owner = await signer.getAddress();
+  const tokenAddress = await token.getAddress();
+  const allowance = BigInt(await withAmoyReadRetry(() => {
+    const readToken = new Contract(tokenAddress, tokenAbi, readProviderFor(signer));
+    return readToken.getFunction("allowance")(owner, vaultAddressResolved);
+  }));
+  if (allowance < parsed) {
+    const approval = await token.getFunction("approve")(
+      vaultAddressResolved,
+      parsed,
+      await transactionOverrides(signer)
+    );
+    await confirmTransaction(signer, approval.hash);
+  }
   const deposit = await vault.getFunction("deposit")(
     positionId,
     parsed,
-    overrides
+    await transactionOverrides(signer)
   );
   await confirmTransaction(signer, deposit.hash);
 }
