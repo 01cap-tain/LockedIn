@@ -1874,10 +1874,10 @@ function parsedEvent(log: Log, abi: readonly string[]) {
   }
 }
 
-// Stay below the advertised 10,000-block ceiling. Some RPC gateways count
-// both boundary blocks or apply a small internal safety margin and reject an
-// otherwise exact 10,000-block request.
-const MAX_LOG_BLOCK_RANGE = 9_500;
+// Stay well below the advertised 10,000-block ceiling. Some Amoy gateways
+// reject near-limit requests after applying their own inclusive-boundary or
+// batching rules, so a 5,000-block window is the reliable public-RPC size.
+const MAX_LOG_BLOCK_RANGE = 5_000;
 
 /**
  * Public Amoy RPC services commonly reject `eth_getLogs` requests spanning
@@ -1932,25 +1932,38 @@ export async function loadCompletedTrades(
  * otherwise an already-injected provider is used for read-only calls.
  */
 export async function loadPublicCompletedTrades(): Promise<CompletedTrade[]> {
-  const publicRpcUrl =
-    import.meta.env.VITE_PUBLIC_RPC_URL ??
-    "https://polygon-amoy.drpc.org";
-  const provider: Provider = publicRpcUrl
-    ? new JsonRpcProvider(publicRpcUrl, Number(POLYGON_AMOY_CHAIN_ID), {
-        staticNetwork: true,
-        batchMaxCount: 3,
-      })
-    : typeof window !== "undefined" && window.ethereum
-      ? new BrowserProvider(window.ethereum)
-      : (() => {
-          throw new Error(
-            "Configure VITE_PUBLIC_RPC_URL to show public market history without a wallet."
-          );
-        })();
-  const trades = await Promise.all(configuredDeployments().map((deployment) =>
-    scanCompletedTrades(provider, deployment.marketAddress, deployment.deploymentBlock)
-  ));
-  return trades.flat().sort((left, right) => right.blockNumber - left.blockNumber);
+  let lastError: unknown;
+
+  // Market history is public data, so a failing free RPC must not make the
+  // savings exit ledger disappear. Try the configured endpoint first, then
+  // the same read-only Amoy fallbacks used by contract state reads.
+  for (const rpcUrl of amoyReadUrls()) {
+    const provider = new JsonRpcProvider(
+      rpcUrl,
+      Number(POLYGON_AMOY_CHAIN_ID),
+      { staticNetwork: true, batchMaxCount: 3 }
+    );
+    try {
+      const trades = await Promise.all(
+        configuredDeployments().map((deployment) =>
+          scanCompletedTrades(
+            provider,
+            deployment.marketAddress,
+            deployment.deploymentBlock
+          )
+        )
+      );
+      return trades
+        .flat()
+        .sort((left, right) => right.blockNumber - left.blockNumber);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      provider.destroy();
+    }
+  }
+
+  throw lastError ?? new Error("No public Amoy RPC is available.");
 }
 
 async function scanCompletedTrades(

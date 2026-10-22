@@ -3858,168 +3858,6 @@ body {
   .saver-listing-copy blockquote { font-size: 21px; }
 }
 
-/* Savings-first mobile hierarchy ---------------------------------------- */
-.vault-list {
-  grid-template-columns: 1fr;
-  width: 100%;
-}
-
-.vault-sidebar .vault-row,
-.vault-sidebar .vault-row:hover,
-.vault-sidebar .vault-row.selected {
-  display: grid;
-  grid-template-columns: minmax(112px, 32%) minmax(0, 1fr);
-  width: 100%;
-  min-height: 190px;
-}
-
-.vault-sidebar .vault-art {
-  min-height: 100%;
-}
-
-.vault-sidebar .vault-collection-copy {
-  align-content: center;
-  gap: 9px;
-  padding: 16px;
-}
-
-.vault-sidebar .vault-collection-title strong {
-  font-size: 15px;
-}
-
-.vault-sidebar .vault-collection-copy > small {
-  display: none;
-}
-
-.vault-sidebar .vault-card-progress {
-  height: 7px;
-}
-
-.vault-sidebar .vault-card-footer b {
-  font-size: 11px;
-}
-
-.vault-sidebar .vault-collection-meta b,
-.vault-sidebar .vault-plan-line,
-.vault-sidebar .vault-card-action {
-  font-size: 10px;
-}
-
-.circle-recovery {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 12px;
-  align-items: start;
-  padding: 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: var(--accent);
-  background: var(--bg-surface);
-}
-
-.circle-recovery > div {
-  display: grid;
-  gap: 5px;
-}
-
-.circle-recovery strong { color: var(--text-primary); }
-.circle-recovery span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-.circle-recovery button { grid-column: 2; justify-self: start; }
-
-.discovery-compatibility {
-  margin-bottom: 14px;
-  color: var(--text-secondary);
-}
-
-.discovery-compatibility p {
-  margin: 10px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-@media (max-width: 560px) {
-  .discover-page {
-    margin: 0;
-    padding: 8px 0 28px;
-  }
-
-  .discover-hero {
-    min-height: 0;
-    margin-bottom: 20px;
-    padding: 24px 4px 26px;
-  }
-
-  .discover-hero h1 {
-    margin: 8px 0 12px;
-    font-size: clamp(2.25rem, 13vw, 3.35rem);
-    line-height: .92;
-  }
-
-  .discover-hero p {
-    max-width: 30ch;
-    margin-bottom: 0;
-    font-size: 12px;
-    line-height: 1.5;
-  }
-
-  .discover-section-heading {
-    align-items: center;
-  }
-
-  .discover-section-heading h2 {
-    font-size: 1.18rem;
-  }
-
-  .vault-sidebar {
-    width: 100%;
-    padding: 14px;
-  }
-
-  .vault-sidebar .vault-row,
-  .vault-sidebar .vault-row:hover,
-  .vault-sidebar .vault-row.selected {
-    grid-template-columns: 105px minmax(0, 1fr);
-    min-height: 205px;
-  }
-
-  .vault-sidebar .vault-art-mark {
-    width: 52px;
-    height: 52px;
-  }
-
-  .vault-sidebar .vault-collection-copy {
-    padding: 13px;
-  }
-
-  .vault-sidebar .vault-collection-meta {
-    gap: 5px;
-  }
-
-  .transaction {
-    right: 12px;
-    bottom: 82px;
-    left: 12px;
-    width: auto;
-    max-height: 180px;
-    overflow-y: auto;
-    padding: 12px 14px;
-    border-radius: 15px;
-    font-size: 11px;
-  }
-
-  .transaction p {
-    margin: 4px 0;
-    line-height: 1.35;
-  }
-
-  .market-flowline {
-    grid-template-columns: 1fr auto 1fr auto 1fr;
-    padding: 12px 9px;
-    font-size: 8px;
-    text-align: center;
-  }
-}
-
 /* Creation and join flows -------------------------------------------------
    Shared circle rules and personal financial choices are deliberately kept
    in separate visual groups so the UI never implies pooled ownership. */
@@ -6112,4 +5950,593 @@ input[aria-invalid="true"] {
     overflow-wrap: anywhere;
     white-space: normal;
   }
+}
+
+/* Quiet gold interface ---------------------------------------------------
+   Action screens use the same restrained hierarchy as the supplied mobile
+   references: structure comes from spacing and fine rules, not white cards,
+   thick borders or large coloured containers. Keep this block last. */
+:root {
+  --bg-canvas: #090a08;
+  --bg-surface: #0f100e;
+  --bg-elevated: #151613;
+  --bg-input: #11120f;
+  --bg-hover: #1b1c18;
+  --border-subtle: #292a25;
+  --border-accent: rgba(201, 169, 93, 0.62);
+  --text-primary: #f1efe8;
+  --text-secondary: #aaa9a1;
+  --text-muted: #73746d;
+  --accent: #c9a95d;
+  --accent-strong: #ddc17d;
+  --status-error: #db796f;
+  --status-error-bg: #15110f;
+  --radius-sm: 9px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-card: none;
+  --shadow-sheet: 0 -22px 60px rgba(0, 0, 0, 0.52);
+}
+
+body,
+#root,
+.page-shell,
+.discover-page,
+.market-page,
+.page-shell:has(.market-page),
+.page-shell:has(.discover-page) {
+  background: var(--bg-canvas);
+}
+
+.page-shell {
+  color: var(--text-primary);
+}
+
+/* Route containers are layout regions, not decorative cards. */
+.route-page > .panel,
+.route-page > .narrow-panel,
+.recent-trades-panel,
+.market-page .recent-trades-panel,
+.market-page .market-browser,
+.vault-sidebar,
+.vault-main,
+.activity-panel,
+.trade-history-list,
+.rewards-companion-page > .panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.recent-trades-panel,
+.market-page .recent-trades-panel {
+  padding: 4px 0 18px;
+}
+
+.section-title,
+.panel-heading {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-title h2,
+.section-title h3,
+.panel-heading h2,
+.panel-heading h3 {
+  color: var(--text-primary);
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
+
+.section-title p,
+.panel-heading p {
+  max-width: 48ch;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* Compact controls: gold fill for the one dominant action, gold outline for
+   every secondary action. */
+.primary,
+.secondary,
+.outline-action,
+.join-circle-button,
+.exit-position-cta {
+  min-height: 38px;
+  border-radius: 999px;
+  padding: 8px 15px;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: none;
+}
+
+.primary,
+.join-circle-button {
+  border: 1px solid var(--accent);
+  color: #17150d;
+  background: var(--accent);
+}
+
+.primary:hover:not(:disabled),
+.join-circle-button:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  color: #17150d;
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.secondary,
+.outline-action {
+  border: 1px solid var(--border-accent);
+  color: #dfc47e;
+  background: transparent;
+}
+
+.secondary:hover:not(:disabled),
+.outline-action:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  color: #f0d997;
+  background: rgba(201, 169, 93, 0.07);
+}
+
+.icon-button {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  padding: 0;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  box-shadow: none;
+}
+
+.compact {
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+/* Section tabs use a quiet moving rule, rather than bright filled blocks. */
+.view-switch,
+.market-page .view-switch,
+.activity-view-tabs,
+.history-tabs,
+.vault-view-tabs {
+  gap: 18px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.view-switch button,
+.market-page .view-switch button,
+.activity-view-tabs button,
+.history-tabs button,
+.vault-view-tabs button {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 2px 11px;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.view-switch button::after,
+.activity-view-tabs button::after,
+.history-tabs button::after {
+  position: absolute;
+  right: 16%;
+  bottom: -1px;
+  left: 16%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+  transform: scaleX(0);
+  transition: transform 220ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.view-switch button.active,
+.market-page .view-switch button.active,
+.activity-view-tabs button.active,
+.history-tabs button.active,
+.vault-view-tabs button.active {
+  color: var(--text-primary);
+  background: transparent;
+  box-shadow: none;
+}
+
+.view-switch button.active::after,
+.activity-view-tabs button.active::after,
+.history-tabs button.active::after {
+  transform: scaleX(1);
+}
+
+/* Functional groupings remain readable, but sit close to the canvas with a
+   one-pixel rule and no ornamental shadow. */
+.panel,
+.creation-section,
+.plan-details,
+.weekday-picker,
+.plan-preview,
+.trust-summary,
+.join-position-review,
+.group-activation-card,
+.emergency-withdrawal-card,
+.group-exit-explainer,
+.market-fallback-card,
+.technical-details,
+.pace-summary,
+.reward-card,
+.reward-funding-note,
+.wallet-details > div,
+.test-token-card,
+.connection-row,
+.mini-vault-card,
+.listed-position-card,
+.purchased-position-card,
+.recent-trade-card,
+.trade-history-row,
+.timeline-item {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: none;
+}
+
+.creation-section,
+.plan-details,
+.weekday-picker,
+.plan-preview,
+.trust-summary,
+.join-position-review,
+.group-activation-card,
+.emergency-withdrawal-card,
+.group-exit-explainer,
+.market-fallback-card,
+.technical-details,
+.pace-summary {
+  padding: 14px;
+}
+
+.metrics > div,
+.settlement-grid > div,
+.listing-hero > div,
+.trade-card-values > span,
+.circle-summary-grid > div,
+.creation-review > div,
+.plan-preview dl > div,
+.buyer-listing-facts > span {
+  border: 1px solid #23241f;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+/* Errors communicate status without turning a whole section red. */
+.notice.error,
+.transaction.error,
+.inline-state-error {
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.inline-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  margin-top: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--bg-surface);
+}
+
+.inline-state::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--status-error);
+  content: "";
+}
+
+.inline-state {
+  position: relative;
+}
+
+.inline-state > svg {
+  margin-top: 1px;
+  color: var(--status-error);
+}
+
+.inline-state > div {
+  display: grid;
+  gap: 6px;
+}
+
+.inline-state strong {
+  color: #d98a80;
+  font-size: 11px;
+}
+
+.inline-state span {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.transaction.error {
+  border-left: 2px solid var(--status-error);
+}
+
+/* Inputs and selectors inherit the same low-noise surface. */
+input,
+textarea,
+select,
+.input-unit,
+.currency-toggle,
+.quick-amounts button,
+.weekday-picker button {
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--bg-input);
+  box-shadow: none;
+}
+
+.segmented {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 3px;
+  background: transparent;
+}
+
+.segmented button {
+  border-radius: 999px;
+}
+
+.segmented button.active {
+  border: 1px solid var(--border-accent);
+  color: #ead18d;
+  background: rgba(201, 169, 93, 0.08);
+}
+
+.mode-picker button.active {
+  border-color: var(--border-accent);
+  color: #ead18d;
+  background: rgba(201, 169, 93, 0.08);
+  box-shadow: none;
+}
+
+.testnet-banner {
+  border-color: #242520;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+@media (max-width: 560px) {
+  .page-shell {
+    width: 100%;
+  }
+
+  .route-page:not(.discover-page, .market-page) {
+    padding-inline: 14px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .route-page > .panel,
+  .recent-trades-panel,
+  .market-page .recent-trades-panel,
+  .market-page .market-browser,
+  .vault-sidebar,
+  .vault-main,
+  .activity-panel,
+  .trade-history-list {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .inline-state {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .inline-state .outline-action {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .section-title {
+    gap: 10px;
+  }
+}
+
+/* Savings-first mobile hierarchy ---------------------------------------- */
+.vault-list {
+  grid-template-columns: 1fr;
+  width: 100%;
+}
+
+.vault-sidebar .vault-row,
+.vault-sidebar .vault-row:hover,
+.vault-sidebar .vault-row.selected {
+  display: grid;
+  grid-template-columns: minmax(112px, 32%) minmax(0, 1fr);
+  width: 100%;
+  min-height: 190px;
+}
+
+.vault-sidebar .vault-art {
+  min-height: 100%;
+}
+
+.vault-sidebar .vault-collection-copy {
+  align-content: center;
+  gap: 9px;
+  padding: 16px;
+}
+
+.vault-sidebar .vault-collection-title strong {
+  font-size: 15px;
+}
+
+.vault-sidebar .vault-collection-copy > small {
+  display: none;
+}
+
+.vault-sidebar .vault-card-progress {
+  height: 7px;
+}
+
+.vault-sidebar .vault-card-footer b {
+  font-size: 11px;
+}
+
+.vault-sidebar .vault-collection-meta b,
+.vault-sidebar .vault-plan-line,
+.vault-sidebar .vault-card-action {
+  font-size: 10px;
+}
+
+.circle-recovery {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.circle-recovery > div {
+  display: grid;
+  gap: 5px;
+}
+
+.circle-recovery strong { color: var(--text-primary); }
+.circle-recovery span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.circle-recovery button { grid-column: 2; justify-self: start; }
+
+.discovery-compatibility {
+  margin-bottom: 14px;
+  color: var(--text-secondary);
+}
+
+.discovery-compatibility p {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 560px) {
+  .discover-page {
+    margin: 0;
+    padding: 8px 0 28px;
+  }
+
+  .discover-hero {
+    min-height: 0;
+    margin-bottom: 20px;
+    padding: 24px 4px 26px;
+  }
+
+  .discover-hero h1 {
+    margin: 8px 0 12px;
+    font-size: clamp(2.25rem, 13vw, 3.35rem);
+    line-height: .92;
+  }
+
+  .discover-hero p {
+    max-width: 30ch;
+    margin-bottom: 0;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .discover-section-heading {
+    align-items: center;
+  }
+
+  .discover-section-heading h2 {
+    font-size: 1.18rem;
+  }
+
+  .vault-sidebar {
+    width: 100%;
+    padding: 14px;
+  }
+
+  .vault-sidebar .vault-row,
+  .vault-sidebar .vault-row:hover,
+  .vault-sidebar .vault-row.selected {
+    grid-template-columns: 105px minmax(0, 1fr);
+    min-height: 205px;
+  }
+
+  .vault-sidebar .vault-art-mark {
+    width: 52px;
+    height: 52px;
+  }
+
+  .vault-sidebar .vault-collection-copy {
+    padding: 13px;
+  }
+
+  .vault-sidebar .vault-collection-meta {
+    gap: 5px;
+  }
+
+  .transaction {
+    right: 12px;
+    bottom: 82px;
+    left: 12px;
+    width: auto;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border-radius: 15px;
+    font-size: 11px;
+  }
+
+  .transaction p {
+    margin: 4px 0;
+    line-height: 1.35;
+  }
+
+  .market-flowline {
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    padding: 12px 9px;
+    font-size: 8px;
+    text-align: center;
+  }
+}
+
+/* Route shells stay invisible; only meaningful controls and data groups get a surface. */
+.route-page > .panel,
+.route-page > .narrow-panel,
+.market-page .recent-trades-panel,
+.market-page .market-browser,
+.dashboard-grid > .vault-sidebar,
+.dashboard-grid > .vault-main,
+.route-page > .activity-panel,
+.trade-history-layout > .trade-history-list,
+.rewards-companion-page > .panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }

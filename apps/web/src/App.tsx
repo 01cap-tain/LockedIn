@@ -84,6 +84,7 @@ import {
 } from "./lib/user-profile";
 import {
   ArrowRight,
+  AlertTriangle,
   BadgeCheck,
   CalendarDays,
   Check,
@@ -3638,9 +3639,20 @@ export function App() {
                 </button>
               </div>
               {publicTradesError && (
-                <div className="notice error">
-                  <strong>Recent exits unavailable</strong>
-                  <span>{publicTradesError}</span>
+                <div className="inline-state inline-state-error" role="alert">
+                  <AlertTriangle aria-hidden="true" size={18} />
+                  <div>
+                    <strong>Recent exits are temporarily unavailable</strong>
+                    <span>{publicTradesError}</span>
+                  </div>
+                  <button
+                    className="outline-action compact icon-action"
+                    disabled={!deploymentReady}
+                    onClick={() => void refreshPublicTradeHistory()}
+                    type="button"
+                  >
+                    <RefreshCw aria-hidden="true" size={14} /> Try again
+                  </button>
                 </div>
               )}
               <RecentTradeTable
