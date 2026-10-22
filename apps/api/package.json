@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "migrate": "tsx src/migrate.ts",
     "index": "tsx src/run-indexer.ts",
+    "backfill": "tsx src/backfill.ts",
     "test": "node --env-file-if-exists=../../.env ../../node_modules/vitest/vitest.mjs run src --pool=threads --maxWorkers=1",
     "typecheck": "tsc -b --noEmit"
   },

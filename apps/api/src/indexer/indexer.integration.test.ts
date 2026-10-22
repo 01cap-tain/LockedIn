@@ -91,6 +91,9 @@ const config: ApiConfig = {
   manifestPath: 'test',
   manifest: {
     chainId: 31_337,
+    deploymentId: 'test-deployment',
+    protocolVersion: 'lockedin-circle/test',
+    deploymentBlock: 100,
     explorer: 'http://example.test',
     contracts: {
       vaultFactory: { address: factory, blockNumber: 100 },
@@ -100,6 +103,7 @@ const config: ApiConfig = {
     },
   },
   deploymentBlock: 100,
+  deployments: [],
   confirmationDepth: 0,
   logRange: 10,
   pollIntervalMs: 1_000,
@@ -108,6 +112,12 @@ const config: ApiConfig = {
   host: '127.0.0.1',
   port: 3_001,
 }
+config.deployments = [{
+  manifestPath: config.manifestPath,
+  manifest: config.manifest,
+  deploymentBlock: config.deploymentBlock,
+  active: true,
+}]
 
 describeDatabase('PostgreSQL indexer persistence and reorganization recovery', () => {
   let database: IsolatedDatabase

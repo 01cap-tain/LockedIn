@@ -5,14 +5,14 @@ import { PostgresAuthRepository } from './auth/postgres-auth-repository.js'
 import { WalletAuthService } from './auth/auth-service.js'
 import type { ApiConfig } from './config.js'
 import type { DatabasePool } from './db.js'
-import type { BlockchainIndexer } from './indexer/indexer.js'
+import type { MultiDeploymentIndexer } from './indexer/multi-indexer.js'
 import { registerAuthRoutes } from './routes/auth-routes.js'
 import { registerReadRoutes } from './routes/read-routes.js'
 
 export async function buildApp(
   config: ApiConfig,
   pool: DatabasePool,
-  indexer: BlockchainIndexer,
+  indexer: MultiDeploymentIndexer,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: true })
   const auth = new WalletAuthService(

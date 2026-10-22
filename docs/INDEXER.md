@@ -8,11 +8,18 @@ Wallet authentication protects only notification records and preferences. It use
 
 ## Indexing lifecycle
 
+Configure `INDEXER_MANIFEST_PATH` for one deployment or
+`INDEXER_MANIFEST_PATHS` as a comma-separated list ordered from legacy to
+active. Each immutable deployment has its own `(chain_id, deployment_id)`
+cursor and registry row containing protocol version, factory address and
+deployment block, so moving frontend writes to a new factory cannot hide old
+vaults.
+
 1. Read the chain ID, contract addresses and deployment block from the versioned deployment manifest.
 2. Resume from `indexer_state.last_safe_block`, never block zero.
 3. Subtract the configured confirmation depth from the RPC head and query at most `INDEXER_LOG_RANGE` blocks per batch.
 4. Scan the factory, market, RewardPool and safety controller, then include every factory-discovered vault. Address batches are bounded to 50.
-5. Store block number/hash, transaction hash/index and log index. `(chain_id, transaction_hash, log_index)` is unique, so replay is idempotent.
+5. Store deployment ID, block number/hash, transaction hash/index and log index. `(deployment_id, transaction_hash, log_index)` is unique, so replay is idempotent.
 6. Before each batch, compare the saved canonical block hash to the RPC. On mismatch, find the latest retained common ancestor, delete orphaned events/blocks and rebuild all chain-derived projections from canonical events.
 7. Advance the cursor only in the same database transaction that stores all blocks, events and projections for the range.
 

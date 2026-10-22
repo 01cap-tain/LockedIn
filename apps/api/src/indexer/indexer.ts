@@ -81,6 +81,7 @@ export class BlockchainIndexer {
         `Indexer RPC chain ${network.chainId} does not match manifest ${this.config.manifest.chainId}.`,
       )
     }
+    await this.registerDeployment()
     let cursor = await this.loadCursor()
     cursor = await this.reconcileReorganization(cursor)
     const latest = await this.provider.getBlockNumber()
@@ -90,11 +91,11 @@ export class BlockchainIndexer {
     const fromBlock = cursor.blockNumber + 1
     const toBlock = Math.min(confirmed, fromBlock + this.config.logRange - 1)
     const events = await this.fetchEvents(fromBlock, toBlock)
-    const blocks = await Promise.all(
-      Array.from({ length: toBlock - fromBlock + 1 }, (_, offset) =>
-        this.provider.getBlock(fromBlock + offset),
-      ),
-    )
+    // Persist event blocks plus the batch checkpoint. Fetching every empty
+    // block made initial Amoy backfills needlessly RPC-bound while adding no
+    // projection data; sparse canonical checkpoints retain reorg recovery.
+    const blockNumbers = [...new Set([...events.map((event) => event.blockNumber), toBlock])]
+    const blocks = await Promise.all(blockNumbers.map((blockNumber) => this.provider.getBlock(blockNumber)))
     if (blocks.some((block) => !block)) throw new Error('RPC omitted a confirmed block.')
 
     await inTransaction(this.pool, async (client) => {
@@ -115,19 +116,19 @@ export class BlockchainIndexer {
         await projectEvent(client, stored)
         await this.enrichNotifications(client, stored)
       }
-      const finalBlock = blocks.at(-1)
+      const finalBlock = blocks.find((block) => block?.number === toBlock)
       if (!finalBlock) throw new Error('Confirmed block range was empty.')
       await client.query(
         `INSERT INTO indexer_state
-           (chain_id, last_safe_block, last_safe_hash, last_error, last_error_at, updated_at)
-         VALUES ($1, $2, $3, NULL, NULL, now())
-         ON CONFLICT (chain_id) DO UPDATE SET
+           (chain_id, deployment_id, last_safe_block, last_safe_hash, last_error, last_error_at, updated_at)
+         VALUES ($1, $2, $3, $4, NULL, NULL, now())
+         ON CONFLICT (chain_id, deployment_id) DO UPDATE SET
            last_safe_block = EXCLUDED.last_safe_block,
            last_safe_hash = EXCLUDED.last_safe_hash,
            last_error = NULL,
            last_error_at = NULL,
            updated_at = now()`,
-        [this.config.manifest.chainId, finalBlock.number, requiredHash(finalBlock.hash)],
+        [this.config.manifest.chainId, this.config.manifest.deploymentId, finalBlock.number, requiredHash(finalBlock.hash)],
       )
     })
     return toBlock - fromBlock + 1
@@ -137,6 +138,9 @@ export class BlockchainIndexer {
     const [cursor, latest] = await Promise.all([this.loadCursor(), this.provider.getBlockNumber()])
     return {
       chainId: this.config.manifest.chainId,
+      deploymentId: this.config.manifest.deploymentId,
+      protocolVersion: this.config.manifest.protocolVersion,
+      factoryAddress: this.config.manifest.contracts.vaultFactory.address,
       deploymentBlock: this.config.deploymentBlock,
       lastSafeBlock: cursor.blockNumber,
       lastSafeHash: cursor.blockHash,
@@ -155,11 +159,12 @@ export class BlockchainIndexer {
     lastErrorAt: string | null
   }> {
     const result = await this.pool.query<CursorRow>(
-      'SELECT last_safe_block, last_safe_hash, last_error, last_error_at FROM indexer_state WHERE chain_id = $1',
-      [this.config.manifest.chainId],
+      'SELECT last_safe_block, last_safe_hash, last_error, last_error_at FROM indexer_state WHERE chain_id = $1 AND deployment_id = $2',
+      [this.config.manifest.chainId, this.config.manifest.deploymentId],
     )
     const row = result.rows[0]
-    if (row) {
+    const deploymentParent = Math.max(0, this.config.deploymentBlock - 1)
+    if (row && Number(row.last_safe_block) >= deploymentParent) {
       return {
         blockNumber: Number(row.last_safe_block),
         blockHash: lower(row.last_safe_hash),
@@ -167,7 +172,7 @@ export class BlockchainIndexer {
         lastErrorAt: row.last_error_at?.toISOString() ?? null,
       }
     }
-    const blockNumber = Math.max(0, this.config.deploymentBlock - 1)
+    const blockNumber = deploymentParent
     const block = await this.provider.getBlock(blockNumber)
     if (!block) throw new Error(`RPC cannot load deployment parent block ${blockNumber}.`)
     return {
@@ -211,8 +216,8 @@ export class BlockchainIndexer {
 
     await inTransaction(this.pool, async (client) => {
       await client.query(
-        'DELETE FROM chain_events WHERE chain_id = $1 AND block_number > $2',
-        [this.config.manifest.chainId, ancestorNumber],
+        'DELETE FROM chain_events WHERE chain_id = $1 AND deployment_id = $2 AND block_number > $3',
+        [this.config.manifest.chainId, this.config.manifest.deploymentId, ancestorNumber],
       )
       await client.query(
         'DELETE FROM indexed_blocks WHERE chain_id = $1 AND block_number > $2',
@@ -221,13 +226,13 @@ export class BlockchainIndexer {
       await rebuildProjections(client)
       await client.query(
         `INSERT INTO indexer_state
-           (chain_id, last_safe_block, last_safe_hash, updated_at)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (chain_id) DO UPDATE SET
+           (chain_id, deployment_id, last_safe_block, last_safe_hash, updated_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (chain_id, deployment_id) DO UPDATE SET
            last_safe_block = EXCLUDED.last_safe_block,
            last_safe_hash = EXCLUDED.last_safe_hash,
            updated_at = now()`,
-        [this.config.manifest.chainId, ancestorNumber, requiredHash(ancestor.hash)],
+        [this.config.manifest.chainId, this.config.manifest.deploymentId, ancestorNumber, requiredHash(ancestor.hash)],
       )
     })
     return {
@@ -244,10 +249,10 @@ export class BlockchainIndexer {
     const coreEvents = coreLogs.flatMap((log) => {
       const kind = this.coreKinds.get(lower(log.address))
       if (!kind) return []
-      const decoded = decodeLog(this.config.manifest.chainId, kind, log)
+      const decoded = decodeLog(this.config.manifest.chainId, this.config.manifest.deploymentId, kind, log)
       return decoded ? [decoded] : []
     })
-    const existing = await this.pool.query<{ address: string }>('SELECT address FROM vaults')
+    const existing = await this.pool.query<{ address: string }>('SELECT address FROM vaults WHERE deployment_id = $1', [this.config.manifest.deploymentId])
     const vaultAddresses = new Set(existing.rows.map(({ address }) => lower(address)))
     for (const event of coreEvents) {
       if (event.eventName === 'VaultCreated') {
@@ -256,7 +261,7 @@ export class BlockchainIndexer {
     }
     const vaultLogs = await this.fetchLogs([...vaultAddresses], fromBlock, toBlock)
     const vaultEvents = vaultLogs.flatMap((log) => {
-      const decoded = decodeLog(this.config.manifest.chainId, 'vault', log)
+      const decoded = decodeLog(this.config.manifest.chainId, this.config.manifest.deploymentId, 'vault', log)
       return decoded ? [decoded] : []
     })
     const unique = new Map<string, CanonicalEvent>()
@@ -380,22 +385,46 @@ export class BlockchainIndexer {
     const block = await this.provider.getBlock(blockNumber).catch(() => null)
     await this.pool.query(
       `INSERT INTO indexer_state
-         (chain_id, last_safe_block, last_safe_hash, last_error, last_error_at, updated_at)
-       VALUES ($1, $2, $3, $4, now(), now())
-       ON CONFLICT (chain_id) DO UPDATE SET
+         (chain_id, deployment_id, last_safe_block, last_safe_hash, last_error, last_error_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now(), now())
+       ON CONFLICT (chain_id, deployment_id) DO UPDATE SET
          last_error = EXCLUDED.last_error,
          last_error_at = now(),
          updated_at = now()`,
       [
         this.config.manifest.chainId,
+        this.config.manifest.deploymentId,
         blockNumber,
         block?.hash ? lower(block.hash) : 'unknown',
         message,
       ],
     )
     await this.pool.query(
-      `INSERT INTO indexer_errors (chain_id, message) VALUES ($1, $2)`,
-      [this.config.manifest.chainId, message],
+      `INSERT INTO indexer_errors (chain_id, deployment_id, message) VALUES ($1, $2, $3)`,
+      [this.config.manifest.chainId, this.config.manifest.deploymentId, message],
+    )
+  }
+
+  private async registerDeployment(): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO protocol_deployments
+         (deployment_id, chain_id, protocol_version, factory_address, deployment_block, manifest_path, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (deployment_id) DO UPDATE SET
+         protocol_version = EXCLUDED.protocol_version,
+         factory_address = EXCLUDED.factory_address,
+         deployment_block = EXCLUDED.deployment_block,
+         manifest_path = EXCLUDED.manifest_path,
+         active = EXCLUDED.active`,
+      [
+        this.config.manifest.deploymentId,
+        this.config.manifest.chainId,
+        this.config.manifest.protocolVersion,
+        lower(this.config.manifest.contracts.vaultFactory.address),
+        this.config.deploymentBlock,
+        this.config.manifestPath,
+        this.config.deployments.find((deployment) => deployment.manifest.deploymentId === this.config.manifest.deploymentId)?.active ?? false,
+      ],
     )
   }
 }

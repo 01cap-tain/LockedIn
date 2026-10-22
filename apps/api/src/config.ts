@@ -14,6 +14,7 @@ const environmentSchema = z.object({
   INDEXER_MANIFEST_PATH: z.string().min(1).default(
     'packages/contracts/deployments/local/latest.json',
   ),
+  INDEXER_MANIFEST_PATHS: z.string().optional(),
   INDEXER_CONFIRMATION_DEPTH: z.coerce.number().int().min(0).max(1_000).default(12),
   INDEXER_LOG_RANGE: z.coerce.number().int().min(1).max(2_000).default(100),
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().min(500).default(5_000),
@@ -25,6 +26,9 @@ const environmentSchema = z.object({
 
 export interface DeploymentManifest {
   chainId: number
+  deploymentId: string
+  protocolVersion: string
+  deploymentBlock: number
   explorer: string
   deploymentTimestamp?: string
   contracts: {
@@ -42,6 +46,12 @@ export interface ApiConfig {
   manifestPath: string
   manifest: DeploymentManifest
   deploymentBlock: number
+  deployments: Array<{
+    manifestPath: string
+    manifest: DeploymentManifest
+    deploymentBlock: number
+    active: boolean
+  }>
   confirmationDepth: number
   logRange: number
   pollIntervalMs: number
@@ -66,29 +76,32 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     process.loadEnvFile(localEnvironmentPath)
   }
   const parsed = environmentSchema.parse(environment)
-  const manifestPath = resolveManifestPath(parsed.INDEXER_MANIFEST_PATH)
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as DeploymentManifest
-  const required = [
-    manifest.contracts.vaultFactory,
-    manifest.contracts.earlyExitMarket,
-    manifest.contracts.rewardPool,
-    manifest.contracts.mockUsdt,
-  ]
-  if (!Number.isSafeInteger(manifest.chainId) || manifest.chainId <= 0) {
-    throw new Error('Deployment manifest has an invalid chain ID.')
-  }
-  for (const contract of required) {
-    getAddress(contract.address)
-    if (!Number.isSafeInteger(contract.blockNumber) || contract.blockNumber < 0) {
-      throw new Error('Deployment manifest has an invalid deployment block.')
+  const manifestPaths = (parsed.INDEXER_MANIFEST_PATHS?.split(',') ?? [parsed.INDEXER_MANIFEST_PATH])
+    .map((value) => resolveManifestPath(value.trim()))
+  const deployments = manifestPaths.map((manifestPath, index) => {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as DeploymentManifest
+    const required = [manifest.contracts.vaultFactory, manifest.contracts.earlyExitMarket, manifest.contracts.rewardPool, manifest.contracts.mockUsdt]
+    if (!Number.isSafeInteger(manifest.chainId) || manifest.chainId <= 0 || !manifest.deploymentId || !manifest.protocolVersion || !Number.isSafeInteger(manifest.deploymentBlock) || manifest.deploymentBlock < 0) {
+      throw new Error('Deployment manifest has an invalid immutable identity.')
     }
+    for (const contract of required) {
+      getAddress(contract.address)
+      if (!Number.isSafeInteger(contract.blockNumber) || contract.blockNumber < 0) throw new Error('Deployment manifest has an invalid deployment block.')
+    }
+    return { manifestPath, manifest, deploymentBlock: manifest.deploymentBlock, active: index === manifestPaths.length - 1 }
+  })
+  const active = deployments.at(-1)
+  if (!active) throw new Error('At least one deployment manifest is required.')
+  if (deployments.some((deployment) => deployment.manifest.chainId !== active.manifest.chainId)) {
+    throw new Error('All configured deployments must use the same indexer RPC chain.')
   }
   return {
     databaseUrl: parsed.DATABASE_URL,
     rpcUrl: parsed.INDEXER_RPC_URL,
-    manifestPath,
-    manifest,
-    deploymentBlock: Math.min(...required.map((contract) => contract.blockNumber)),
+    manifestPath: active.manifestPath,
+    manifest: active.manifest,
+    deploymentBlock: active.deploymentBlock,
+    deployments,
     confirmationDepth: parsed.INDEXER_CONFIRMATION_DEPTH,
     logRange: parsed.INDEXER_LOG_RANGE,
     pollIntervalMs: parsed.INDEXER_POLL_INTERVAL_MS,

@@ -1,14 +1,14 @@
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDatabasePool } from './db.js'
-import { BlockchainIndexer } from './indexer/indexer.js'
+import { MultiDeploymentIndexer } from './indexer/multi-indexer.js'
 import { runMigrations } from './migrations.js'
 import { runNotificationSweep } from './notifications/sweep.js'
 
 const config = loadConfig()
 const pool = createDatabasePool(config.databaseUrl)
 await runMigrations(pool)
-const indexer = new BlockchainIndexer(config, pool)
+const indexer = new MultiDeploymentIndexer(config, pool)
 const app = await buildApp(config, pool, indexer)
 const indexerTask = indexer.run()
 
@@ -33,7 +33,7 @@ process.once('SIGTERM', () => void shutdown())
 try {
   await app.listen({ host: config.host, port: config.port })
   app.log.info(
-    { chainId: config.manifest.chainId, deploymentBlock: config.deploymentBlock },
+    { chainId: config.manifest.chainId, deploymentCount: config.deployments.length },
     'LockedIn Circle read-only indexer API started.',
   )
 } catch (error) {

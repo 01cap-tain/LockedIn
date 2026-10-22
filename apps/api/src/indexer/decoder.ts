@@ -13,6 +13,7 @@ function jsonValue(value: unknown): string | number | boolean {
 
 export function decodeLog(
   chainId: number,
+  deploymentId: string,
   kind: ContractKind,
   log: Log,
 ): CanonicalEvent | null {
@@ -32,6 +33,7 @@ export function decodeLog(
   }
   return {
     chainId,
+    deploymentId,
     blockNumber: log.blockNumber,
     blockHash: log.blockHash.toLowerCase(),
     transactionHash: log.transactionHash.toLowerCase(),

@@ -51,13 +51,14 @@ export async function insertCanonicalEvent(
 ): Promise<StoredEvent | null> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO chain_events
-       (chain_id, block_number, block_hash, transaction_hash, transaction_index,
+       (chain_id, deployment_id, block_number, block_hash, transaction_hash, transaction_index,
         log_index, contract_address, event_name, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (chain_id, transaction_hash, log_index) DO NOTHING
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (deployment_id, transaction_hash, log_index) DO NOTHING
      RETURNING id`,
     [
       event.chainId,
+      event.deploymentId,
       event.blockNumber,
       event.blockHash,
       event.transactionHash,
@@ -80,10 +81,11 @@ export async function projectEvent(
     case 'VaultCreated': {
       await client.query(
         `INSERT INTO vaults
-           (address, creator, is_group, mode, yield_adapter, maturity,
+           (address, deployment_id, creator, is_group, mode, yield_adapter, maturity,
             lifecycle, creation_transaction_hash, creation_block_number, source_event_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (address) DO UPDATE SET
+           deployment_id = EXCLUDED.deployment_id,
            creator = EXCLUDED.creator,
            is_group = EXCLUDED.is_group,
            mode = EXCLUDED.mode,
@@ -94,6 +96,7 @@ export async function projectEvent(
            source_event_id = EXCLUDED.source_event_id`,
         [
           text(event, 'vault').toLowerCase(),
+          event.deploymentId,
           text(event, 'creator').toLowerCase(),
           event.payload.isGroup,
           integer(event, 'mode'),
@@ -536,6 +539,7 @@ export async function rebuildProjections(client: DatabaseClient): Promise<void> 
   const result = await client.query<{
     id: string
     chain_id: string
+    deployment_id: string
     block_number: string
     block_hash: string
     transaction_hash: string
@@ -545,7 +549,7 @@ export async function rebuildProjections(client: DatabaseClient): Promise<void> 
     event_name: string
     payload: Record<string, string | number | boolean>
   }>(`
-    SELECT id, chain_id, block_number, block_hash, transaction_hash,
+    SELECT id, chain_id, deployment_id, block_number, block_hash, transaction_hash,
            transaction_index, log_index, contract_address, event_name, payload
     FROM chain_events
     ORDER BY block_number, transaction_index, log_index
@@ -554,6 +558,7 @@ export async function rebuildProjections(client: DatabaseClient): Promise<void> 
     await projectEvent(client, {
       id: row.id,
       chainId: Number(row.chain_id),
+      deploymentId: row.deployment_id,
       blockNumber: Number(row.block_number),
       blockHash: row.block_hash,
       transactionHash: row.transaction_hash,

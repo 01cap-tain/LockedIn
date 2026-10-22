@@ -2,6 +2,7 @@ import type { ContractKind } from './abis.js'
 
 export interface CanonicalEvent {
   chainId: number
+  deploymentId: string
   blockNumber: number
   blockHash: string
   transactionHash: string
@@ -19,6 +20,9 @@ export interface StoredEvent extends CanonicalEvent {
 
 export interface IndexerStatus {
   chainId: number
+  deploymentId: string
+  protocolVersion: string
+  factoryAddress: string
   deploymentBlock: number
   lastSafeBlock: number
   lastSafeHash: string
