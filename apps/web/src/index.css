@@ -7302,3 +7302,500 @@ select,
   :where(.profile-sheet, .connection-sheet, .vault-detail-sheet, .market-detail-sheet),
   .creation-step-frame { animation: none; }
 }
+
+/* Final mobile readability pass ------------------------------------------
+   Keep action surfaces on the layout viewport when the virtual keyboard
+   appears. Dynamic viewport units would otherwise shrink and jump the form. */
+:where(.profile-sheet, .connection-sheet, .vault-detail-sheet, .market-detail-sheet) {
+  height: 80vh;
+  max-height: 80vh;
+  overflow-anchor: none;
+}
+
+.route-page:has(.creation-wizard),
+.creation-wizard { min-height: 100vh; }
+
+.creation-wizard {
+  height: 100vh;
+  overflow-anchor: none;
+}
+
+.creation-step-frame { min-height: calc(100vh - 136px); }
+
+.frequency-explainer {
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Success screens must remain celebratory and readable on charcoal. */
+.vault-created-state,
+.vault-created-state h2,
+.creation-receipt dd { color: var(--text-primary); }
+
+.vault-created-state > p,
+.vault-created-state .text-action { color: var(--text-secondary); }
+
+.completion-kicker,
+.creation-receipt dt { color: var(--accent-strong); }
+
+.completion-watermark {
+  border-color: rgba(201, 169, 93, .28);
+  color: #17160d;
+  background: var(--accent);
+  box-shadow: 0 0 0 9px rgba(201, 169, 93, .08), 0 18px 40px rgba(0, 0, 0, .34);
+}
+
+.completion-watermark svg {
+  color: inherit;
+  stroke: currentColor;
+}
+
+.creation-receipt { border-color: var(--border-strong); }
+
+/* Savings history and receipts share one deliberate dark contrast system. */
+.trade-history-list,
+.trade-receipt-shell,
+.activity-panel,
+.trade-receipt { color: var(--text-primary); }
+
+.trade-history-list .section-title h2,
+.trade-receipt h2,
+.trade-receipt strong,
+.activity-panel .section-title h2,
+.timeline-item strong { color: var(--text-primary); }
+
+.trade-history-list .section-title p,
+.trade-receipt p,
+.trade-receipt > footer,
+.activity-panel .section-title p,
+.timeline-item p,
+.timeline-item small,
+.trade-history-row small,
+.receipt-trader small { color: var(--text-secondary); }
+
+.trade-history-row {
+  min-width: 0;
+  color: var(--text-primary);
+  background: #11120f;
+}
+
+.trade-history-row strong,
+.trade-history-row small,
+.timeline-item p,
+.timeline-item small {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.receipt-trader code,
+.timeline-item code,
+.timeline-item a,
+.trade-receipt > footer a { color: var(--accent-strong); }
+
+.receipt-summary > div,
+.receipt-grid > div,
+.receipt-parties > div,
+.timeline-item {
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--bg-input);
+}
+
+.receipt-summary small,
+.receipt-grid small,
+.receipt-parties dt { color: var(--text-muted); }
+
+.receipt-parties dd {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Keep every savings card readable at the same width and density. */
+.vault-sidebar .vault-row {
+  min-width: 0;
+  min-height: 210px;
+  grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
+}
+
+.vault-sidebar .vault-collection-copy,
+.vault-sidebar .vault-collection-title,
+.vault-sidebar .vault-collection-meta,
+.vault-sidebar .vault-plan-line { min-width: 0; }
+
+.vault-sidebar .vault-collection-title {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.vault-sidebar .vault-collection-title strong,
+.vault-sidebar .vault-collection-meta b,
+.vault-sidebar .vault-plan-line {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+@media (max-width: 390px) {
+  .vault-sidebar .vault-row {
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .vault-sidebar .vault-art { min-height: 154px; }
+}
+
+/* Release-candidate mobile dock ----------------------------------------- */
+.bottom-nav {
+  z-index: 160;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 12px;
+  display: flex;
+  width: min(calc(100% - 24px), 536px);
+  align-items: stretch;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.bottom-nav-main {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 25px;
+  padding: 7px 9px;
+  background: rgba(27, 28, 25, .94);
+  box-shadow: 0 15px 42px rgba(0, 0, 0, .42), inset 0 1px rgba(255, 255, 255, .05);
+  backdrop-filter: blur(20px);
+  transition: opacity 220ms ease, filter 220ms ease, transform 220ms ease;
+}
+
+.bottom-nav-main button {
+  display: grid;
+  min-height: 47px;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  border: 0;
+  border-radius: 18px;
+  padding: 4px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.bottom-nav-main button svg { width: 18px; height: 18px; }
+
+.bottom-nav-main button.active {
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, .055);
+}
+
+.bottom-create-button {
+  display: grid;
+  width: 62px;
+  min-width: 62px;
+  height: 62px;
+  place-items: center;
+  align-self: center;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 50%;
+  padding: 0;
+  color: #17160d;
+  background: var(--accent);
+  box-shadow: 0 15px 42px rgba(0, 0, 0, .45), inset 0 1px rgba(255, 255, 255, .38);
+  transition: transform 260ms cubic-bezier(.16, 1, .3, 1), background 220ms ease;
+}
+
+.bottom-create-button svg { width: 25px; height: 25px; }
+.bottom-create-button:active { transform: scale(.94); }
+.bottom-nav.create-open .bottom-create-button { transform: rotate(90deg); }
+.bottom-nav.create-open .bottom-nav-main {
+  opacity: .08;
+  filter: blur(6px);
+  pointer-events: none;
+  transform: scale(.97);
+}
+
+.create-action-layer {
+  position: fixed;
+  z-index: 150;
+  inset: 0;
+}
+
+.create-action-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgba(4, 5, 4, .72);
+  backdrop-filter: blur(24px) saturate(.7);
+  animation: create-backdrop-in 240ms ease-out both;
+}
+
+.create-action-stack {
+  position: absolute;
+  right: max(20px, calc((100vw - 536px) / 2));
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+}
+
+.create-action-stack > button:not(.create-action-close) {
+  display: flex;
+  min-width: 230px;
+  align-items: center;
+  gap: 13px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 19px;
+  padding: 10px 14px 10px 10px;
+  color: var(--text-primary);
+  background: #151613;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .4);
+  animation: create-option-rise 360ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.create-action-stack > button:nth-child(2) { animation-delay: 45ms; }
+
+.create-action-stack > button:not(.create-action-close) > span {
+  display: grid;
+  width: 43px;
+  height: 43px;
+  place-items: center;
+  border-radius: 14px;
+  color: #17160d;
+  background: var(--accent);
+}
+
+.create-action-stack > button:not(.create-action-close) strong {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.create-action-close {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 50%;
+  color: var(--text-primary);
+  background: #1c1d1a;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .4);
+  animation: create-option-rise 400ms 85ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes create-backdrop-in { from { opacity: 0; } }
+@keyframes create-option-rise {
+  from { opacity: 0; transform: translateY(24px) scale(.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Every bottom sheet owns an opaque charcoal surface. Parent content remains
+   visible only through the deliberately dimmed backdrop, never through text. */
+:where(.profile-sheet, .connection-sheet, .vault-detail-sheet, .market-detail-sheet) {
+  border-color: #2c2d28 !important;
+  color: var(--text-primary) !important;
+  background: #0d0e0c !important;
+  box-shadow: 0 -24px 70px rgba(0, 0, 0, .58) !important;
+  will-change: transform;
+}
+
+.vault-detail-sheet,
+.market-detail-sheet {
+  height: 80vh;
+  min-height: 80vh;
+  max-height: 80vh;
+  animation-duration: 440ms;
+}
+
+.vault-detail-backdrop,
+.market-sheet-backdrop {
+  background: rgba(2, 3, 2, .76);
+  backdrop-filter: blur(8px);
+}
+
+/* Exit choices show identity first and never include a zero-value claim. */
+.market-position-sheet .market-position-picker {
+  gap: 9px;
+}
+
+.market-position-sheet .market-position-picker > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 17px;
+  padding: 12px;
+  color: var(--text-primary);
+  background: #151613;
+  text-align: left;
+}
+
+.exit-position-name,
+.exit-position-value {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.exit-position-name strong,
+.exit-position-value strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exit-position-name small,
+.exit-position-value small {
+  color: var(--text-muted) !important;
+  font-size: 9px;
+}
+
+.exit-position-value { justify-items: end; text-align: right; }
+
+/* One card system at every phone width. Do not switch to a different stacked
+   composition on narrower devices, which made otherwise identical goals jump. */
+.vault-sidebar .vault-row,
+.vault-sidebar .vault-row:hover,
+.vault-sidebar .vault-row.selected {
+  grid-template-columns: 116px minmax(0, 1fr) !important;
+  min-height: 218px !important;
+  overflow: hidden;
+}
+
+.vault-sidebar .vault-art {
+  width: 116px;
+  min-height: 202px !important;
+  height: 100%;
+}
+
+.vault-sidebar .vault-collection-copy {
+  width: 100%;
+  align-content: center;
+  padding: 14px !important;
+}
+
+.vault-sidebar .vault-collection-title strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.vault-sidebar .vault-collection-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 360px) {
+  .vault-sidebar .vault-row,
+  .vault-sidebar .vault-row:hover,
+  .vault-sidebar .vault-row.selected {
+    grid-template-columns: 104px minmax(0, 1fr) !important;
+  }
+
+  .vault-sidebar .vault-art { width: 104px; }
+  .vault-sidebar .vault-collection-copy { padding: 11px !important; }
+  .create-action-stack { right: 16px; }
+}
+
+/* Final sheet and dock geometry. The wallet chooser is intentionally compact;
+   detailed vault and market actions remain tall, padded foreground sheets. */
+.overlay-layer {
+  z-index: 200;
+}
+
+.connection-sheet {
+  height: 55vh !important;
+  min-height: 0 !important;
+  max-height: 55vh !important;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom)) !important;
+}
+
+.connection-sheet .sheet-grabber { margin-bottom: 10px; }
+.connection-sheet > p { margin-bottom: 10px; }
+
+.vault-sheet-loading {
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.vault-sheet-loading .loading-lottie {
+  width: 118px;
+  height: 104px;
+}
+
+.vault-sheet-loading > strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.vault-sheet-loading > small {
+  max-width: 32ch;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.vault-sheet-loading .skeleton-line,
+.vault-sheet-loading .skeleton-metrics {
+  width: 100%;
+}
+
+.vault-detail-backdrop,
+.market-sheet-backdrop {
+  z-index: 180;
+}
+
+.dashboard-grid > .vault-main.vault-detail-sheet,
+.market-detail-sheet {
+  z-index: 190;
+  padding: 16px 14px calc(28px + env(safe-area-inset-bottom)) !important;
+}
+
+.bottom-nav-main {
+  border-radius: 34px;
+  padding: 7px;
+}
+
+.bottom-nav-main button {
+  border-radius: 27px;
+}
+
+.bottom-create-button,
+.bottom-nav > .bottom-create-button {
+  border: 2px solid rgba(255, 255, 255, .16);
+  color: #17160d;
+  background: #e3c35f !important;
+  box-shadow: 0 0 0 6px rgba(227, 195, 95, .12), 0 15px 42px rgba(0, 0, 0, .52);
+}
+
+.bottom-create-button svg {
+  color: #17160d;
+  stroke-width: 2.8;
+}
+
+.create-action-stack {
+  bottom: calc(92px + env(safe-area-inset-bottom));
+}
+
+.create-action-stack > button:not(.create-action-close) {
+  border-radius: 24px;
+}

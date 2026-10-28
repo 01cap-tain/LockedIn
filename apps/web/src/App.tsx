@@ -284,6 +284,25 @@ function amountLabel(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function contributionPlanText(
+  contributionAmount: number | null | undefined,
+  frequency: ContributionFrequency,
+  preferredDays: number[]
+): string {
+  if (!contributionAmount || contributionAmount <= 0) return "Flexible contributions";
+  const amount = `${amountLabel(contributionAmount)} USDT`;
+  if (frequency === "daily") return `${amount} every day`;
+  if (frequency === "monthly") return `${amount} once a month`;
+  const selectedDays = WEEK_DAYS.filter((day) => preferredDays.includes(day.value))
+    .map((day) => day.label);
+  if (selectedDays.length > 0) {
+    return `${amount} every ${selectedDays.join(", ")} — ${amount} on each chosen day`;
+  }
+  return frequency === "weekly"
+    ? `${amount} each week; choose the saving days`
+    : `${amount} on the days you choose`;
+}
+
 function daysUntil(date: Date, now = Date.now()): number {
   return Math.max(0, Math.ceil((date.getTime() - now) / 86_400_000));
 }
@@ -646,6 +665,9 @@ export function App() {
   const [joinPurpose, setJoinPurpose] = useState("");
   const [vaults, setVaults] = useState<VaultSummary[]>([]);
   const [snapshot, setSnapshot] = useState<VaultSnapshot | null>(null);
+  // Cached snapshots make repeat vault opens instant. Every open still starts a
+  // fresh chain read; cached values are display-only and never authorize writes.
+  const vaultSnapshotCache = useRef(new Map<string, VaultSnapshot>());
   const [depositAmount, setDepositAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("1");
   const [listings, setListings] = useState<ExitListingSnapshot[]>([]);
@@ -678,6 +700,7 @@ export function App() {
   const [publicGroupsError, setPublicGroupsError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileUsernameDraft, setProfileUsernameDraft] = useState("");
@@ -936,6 +959,7 @@ export function App() {
         (vault) =>
           vault.access === "owner" &&
           vault.isOriginalMember &&
+          Number(vault.currentValue) > 0 &&
           vault.maturity.getTime() > Date.now() &&
           !activePositionKeys.has(
             `${vault.address.toLowerCase()}:${vault.positionId.toString()}`
@@ -1349,6 +1373,7 @@ export function App() {
     setMenuOpen(false);
     setAccountMenuOpen(false);
     setProfileOpen(false);
+    setCreateMenuOpen(false);
     if (nextRoute !== "market" && route === "market") {
       setMarketPositionPickerOpen(false);
       setSnapshot(null);
@@ -1363,6 +1388,14 @@ export function App() {
       return;
     }
     window.location.hash = `#/${nextRoute}`;
+  }
+
+  function startVaultCreation(nextMode: "personal" | "group"): void {
+    setMode(nextMode);
+    setCreationStep(0);
+    setCreatedVaultReceipt(null);
+    setCreateMenuOpen(false);
+    navigate("vaults");
   }
 
   function requestGroupJoin(group: PublicGroupSummary): void {
@@ -1461,13 +1494,21 @@ export function App() {
     positionId?: bigint,
     session = requireSession()
   ): Promise<void> {
-    setOpeningVault(true);
+    const requestedKey = `${address.toLowerCase()}:${positionId?.toString() ?? "connected"}`;
+    const cached = vaultSnapshotCache.current.get(requestedKey);
+    if (cached) setSnapshot(cached);
+    setOpeningVault(!cached);
     let next: VaultSnapshot;
     try {
       next = await loadVault(session.signer, address, positionId);
       // Present principal, progress and ownership immediately. Secondary exit
       // history must never hold the visible vault sheet hostage.
       setSnapshot(next);
+      vaultSnapshotCache.current.set(requestedKey, next);
+      vaultSnapshotCache.current.set(
+        `${address.toLowerCase()}:${next.positionId.toString()}`,
+        next
+      );
     } finally {
       setOpeningVault(false);
     }
@@ -1498,7 +1539,7 @@ export function App() {
     action: () => Promise<void>,
     success: string,
     successCelebration?: CelebrationState
-  ) {
+  ): Promise<boolean> {
     setTransaction({ status: "pending", message: "Checking wallet balance…" });
     try {
       await assertWalletCanAffordTransaction();
@@ -1506,11 +1547,13 @@ export function App() {
       await action();
       setTransaction({ status: "success", message: success });
       if (successCelebration) setCelebration(successCelebration);
+      return true;
     } catch (error) {
       setTransaction({
         status: "error",
         message: describeContractError(error),
       });
+      return false;
     }
   }
 
@@ -1540,19 +1583,26 @@ export function App() {
   ) {
     // Always reload confirmed chain state after a transaction; optimistic UI
     // state is unsafe for balances, ownership and listing availability.
-    await runTransaction(
+    const confirmed = await runTransaction(
       label,
-      async () => {
-        await action();
-        await refreshPortfolio();
-        if (!snapshot && selectedListing)
-          setExitState(
-            await loadExitListing(requireSession().signer, selectedListing.id)
-          );
-      },
+      action,
       success,
       successCelebration
     );
+    if (!confirmed) return;
+
+    // A confirmed transaction and a follow-up RPC refresh are separate
+    // outcomes. Never report a successful on-chain action as failed merely
+    // because a public Amoy endpoint was slow immediately afterwards.
+    try {
+      await refreshPortfolio();
+      if (!snapshot && selectedListing)
+        setExitState(
+          await loadExitListing(requireSession().signer, selectedListing.id)
+        );
+    } catch (error) {
+      console.warn("Confirmed transaction; follow-up refresh deferred", error);
+    }
   }
 
   async function createVaultSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1712,7 +1762,6 @@ export function App() {
   }
 
   const slowOperationActive =
-    openingVault ||
     (route === "discover" && publicGroupsStatus === "loading") ||
     evm.status === "connecting" ||
     nimiq.status === "connecting" ||
@@ -1762,6 +1811,16 @@ export function App() {
                   <strong>{displayedUsername}</strong>
                   <small>{profileWalletAddress ? short(profileWalletAddress) : "Not connected"}</small>
                 </div>
+                <button
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    setProfileOpen(true);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <UserRound aria-hidden="true" size={15} /><span>Open profile</span><small>Goals and wallets</small>
+                </button>
                 <button
                   onClick={async () => {
                     if (!profileWalletAddress) return;
@@ -2014,8 +2073,9 @@ export function App() {
                   <label><span>Your target</span><div className="input-unit"><input min="0.000001" onChange={(event) => setJoinTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={joinTarget} /><b>USDT</b></div></label>
                   <label><span>Emergency allocation</span><select onChange={(event) => setJoinEmergencyPercent(Number(event.target.value))} value={joinEmergencyPercent}>{[10, 11, 12, 13, 14, 15].map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
                   <label><span>Contribution amount</span><div className="input-unit"><input min="0.000001" onChange={(event) => setJoinContribution(event.target.value)} placeholder="Example: 20" step="0.000001" type="number" value={joinContribution} /><b>USDT</b></div><QuickAmounts values={[5, 10, 20]} unit="USDT" value={joinContribution} onSelect={setJoinContribution} /></label>
-                  <label><span>Frequency</span><select onChange={(event) => setJoinFrequency(event.target.value as ContributionFrequency)} value={joinFrequency}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+                  <label><span>How often will you save?</span><select onChange={(event) => setJoinFrequency(event.target.value as ContributionFrequency)} value={joinFrequency}><option value="daily">Every day</option><option value="weekly">Chosen days each week</option><option value="monthly">Once a month</option><option value="custom">Flexible days</option></select></label>
                   {(joinFrequency === "weekly" || joinFrequency === "custom") && <fieldset className="weekday-picker full-width"><legend>Preferred days</legend><div>{WEEK_DAYS.map((day) => <button aria-pressed={joinPreferredDays.includes(day.value)} className={joinPreferredDays.includes(day.value) ? "active" : ""} key={day.value} onClick={() => setJoinPreferredDays((current) => current.includes(day.value) ? current.filter((value) => value !== day.value) : [...current, day.value])} type="button">{day.label}</button>)}</div></fieldset>}
+                  {Number(joinContribution) > 0 && <p className="frequency-explainer full-width">{contributionPlanText(Number(joinContribution), joinFrequency, joinPreferredDays)}.</p>}
                   <label className="full-width"><span>Personal purpose <small>Optional</small></span><input maxLength={100} onChange={(event) => setJoinPurpose(event.target.value)} placeholder="What are you saving for?" value={joinPurpose} /></label>
                 </div>
                 <div className={`join-plan-result ${joinPlanProjection.sufficient ? "sufficient" : "insufficient"}`}><strong>{joinPlanProjection.sufficient ? "Your plan can reach the target" : "This plan needs adjustment"}</strong><span>Required per period: {amountLabel(joinPlanProjection.requiredPerPeriod)} mUSDT · expected {joinPlanProjection.estimatedCompletionDate?.toLocaleDateString() ?? "after maturity"}</span></div>
@@ -2371,10 +2431,10 @@ export function App() {
                   onChange={(event) => setPlanFrequency(event.target.value as ContributionFrequency)}
                   value={planFrequency}
                 >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="custom">Custom / whenever possible</option>
+                  <option value="daily">Every day</option>
+                  <option value="weekly">Chosen days each week</option>
+                  <option value="monthly">Once a month</option>
+                  <option value="custom">Flexible days</option>
                 </select>
               </label>}
                 </div>
@@ -2406,6 +2466,11 @@ export function App() {
                       : "These reminders stay on this device for now."}
                   </small>
                 </fieldset>
+              )}
+              {Number(planContribution) > 0 && (
+                <p className="frequency-explainer full-width">
+                  {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
+                </p>
               )}
               {Number(planContribution) > 0 && <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleDateString() : "Choose a contribution schedule"}</strong><small>Calculated after your contribution amount and frequency are known.</small></div></div>}
               {Number(planContribution) > 0 && <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
@@ -2589,7 +2654,11 @@ export function App() {
                     preferredDays: plan?.preferredDays,
                   });
                   const planLabel = plan?.contributionAmount
-                    ? `${amountLabel(plan.contributionAmount)} USDT ${plan.frequency}`
+                    ? contributionPlanText(
+                        plan.contributionAmount,
+                        plan.frequency,
+                        plan.preferredDays
+                      )
                     : "Flexible contributions";
                   return (
                   <button
@@ -2657,6 +2726,9 @@ export function App() {
             {openingVault && !snapshot ? (
               <div className="vault-sheet-loading" role="status">
                 <div className="sheet-grabber" />
+                <LoadingAnimation />
+                <strong>Opening your savings</strong>
+                <small>Reading the latest balance and position status from Polygon Amoy.</small>
                 <span className="skeleton-line wide" />
                 <span className="skeleton-line" />
                 <div className="skeleton-metrics"><i /><i /><i /><i /></div>
@@ -3665,7 +3737,12 @@ export function App() {
                       <span>Active listings and matured positions are excluded.</span>
                     </div>
                   ) : (
-                    marketEligibleVaults.map((vault) => (
+                    marketEligibleVaults.map((vault) => {
+                      const plan = evmSession
+                        ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)]
+                        : undefined;
+                      const positionName = plan?.vaultName || (vault.isGroup ? "Group savings" : "Personal savings");
+                      return (
                       <button
                         key={`exit-${vault.address}-${vault.positionId.toString()}`}
                         onClick={() => {
@@ -3683,11 +3760,18 @@ export function App() {
                         <span className={`tag ${vault.isGroup ? "group" : "personal"}`}>
                           {vaultType(vault.isGroup)}
                         </span>
-                        <strong>{vault.deposited} mUSDT saved</strong>
-                        <small>{vault.progressPercent.toFixed(0)}% of goal</small>
+                        <span className="exit-position-name">
+                          <strong>{positionName}</strong>
+                          <small>Position #{vault.positionId.toString()}</small>
+                        </span>
+                        <span className="exit-position-value">
+                          <strong>{vault.currentValue} mUSDT</strong>
+                          <small>{vault.progressPercent.toFixed(0)}% of goal</small>
+                        </span>
                         <ArrowRight aria-hidden="true" size={16} />
                       </button>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -3995,9 +4079,9 @@ export function App() {
           <article className="panel activity-panel">
             <div className="section-title">
               <div>
-                <h2>On-chain activity</h2>
+                <h2>Savings activity</h2>
                 <p>
-                  Transactions involving vaults connected to this EVM account.
+                  Confirmed actions for savings connected to this wallet.
                 </p>
               </div>
               <button
@@ -4205,12 +4289,30 @@ export function App() {
           </button>
         </div>
       )}
-      <nav className="bottom-nav" aria-label="Quick navigation">
-        <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><Home aria-hidden="true" />Discover</button>
-        <button className={route === "position" || route === "groups" ? "active" : ""} onClick={() => navigate("position")} type="button"><Vault aria-hidden="true" />Vaults</button>
-        <button className={route === "vaults" ? "active create" : "create"} onClick={() => navigate("vaults")} type="button"><Plus aria-hidden="true" />Create</button>
-        <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><HandCoins aria-hidden="true" />Exit</button>
-        <button className={profileOpen ? "active" : ""} onClick={() => walletAccessReady ? setProfileOpen(true) : setConnectionSheetOpen(true)} type="button"><UserRound aria-hidden="true" />Profile</button>
+      {createMenuOpen && (
+        <div className="create-action-layer" role="dialog" aria-modal="true" aria-label="Create savings">
+          <button aria-label="Close create menu" className="create-action-backdrop" onClick={() => setCreateMenuOpen(false)} type="button" />
+          <div className="create-action-stack">
+            <button onClick={() => startVaultCreation("personal")} type="button">
+              <span><Vault aria-hidden="true" size={20} /></span>
+              <strong>Create personal vault</strong>
+            </button>
+            <button onClick={() => startVaultCreation("group")} type="button">
+              <span><UsersRound aria-hidden="true" size={20} /></span>
+              <strong>Create group vault</strong>
+            </button>
+          </div>
+        </div>
+      )}
+      <nav className={`bottom-nav ${createMenuOpen ? "create-open" : ""}`} aria-label="Quick navigation">
+        <div className="bottom-nav-main">
+          <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><Home aria-hidden="true" />Discover</button>
+          <button className={route === "position" || route === "groups" ? "active" : ""} onClick={() => navigate("position")} type="button"><Vault aria-hidden="true" />Vaults</button>
+          <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><HandCoins aria-hidden="true" />Exits</button>
+        </div>
+        <button aria-expanded={createMenuOpen} aria-label={createMenuOpen ? "Close create menu" : "Create savings"} className="bottom-create-button" onClick={() => setCreateMenuOpen((open) => !open)} type="button">
+          {createMenuOpen ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+        </button>
       </nav>
       <aside className="testnet-banner" aria-label="Test deployment status">
         <span className="testnet-dot" aria-hidden="true" />

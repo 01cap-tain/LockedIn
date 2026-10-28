@@ -34,7 +34,7 @@ describe("vault planning projections", () => {
     expect(projection.estimatedCompletionDate?.getDate()).toBe(23);
   });
 
-  it("caps the planned total at the vault target", () => {
+  it("treats the amount as due on every chosen weekly day", () => {
     const projection = calculatePlanProjection({
       target: 200,
       contributionAmount: 20,
@@ -48,6 +48,19 @@ describe("vault planning projections", () => {
     expect(projection.plannedTotal).toBe(200);
     expect(projection.contributionsNeeded).toBe(10);
     expect(projection.sufficient).toBe(true);
+  });
+
+  it("estimates maturity after ten 20 USDT contributions across three weekly days", () => {
+    const maturity = estimatePlanMaturity({
+      target: 200,
+      contributionAmount: 20,
+      frequency: "weekly",
+      preferredDays: [1, 3, 5],
+      startDate: "2027-01-01",
+    });
+    expect(maturity?.getFullYear()).toBe(2027);
+    expect(maturity?.getMonth()).toBe(0);
+    expect(maturity?.getDate()).toBe(22);
   });
 
   it("reports a supportive behind-schedule recovery pace", () => {

@@ -141,6 +141,12 @@ const AMOY_MIN_PRIORITY_FEE = parseUnits("25", "gwei");
 let amoyReadProvider: JsonRpcProvider | undefined;
 let amoyReadProviderIndex = 0;
 
+function rpcBatchMaxCount(): number {
+  const configured = Number(import.meta.env.VITE_RPC_BATCH_MAX_COUNT ?? "3");
+  if (!Number.isFinite(configured)) return 3;
+  return Math.min(20, Math.max(1, Math.floor(configured)));
+}
+
 const AMOY_READ_FALLBACKS = [
   "https://polygon-amoy.drpc.org",
   "https://polygon-amoy-rpc.blockreq.com/v1/rpc/public",
@@ -199,7 +205,7 @@ function readProviderFor(signer: Signer): Provider {
         // dRPC's public/free endpoint permits at most three requests in one
         // JSON-RPC batch. Ethers otherwise batches every call made in the same
         // event-loop turn and turns healthy contract reads into HTTP 500s.
-        batchMaxCount: 3,
+        batchMaxCount: rpcBatchMaxCount(),
       }
     );
     return amoyReadProvider;
@@ -222,7 +228,7 @@ function publicReadProvider(preferredProvider?: Provider | null): Provider {
     const configuredChainId = BigInt(import.meta.env.VITE_EVM_CHAIN_ID ?? "0x13882");
     return new JsonRpcProvider(publicRpcUrl, Number(configuredChainId), {
       staticNetwork: true,
-      batchMaxCount: 3,
+      batchMaxCount: rpcBatchMaxCount(),
     });
   }
   if (typeof window !== "undefined" && window.ethereum)
@@ -1702,6 +1708,13 @@ export async function loadExitMarket(
   signer: Signer,
   vault: VaultSnapshot
 ): Promise<ExitListingSnapshot> {
+  return withAmoyReadRetry(() => loadExitMarketOnce(signer, vault));
+}
+
+async function loadExitMarketOnce(
+  signer: Signer,
+  vault: VaultSnapshot
+): Promise<ExitListingSnapshot> {
   const market = await marketReaderFor(signer);
   const marketAddress = await market.getAddress();
   const reference = await market.getFunction("referenceDiscount")(
@@ -1725,6 +1738,13 @@ export async function loadExitMarket(
 }
 
 export async function loadExitListing(
+  signer: Signer,
+  listingId: bigint
+): Promise<ExitListingSnapshot> {
+  return withAmoyReadRetry(() => loadExitListingOnce(signer, listingId));
+}
+
+async function loadExitListingOnce(
   signer: Signer,
   listingId: bigint
 ): Promise<ExitListingSnapshot> {
@@ -2416,8 +2436,10 @@ export function describeContractError(error: unknown): string {
     return "The live payout moved below the saver’s minimum. The listing was not funded and your USDT remains in your wallet.";
   if (/wrong network|unsupported chain|chain mismatch|network mismatch/i.test(raw))
     return "Your wallet is on the wrong network. Switch to Polygon Amoy and try again.";
-  if (/require\(false\)|missing revert data|could not decode result data|bad_data/i.test(raw))
+  if (/could not decode result data|bad_data/i.test(raw))
     return "This savings vault could not be read on Polygon Amoy. Refresh your wallet connection and try again.";
+  if (/require\(false\)|missing revert data/i.test(raw))
+    return "The savings contract declined this action before it reached your wallet. Refresh the position and confirm it still has locked value and is eligible for an early exit.";
   if (/failed to fetch|timeout|network error|server_error|unknown_error|could not coalesce|json-?rpc|econn|rate limit|429/i.test(raw))
     return "Polygon Amoy is taking longer than expected. Your funds are unchanged; please try again shortly.";
   if (/execution reverted|call exception|custom error/i.test(raw))

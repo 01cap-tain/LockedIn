@@ -37,13 +37,20 @@ describe("deployment manifest verification", () => {
 
 describe("contract error copy", () => {
   it.each([
-    "execution reverted: require(false)",
-    "missing revert data",
     "could not decode result data",
     "code=BAD_DATA",
   ])("turns low-level read failures into a recovery message", (message) => {
     expect(describeContractError(new Error(message))).toMatch(
       /could not be read on Polygon Amoy/i
+    );
+  });
+
+  it.each([
+    "execution reverted: require(false)",
+    "missing revert data",
+  ])("does not mislabel a rejected transaction as a chain read failure", (message) => {
+    expect(describeContractError(new Error(message))).toMatch(
+      /declined this action/i
     );
   });
 
