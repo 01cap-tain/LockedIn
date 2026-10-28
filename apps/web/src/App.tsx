@@ -284,6 +284,14 @@ function amountLabel(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function onboardingStorageKey(
+  chainId: string,
+  address: string,
+  deploymentId: string
+): string {
+  return `lockedin:onboarding:v2:${chainId.toLowerCase()}:${deploymentId.toLowerCase()}:${address.toLowerCase()}`;
+}
+
 function contributionPlanText(
   contributionAmount: number | null | undefined,
   frequency: ContributionFrequency,
@@ -702,6 +710,9 @@ export function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const onboardingTouchStart = useRef<number | null>(null);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileUsernameDraft, setProfileUsernameDraft] = useState("");
   const [editingProfileUsername, setEditingProfileUsername] = useState(false);
@@ -1071,6 +1082,42 @@ export function App() {
     setProfileUsernameDraft(username);
     setEditingProfileUsername(false);
   }, [profileWalletAddress]);
+
+  useEffect(() => {
+    if (!evmSession || deployment.status !== "valid") return;
+    const key = onboardingStorageKey(
+      evmSession.chainId,
+      evmSession.address,
+      deployment.value.deploymentId
+    );
+    try {
+      if (window.localStorage.getItem(key) === "complete") return;
+    } catch {
+      // Storage can be unavailable in a privacy-restricted wallet webview. In
+      // that case, showing the guide is safer than silently skipping it.
+    }
+    setOnboardingStep(0);
+    setOnboardingOpen(true);
+  }, [evmSession?.address, evmSession?.chainId, deployment.status]);
+
+  function finishOnboarding(): void {
+    if (evmSession && deployment.status === "valid") {
+      try {
+        window.localStorage.setItem(
+          onboardingStorageKey(
+            evmSession.chainId,
+            evmSession.address,
+            deployment.value.deploymentId
+          ),
+          "complete"
+        );
+      } catch {
+        // The guide still closes for this session when persistent storage is
+        // unavailable; no financial or identity state depends on this flag.
+      }
+    }
+    setOnboardingOpen(false);
+  }
 
   useEffect(() => {
     if (route === "discover" || walletAccessReady) return;
@@ -1822,6 +1869,17 @@ export function App() {
                   <UserRound aria-hidden="true" size={15} /><span>Open profile</span><small>Goals and wallets</small>
                 </button>
                 <button
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    setOnboardingStep(0);
+                    setOnboardingOpen(true);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Compass aria-hidden="true" size={15} /><span>How LockedIn works</span><small>View the guide</small>
+                </button>
+                <button
                   onClick={async () => {
                     if (!profileWalletAddress) return;
                     try {
@@ -1856,6 +1914,102 @@ export function App() {
           )}
         </div>
       </header>
+
+      {onboardingOpen && evmSession && (
+        <div className="overlay-layer onboarding-layer">
+          <button aria-label="Close onboarding guide" className="overlay-backdrop" onClick={finishOnboarding} type="button" />
+          <section
+            className="onboarding-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-title"
+            onTouchStart={(event) => {
+              onboardingTouchStart.current = event.changedTouches[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(event) => {
+              if (onboardingTouchStart.current === null) return;
+              const distance = (event.changedTouches[0]?.clientX ?? onboardingTouchStart.current) - onboardingTouchStart.current;
+              onboardingTouchStart.current = null;
+              if (Math.abs(distance) < 48) return;
+              setOnboardingStep((step) => distance < 0 ? Math.min(3, step + 1) : Math.max(0, step - 1));
+            }}
+          >
+            <div className="sheet-grabber" />
+            <header className="onboarding-header">
+              <div>
+                <span className="eyebrow">Welcome to LockedIn Circle</span>
+                <small>Swipe or continue to explore</small>
+              </div>
+              <button className="text-action" onClick={finishOnboarding} type="button">Skip</button>
+            </header>
+            <div className="onboarding-progress" aria-label={`Onboarding step ${onboardingStep + 1} of 4`}>
+              {[0, 1, 2, 3].map((step) => <i className={step <= onboardingStep ? "active" : ""} key={step} />)}
+            </div>
+            <div className="onboarding-content" key={onboardingStep}>
+              {onboardingStep === 0 && (
+                <>
+                  <div className="onboarding-visual goal-visual" aria-hidden="true">
+                    <span><Target size={25} /></span>
+                    <div><small>New laptop</small><strong>Your goal, your pace</strong><i><b /></i></div>
+                    <CircleCheckBig size={20} />
+                  </div>
+                  <span className="onboarding-kicker">Start with a goal</span>
+                  <h2 id="onboarding-title">Choose what you want to save for.</h2>
+                  <p>Create a personal goal or a savings circle. You choose the target and saving pace; the Polygon contract keeps the financial record.</p>
+                  <div className="onboarding-example"><Target aria-hidden="true" size={16} /><span>Name the goal, choose a saving habit, and follow your progress.</span></div>
+                </>
+              )}
+              {onboardingStep === 1 && (
+                <>
+                  <div className="onboarding-visual split-visual" aria-hidden="true">
+                    <span><CircleDollarSign size={24} /></span>
+                    <i />
+                    <div><small>Available</small><LockKeyhole size={18} /></div>
+                    <div><small>Locked goal</small><Vault size={18} /></div>
+                  </div>
+                  <span className="onboarding-kicker">Your protection</span>
+                  <h2 id="onboarding-title">Part stays available. Part stays locked.</h2>
+                  <p>Each contribution is split automatically. Your 10%–15% emergency amount remains available, while the rest follows your maturity date.</p>
+                  <div className="onboarding-example"><LockKeyhole aria-hidden="true" size={16} /><span>Safe earns no yield. Earn uses the testnet yield adapter and carries additional risk.</span></div>
+                </>
+              )}
+              {onboardingStep === 2 && (
+                <>
+                  <div className="onboarding-visual circle-visual" aria-hidden="true">
+                    <span>EA</span><span>KA</span><span>YOU</span><span>TM</span>
+                    <div><UsersRound size={25} /></div>
+                  </div>
+                  <span className="onboarding-kicker">Save together</span>
+                  <h2 id="onboarding-title">A circle shares the journey—not your balance.</h2>
+                  <p>Every member joins with their own wallet, target and emergency amount. A circle activates after at least four members are ready.</p>
+                  <div className="onboarding-example"><UsersRound aria-hidden="true" size={16} /><span>Members encourage one another while every balance and target stays independent.</span></div>
+                </>
+              )}
+              {onboardingStep === 3 && (
+                <>
+                  <div className="onboarding-visual exit-visual" aria-hidden="true">
+                    <span><Vault size={22} /><small>Savings</small></span>
+                    <ArrowRight size={18} />
+                    <span><HandCoins size={22} /><small>Early payout</small></span>
+                  </div>
+                  <span className="onboarding-kicker">If plans change</span>
+                  <h2 id="onboarding-title">Request an early savings exit.</h2>
+                  <p>The contract calculates the discount. You set a minimum payout, and the first funder to complete it receives the locked position.</p>
+                  <div className="onboarding-testnet"><AlertTriangle aria-hidden="true" size={17} /><span>This alpha uses MockUSDT on Polygon Amoy. It has no real value, and POL is needed only for testnet fees.</span></div>
+                </>
+              )}
+            </div>
+            <footer className="onboarding-actions">
+              <button className="secondary" disabled={onboardingStep === 0} onClick={() => setOnboardingStep((step) => Math.max(0, step - 1))} type="button"><ArrowLeft aria-hidden="true" size={16} />Back</button>
+              {onboardingStep < 3 ? (
+                <button className="primary" onClick={() => setOnboardingStep((step) => Math.min(3, step + 1))} type="button">Continue<ArrowRight aria-hidden="true" size={16} /></button>
+              ) : (
+                <button className="primary" onClick={finishOnboarding} type="button">Start saving<CircleCheckBig aria-hidden="true" size={17} /></button>
+              )}
+            </footer>
+          </section>
+        </div>
+      )}
 
       {menuOpen && (
         <div className="overlay-layer">
@@ -2051,10 +2205,10 @@ export function App() {
             <h2>Connect to continue</h2>
             <p>Your Polygon wallet keeps your savings. Nimiq Pay is optional and is only needed when you use NIM.</p>
             <button className={evmSession ? "connection-row complete" : "connection-row"} disabled={evm.status === "connecting" || Boolean(evmSession)} onClick={() => void connectEvm()} type="button">
-              <span>01</span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+              <span><WalletCards aria-hidden="true" size={17} /></span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
             </button>
             <button className={nimiqWallet ? "connection-row complete optional" : "connection-row optional"} disabled={nimiq.status === "connecting" || Boolean(nimiqWallet)} onClick={() => void connectNimiq()} type="button">
-              <span>02</span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay (optional)"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Only needed for NIM payments and swaps"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+              <span><CircleDollarSign aria-hidden="true" size={17} /></span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay (optional)"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Only needed for NIM payments and swaps"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
             </button>
             {developmentFallbackEnabled && !evmSession && (
               <button className="secondary full-width" disabled={evm.status === "connecting"} onClick={() => void connectEvm(0)} type="button">
@@ -2344,7 +2498,7 @@ export function App() {
               </div>}
             <form className="form-grid creation-step-frame" key={`${mode}-${creationStep}`} onSubmit={createVaultSubmit}>
               {creationStep === 0 && <fieldset className="creation-section full-width">
-                <legend><b>1</b>{mode === "group" ? "Circle identity" : "Savings goal"}</legend>
+                <legend>{mode === "group" ? <UsersRound aria-hidden="true" size={15} /> : <Target aria-hidden="true" size={15} />}{mode === "group" ? "Circle identity" : "Savings goal"}</legend>
                 <div className="plan-field-grid">
                   <label>
                     <span>{mode === "group" ? "Group name" : "Vault name"}</span>
@@ -2373,7 +2527,7 @@ export function App() {
                 </div>
               </fieldset>}
 
-              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><b>2</b>Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p></div><div className="mode-picker embedded">
+              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><LockKeyhole aria-hidden="true" size={15} />Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p></div><div className="mode-picker embedded">
                 <button
                   className={yieldMode === "safe" ? "active" : ""}
                   onClick={() => {
@@ -2400,7 +2554,7 @@ export function App() {
               </div></fieldset>}
 
               {creationStep === (mode === "group" ? 2 : 1) && <fieldset className="creation-section full-width progressive-section">
-                <legend><b>{mode === "group" ? "3" : "2"}</b>{mode === "group" ? "Your savings goal" : "Savings plan"}</legend>
+                <legend><CalendarDays aria-hidden="true" size={15} />{mode === "group" ? "Your savings goal" : "Savings plan"}</legend>
                 {mode === "group" && <p className="section-guidance">This target and plan belong to you. Other people choose their own.</p>}
                 <div className="plan-field-grid">
                 {mode === "group" && <label><span>Your personal target</span><div className="input-unit"><input min="0.000001" onChange={(event) => setTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={target} /><b>USDT</b></div></label>}
@@ -2521,7 +2675,7 @@ export function App() {
               </fieldset>}
 
               {creationStep === (mode === "group" ? 3 : 2) && <fieldset className="creation-section full-width progressive-section">
-                <legend><b>{mode === "group" ? "4" : "3"}</b>{mode === "group" ? "Review and create" : "Vault protection"}</legend>
+                <legend>{mode === "group" ? <CircleCheckBig aria-hidden="true" size={15} /> : <LockKeyhole aria-hidden="true" size={15} />}{mode === "group" ? "Review and create" : "Vault protection"}</legend>
                 {mode === "personal" && <div className="mode-picker embedded">
                   <button className={yieldMode === "safe" ? "active" : ""} onClick={() => { setYieldMode("safe"); setEarnRiskAccepted(false); }} type="button"><strong>Safe</strong><span>Locked funds remain in the vault and earn no yield.</span></button>
                   <button className={yieldMode === "earn" ? "active" : ""} onClick={() => setYieldMode("earn")} type="button"><strong>Earn</strong><span>{usesMockYieldAdapter ? "Uses the testnet mock adapter." : "Supplied to Aave V3 with variable, non-guaranteed yield."}</span></button>
@@ -2554,7 +2708,7 @@ export function App() {
                 </dl>}
               </fieldset>}
               {mode === "personal" && creationStep === 3 && <fieldset className="creation-section full-width progressive-section">
-                <legend><b>4</b>Review</legend>
+                <legend><CircleCheckBig aria-hidden="true" size={15} />Review</legend>
                 <dl className="creation-review">
                   <div><dt>Goal</dt><dd>{target} mUSDT{vaultName ? ` for ${vaultName}` : ""}</dd></div>
                   <div><dt>Schedule</dt><dd>{planContribution || "Flexible"} mUSDT · {planFrequency}</dd></div>
@@ -4144,7 +4298,6 @@ export function App() {
         <section className="panel route-page wallet-page">
           <div className="panel-heading">
             <div>
-              <span className="step">05</span>
               <div>
                 <h2>Wallet connections</h2>
                 <p>Nimiq identity and EVM ownership are separate.</p>
