@@ -60,6 +60,18 @@ describe("contract error copy", () => {
       "The request was cancelled in your wallet. Nothing was changed."
     );
   });
+
+  it("explains why a saver cannot buy their own exit", () => {
+    expect(describeContractError(new Error("execution reverted: ProviderOnly()"))).toMatch(
+      /different provider wallet/i
+    );
+  });
+
+  it("turns a filled-listing race into a useful refresh message", () => {
+    expect(describeContractError(new Error("execution reverted: ListingUnavailable()"))).toMatch(
+      /no longer available/i
+    );
+  });
 });
 
 describe("group creation compatibility", () => {

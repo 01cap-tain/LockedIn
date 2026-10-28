@@ -6817,3 +6817,226 @@ select,
 .transaction.success {
   animation: toast-life-centered 3s cubic-bezier(.22, 1, .36, 1) both;
 }
+
+/* Interactive journey ---------------------------------------------------- */
+.savings-journey-chart {
+  padding-bottom: 12px;
+}
+
+.journey-points circle[role="button"] {
+  cursor: pointer;
+  outline: none;
+  transition: r 160ms ease, fill 160ms ease, stroke-width 160ms ease;
+}
+
+.journey-points circle[role="button"]:nth-of-type(2) { animation-delay: 360ms; }
+.journey-points circle[role="button"]:nth-of-type(3) { animation-delay: 650ms; }
+.journey-points circle[role="button"]:nth-of-type(4) { animation-delay: 900ms; }
+.journey-points circle[role="button"]:nth-of-type(5) { animation-delay: 1.18s; }
+
+.journey-points circle[role="button"]:hover,
+.journey-points circle[role="button"]:focus-visible,
+.journey-points circle[role="button"].active {
+  fill: var(--accent);
+  stroke: #fff2b8;
+  stroke-width: 4px;
+  r: 8px;
+}
+
+.journey-points .journey-goal-glow {
+  pointer-events: none;
+}
+
+.savings-journey-chart figcaption {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 3px 7px 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: .01em;
+}
+
+.savings-journey-chart figcaption.visible {
+  color: var(--text-secondary);
+}
+
+.savings-journey-chart figcaption strong {
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+
+.savings-journey-chart figcaption.visible span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #171814;
+  background: var(--accent);
+  font-weight: 800;
+}
+
+/* The circle content belongs directly to the dark Discover canvas. */
+.discover-page .circle-card,
+.discover-page .circle-card:nth-child(3n + 2) {
+  border: 0;
+  border-radius: 0;
+  padding: 4px 0 18px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.discover-page .circle-stack {
+  gap: 24px;
+}
+
+/* Compact account control ------------------------------------------------ */
+.mobile-app-header {
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+}
+
+.account-menu-anchor {
+  position: relative;
+  z-index: 4;
+  justify-self: end;
+}
+
+.account-menu-trigger {
+  display: flex;
+  min-width: 88px;
+  max-width: 132px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 11px;
+  color: var(--text-primary);
+  background: #171814;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .02em;
+}
+
+.account-menu-trigger > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-trigger svg {
+  flex: 0 0 auto;
+  transition: transform 180ms ease;
+}
+
+.account-menu-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.account-status-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.account-menu-trigger.connected .account-status-dot {
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px rgba(101, 189, 137, .1);
+}
+
+.account-menu-backdrop {
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  border: 0;
+  background: transparent;
+}
+
+.account-menu-popover {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  width: min(286px, calc(100vw - 28px));
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 7px;
+  color: var(--text-primary);
+  background: #171814;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .48);
+  animation: account-menu-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.account-menu-identity {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.account-menu-identity strong { font-size: 13px; }
+.account-menu-identity small { color: var(--text-muted); font-size: 10px; }
+
+.account-menu-popover > button,
+.account-balance-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+}
+
+.account-menu-popover > button:hover,
+.account-menu-popover > button:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.account-menu-popover small,
+.account-balance-row strong {
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.account-menu-popover .account-disconnect {
+  margin-top: 3px;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 10px 10px;
+  color: var(--status-error);
+}
+
+@keyframes account-menu-in {
+  from { opacity: 0; transform: translateY(-7px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 380px) {
+  .account-menu-trigger {
+    min-width: 78px;
+    max-width: 105px;
+    padding-inline: 9px;
+  }
+
+  .mobile-app-header .wordmark {
+    font-size: 17px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu-popover { animation: none; }
+  .journey-points circle[role="button"] { transition: none; }
+}

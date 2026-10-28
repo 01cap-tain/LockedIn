@@ -1262,7 +1262,7 @@ export async function loadPublicGroups(
       const vault = new Contract(address, vaultAbi, provider);
       const isGroup = Boolean(await vault.getFunction("isGroup")());
       if (!isGroup) return null;
-      const [creator, maturity, mode, memberCount, acceptedCount, lifecycle, publicJoining, publicJoinClosed, maxMemberCount, groupName, enrollmentDeadline] =
+      const [creator, maturity, mode, memberCount, acceptedCount, lifecycle] =
         await Promise.all([
           vault.getFunction("groupCreator")(),
           vault.getFunction("maturity")(),
@@ -1270,11 +1270,26 @@ export async function loadPublicGroups(
           vault.getFunction("memberCount")(),
           vault.getFunction("acceptedMemberCount")(),
           vault.getFunction("groupLifecycle")(),
-          supportsPublicJoining ? vault.getFunction("publicJoining")() : false,
-          supportsPublicJoining ? vault.getFunction("publicJoinClosed")() : true,
-          supportsPublicJoining ? vault.getFunction("maxMemberCount")() : 0n,
-          supportsPublicJoining ? factory.getFunction("groupName")(address) : "",
-          supportsPublicJoining ? vault.getFunction("enrollmentDeadline")() : 0n,
+        ]);
+
+      // A factory can retain immutable vaults created by an earlier vault
+      // implementation. Probe optional 0.8 metadata per vault so one legacy
+      // circle cannot blank the entire discovery catalogue.
+      const optionalRead = async <T,>(read: () => Promise<T>, fallback: T) => {
+        if (!supportsPublicJoining) return fallback;
+        try {
+          return await read();
+        } catch {
+          return fallback;
+        }
+      };
+      const [publicJoining, publicJoinClosed, maxMemberCount, groupName, enrollmentDeadline] =
+        await Promise.all([
+          optionalRead(() => vault.getFunction("publicJoining")(), false),
+          optionalRead(() => vault.getFunction("publicJoinClosed")(), true),
+          optionalRead(() => vault.getFunction("maxMemberCount")(), BigInt(memberCount)),
+          optionalRead(() => factory.getFunction("groupName")(address), ""),
+          optionalRead(() => vault.getFunction("enrollmentDeadline")(), BigInt(maturity)),
         ]);
       const members = await Promise.all(
         Array.from({ length: Number(memberCount) }, async (_, index) => {
@@ -1851,6 +1866,9 @@ export async function fundExitListing(
     saverPayout
   );
   const totalPayment = saverPayout + providerFee;
+  const buyer = await signer.getAddress();
+  if (getAddress(listing.seller) === getAddress(buyer))
+    throw new Error("ProviderOnly: a saver cannot fund their own early-exit listing.");
   if (!listing.active || Number(listing.expiresAt) * 1_000 <= Date.now())
     throw new Error("The listing is no longer available. Converted USDT remains in your wallet.");
   if (maximumTotalPayment !== undefined && totalPayment > maximumTotalPayment)
@@ -1861,16 +1879,25 @@ export async function fundExitListing(
     tokenAbi,
     signer
   );
-  const overrides = await transactionOverrides(signer);
-  const approval = await token.getFunction("approve")(
-    await market.getAddress(),
-    totalPayment,
-    overrides
+  const marketAddress = await market.getAddress();
+  const allowance: bigint = await token.getFunction("allowance")(
+    buyer,
+    marketAddress
   );
-  await confirmTransaction(signer, approval.hash);
+  if (allowance < totalPayment) {
+    // Fixed limits avoid unreliable Amoy gas estimation in embedded wallets.
+    // The ERC-20 approval remains exact and the market can only pull the
+    // settlement amount calculated by the immutable contract.
+    const approval = await token.getFunction("approve")(
+      marketAddress,
+      totalPayment,
+      { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
+    );
+    await confirmTransaction(signer, approval.hash);
+  }
   const funding = await market.getFunction("fundListing")(
     listingId,
-    overrides
+    { ...(await transactionOverrides(signer)), gasLimit: 650_000n }
   );
   await confirmTransaction(signer, funding.hash);
 }
@@ -2355,6 +2382,12 @@ export function describeContractError(error: unknown): string {
     return "This savings period has ended, so new contributions are closed.";
   if (/positionlisted/i.test(raw))
     return "This position is already listed for an early exit. Cancel the listing before contributing again.";
+  if (/provideronly|saver cannot fund their own/i.test(raw))
+    return "You cannot fund your own savings exit. Connect a different provider wallet to complete this purchase.";
+  if (/listingunavailable|positionalreadysold/i.test(raw))
+    return "This savings exit is no longer available. Refresh the exit list to see current opportunities.";
+  if (/minimumpayoutnotmet/i.test(raw))
+    return "The live payout moved below the saver’s minimum. The listing was not funded and your USDT remains in your wallet.";
   if (/wrong network|unsupported chain|chain mismatch|network mismatch/i.test(raw))
     return "Your wallet is on the wrong network. Switch to Polygon Amoy and try again.";
   if (/require\(false\)|missing revert data|could not decode result data|bad_data/i.test(raw))

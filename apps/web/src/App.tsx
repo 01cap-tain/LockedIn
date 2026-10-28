@@ -89,10 +89,12 @@ import {
   BadgeCheck,
   CalendarDays,
   Check,
+  ChevronDown,
   CircleCheckBig,
   CircleDollarSign,
   ClockAlert,
   Compass,
+  Copy,
   Gift,
   HandCoins,
   History,
@@ -292,14 +294,25 @@ function PaceIcon({ status, size = 15 }: { status: SavingsPaceStatus; size?: num
   return <CircleCheckBig aria-hidden="true" size={size} />;
 }
 
-/** Decorative, data-inspired journey from a first deposit to a completed goal. */
+const journeyMilestones = [
+  { x: 82, y: 137, label: "First step", detail: "25% of the goal" },
+  { x: 148, y: 112, label: "Habit forming", detail: "50% of the goal" },
+  { x: 216, y: 78, label: "Momentum", detail: "75% of the goal" },
+  { x: 342, y: 17, label: "Goal reached", detail: "100% saved" },
+] as const;
+
+/** Interactive milestone preview from a first deposit to a completed goal. */
 function SavingsJourneyChart() {
+  const [activeMilestone, setActiveMilestone] = useState<number | null>(null);
+  const selected = activeMilestone === null ? null : journeyMilestones[activeMilestone];
+
   return (
     <figure
       className="savings-journey-chart"
-      aria-label="An upward savings journey reaching four milestones"
+      aria-label="Savings journey. Select a milestone to explore it."
     >
-      <svg aria-hidden="true" viewBox="0 0 360 180">
+      <svg viewBox="0 0 360 180">
+        <title>Interactive savings journey with four milestones</title>
         <defs>
           <linearGradient id="journey-area" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#d2b461" stopOpacity="0.42" />
@@ -325,13 +338,33 @@ function SavingsJourneyChart() {
           d="M18 157C45 151 61 143 82 137C111 128 122 117 148 112C180 105 187 82 216 78C247 73 258 55 284 49C309 43 326 28 342 17"
         />
         <g className="journey-points">
-          <circle cx="82" cy="137" r="5" />
-          <circle cx="148" cy="112" r="5" />
-          <circle cx="216" cy="78" r="5" />
           <circle className="journey-goal-glow" cx="342" cy="17" r="14" />
-          <circle className="journey-goal" cx="342" cy="17" r="7" />
+          {journeyMilestones.map((milestone, index) => (
+            <circle
+              aria-label={`${milestone.label}: ${milestone.detail}`}
+              className={activeMilestone === index ? "active" : index === 3 ? "journey-goal" : undefined}
+              cx={milestone.x}
+              cy={milestone.y}
+              key={milestone.label}
+              onClick={() => setActiveMilestone(index)}
+              onFocus={() => setActiveMilestone(index)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setActiveMilestone(index);
+                }
+              }}
+              onMouseEnter={() => setActiveMilestone(index)}
+              r={index === 3 ? 7 : 5}
+              role="button"
+              tabIndex={0}
+            />
+          ))}
         </g>
       </svg>
+      <figcaption className={selected ? "visible" : ""} aria-live="polite">
+        {selected ? <><strong>{selected.label}</strong><span>{selected.detail}</span></> : <span>Tap a point to explore the journey</span>}
+      </figcaption>
     </figure>
   );
 }
@@ -616,6 +649,7 @@ export function App() {
   >("loading");
   const [publicGroupsError, setPublicGroupsError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileUsernameDraft, setProfileUsernameDraft] = useState("");
@@ -796,13 +830,18 @@ export function App() {
     : 0;
   const projectedFee = projectedSaverPayout * 0.009;
   const selectedListing = exitState?.listing;
-  const listingFundingError = selectedListing && purchaseAsset === "usdt"
-    ? mockTokenBalance === null
-      ? "Your USDT balance is still loading."
-      : Number(selectedListing.currentTotalProviderPaid) > Number(mockTokenBalance) + 0.0000001
-        ? `Insufficient wallet funds. This purchase requires ${selectedListing.currentTotalProviderPaid} mUSDT; you have ${mockTokenBalance} mUSDT.`
-        : null
-    : null;
+  const listingFundingError = (() => {
+    if (!selectedListing || purchaseAsset !== "usdt") return null;
+    if (selectedListing.seller.toLowerCase() === connectedAddress)
+      return "You cannot fund your own savings exit. Switch to a different provider wallet.";
+    if (selectedListing.expiresAt.getTime() <= clock)
+      return "This savings exit has expired. Refresh the market for current opportunities.";
+    if (mockTokenBalance === null)
+      return "Your USDT balance is still loading.";
+    if (Number(selectedListing.currentTotalProviderPaid) > Number(mockTokenBalance) + 0.0000001)
+      return `Insufficient wallet funds. This purchase requires ${selectedListing.currentTotalProviderPaid} mUSDT; you have ${mockTokenBalance} mUSDT.`;
+    return null;
+  })();
   const activePositionKeys = useMemo(
     () =>
       new Set(
@@ -1222,6 +1261,7 @@ export function App() {
     setNimBalanceLuna(null);
     setNativeTokenBalance(null);
     setProfileOpen(false);
+    setAccountMenuOpen(false);
     setConnectionSheetOpen(false);
     setTransaction({
       status: "success",
@@ -1231,6 +1271,7 @@ export function App() {
 
   function navigate(nextRoute: AppRoute): void {
     setMenuOpen(false);
+    setAccountMenuOpen(false);
     setProfileOpen(false);
     if (nextRoute !== "market" && route === "market") {
       setMarketPositionPickerOpen(false);
@@ -1625,9 +1666,60 @@ export function App() {
         <button className="wordmark" onClick={() => navigate("discover")} type="button">
           <span>LockedIn</span><strong>Circle</strong>
         </button>
-        <button aria-label={walletAccessReady ? "Open profile" : "Connect wallets"} className={`header-icon profile-avatar ${evmSession ? "connected" : ""}`} onClick={() => walletAccessReady ? setProfileOpen(true) : setConnectionSheetOpen(true)} type="button">
-          {evmSession ? <WalletIdenticon address={evmSession.address} /> : <UserRound aria-hidden="true" size={18} />}
-        </button>
+        <div className="account-menu-anchor">
+          <button
+            aria-expanded={accountMenuOpen}
+            aria-haspopup="menu"
+            className={`account-menu-trigger ${evmSession ? "connected" : ""}`}
+            onClick={() => profileWalletAddress ? setAccountMenuOpen((open) => !open) : setConnectionSheetOpen(true)}
+            type="button"
+          >
+            <span className="account-status-dot" aria-hidden="true" />
+            <span>{profileWalletAddress ? displayedUsername : "Connect"}</span>
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+          {accountMenuOpen && profileWalletAddress && (
+            <>
+              <button aria-label="Close account menu" className="account-menu-backdrop" onClick={() => setAccountMenuOpen(false)} type="button" />
+              <div className="account-menu-popover" role="menu">
+                <div className="account-menu-identity">
+                  <strong>{displayedUsername}</strong>
+                  <small>{profileWalletAddress ? short(profileWalletAddress) : "Not connected"}</small>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!profileWalletAddress) return;
+                    try {
+                      if (navigator.clipboard?.writeText) {
+                        await navigator.clipboard.writeText(profileWalletAddress);
+                      } else {
+                        const field = document.createElement("textarea");
+                        field.value = profileWalletAddress;
+                        field.style.position = "fixed";
+                        field.style.opacity = "0";
+                        document.body.appendChild(field);
+                        field.select();
+                        document.execCommand("copy");
+                        field.remove();
+                      }
+                      setTransaction({ status: "success", message: "Wallet address copied." });
+                      setAccountMenuOpen(false);
+                    } catch {
+                      setTransaction({ status: "error", message: "The wallet address could not be copied on this device." });
+                    }
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Copy aria-hidden="true" size={15} /><span>Copy wallet</span><small>{profileWalletAddress ? walletFallbackName(profileWalletAddress) : "—"}</small>
+                </button>
+                <div className="account-balance-row"><CircleDollarSign aria-hidden="true" size={15} /><span>NIM balance</span><strong>{nimBalanceLuna === null ? "—" : `${formatAssetAmount(nimBalanceLuna, 5)} NIM`}</strong></div>
+                <div className="account-balance-row"><WalletCards aria-hidden="true" size={15} /><span>USDT balance</span><strong>{mockTokenBalance === null ? "—" : `${mockTokenBalance} mUSDT`}</strong></div>
+                <button className="account-disconnect" onClick={disconnectWallets} role="menuitem" type="button"><LogOut aria-hidden="true" size={15} /><span>Disconnect wallet</span></button>
+              </div>
+            </>
+          )}
+        </div>
       </header>
 
       {menuOpen && (
