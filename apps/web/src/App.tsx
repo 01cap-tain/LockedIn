@@ -85,6 +85,7 @@ import {
 } from "./lib/user-profile";
 import {
   ArrowRight,
+  ArrowLeft,
   AlertTriangle,
   BadgeCheck,
   CalendarDays,
@@ -294,25 +295,39 @@ function PaceIcon({ status, size = 15 }: { status: SavingsPaceStatus; size?: num
   return <CircleCheckBig aria-hidden="true" size={size} />;
 }
 
-const journeyMilestones = [
-  { x: 82, y: 137, label: "First step", detail: "25% of the goal" },
-  { x: 148, y: 112, label: "Habit forming", detail: "50% of the goal" },
-  { x: 216, y: 78, label: "Momentum", detail: "75% of the goal" },
-  { x: 342, y: 17, label: "Goal reached", detail: "100% saved" },
-] as const;
+type JourneyRecord = { amount: number; label: string };
 
-/** Interactive milestone preview from a first deposit to a completed goal. */
-function SavingsJourneyChart() {
-  const [activeMilestone, setActiveMilestone] = useState<number | null>(null);
-  const selected = activeMilestone === null ? null : journeyMilestones[activeMilestone];
+/** Confirmed deposits building toward the connected saver’s combined goal. */
+function SavingsJourneyChart({
+  saved,
+  target,
+  history,
+}: {
+  saved: number;
+  target: number;
+  history: JourneyRecord[];
+}) {
+  const records = history.length > 0
+    ? history.slice(-7)
+    : [{ amount: saved, label: saved > 0 ? "Current saved amount" : "No deposits yet" }];
+  const chartRecords = [{ amount: 0, label: "Start" }, ...records];
+  const scale = Math.max(target, saved, 1);
+  const points = chartRecords.map((record, index) => ({
+    ...record,
+    x: 18 + (324 * index) / Math.max(1, chartRecords.length - 1),
+    y: 160 - Math.min(1, record.amount / scale) * 136,
+  }));
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join(" ");
+  const areaPath = `${linePath} L${points.at(-1)?.x ?? 342} 164 L18 164Z`;
+  const [activeMilestone, setActiveMilestone] = useState<number>(points.length - 1);
+  const selected = points[Math.min(activeMilestone, points.length - 1)] ?? points.at(-1)!;
+  const progress = target > 0 ? Math.min(100, (saved / target) * 100) : 0;
 
   return (
-    <figure
-      className="savings-journey-chart"
-      aria-label="Savings journey. Select a milestone to explore it."
-    >
+    <div className="savings-journey-layout">
+      <figure className="savings-journey-chart" aria-label="Your confirmed savings deposits over time. Select a point to view it.">
       <svg viewBox="0 0 360 180">
-        <title>Interactive savings journey with four milestones</title>
+        <title>Confirmed deposits building toward your goal</title>
         <defs>
           <linearGradient id="journey-area" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#d2b461" stopOpacity="0.42" />
@@ -330,19 +345,18 @@ function SavingsJourneyChart() {
         </g>
         <path
           className="journey-area"
-          d="M18 157C45 151 61 143 82 137C111 128 122 117 148 112C180 105 187 82 216 78C247 73 258 55 284 49C309 43 326 28 342 17V164H18Z"
+          d={areaPath}
         />
         <path
           className="journey-line"
           pathLength="1"
-          d="M18 157C45 151 61 143 82 137C111 128 122 117 148 112C180 105 187 82 216 78C247 73 258 55 284 49C309 43 326 28 342 17"
+          d={linePath}
         />
         <g className="journey-points">
-          <circle className="journey-goal-glow" cx="342" cy="17" r="14" />
-          {journeyMilestones.map((milestone, index) => (
+          {points.map((milestone, index) => (
             <circle
-              aria-label={`${milestone.label}: ${milestone.detail}`}
-              className={activeMilestone === index ? "active" : index === 3 ? "journey-goal" : undefined}
+              aria-label={`${milestone.label}: ${amountLabel(milestone.amount)} USDT saved`}
+              className={activeMilestone === index ? "active" : undefined}
               cx={milestone.x}
               cy={milestone.y}
               key={milestone.label}
@@ -355,17 +369,25 @@ function SavingsJourneyChart() {
                 }
               }}
               onMouseEnter={() => setActiveMilestone(index)}
-              r={index === 3 ? 7 : 5}
+              r={index === points.length - 1 ? 7 : 5}
               role="button"
               tabIndex={0}
             />
           ))}
         </g>
       </svg>
-      <figcaption className={selected ? "visible" : ""} aria-live="polite">
-        {selected ? <><strong>{selected.label}</strong><span>{selected.detail}</span></> : <span>Tap a point to explore the journey</span>}
+      <figcaption className="visible" aria-live="polite">
+        <strong>{selected.label}</strong><span>{amountLabel(selected.amount)} USDT saved</span>
       </figcaption>
-    </figure>
+      </figure>
+      <aside className="journey-total" aria-label="Savings total">
+        <span>Saved so far</span>
+        <strong>{amountLabel(saved)}</strong>
+        <small>of {amountLabel(target)} USDT</small>
+        <i><span style={{ width: `${progress}%` }} /></i>
+        <b>{progress.toFixed(0)}%</b>
+      </aside>
+    </div>
   );
 }
 
@@ -419,9 +441,8 @@ function TrustSummary({ earn = false }: { earn?: boolean }) {
       <div>
         <strong>Your funds follow the rules you choose.</strong>
         <span>
-          The smart contract holds your savings. LockedIn Circle cannot withdraw
-          your principal, and emergency savings remain available.
-          {earn ? " Earn returns are variable and not guaranteed." : ""}
+          LockedIn cannot take your savings. Your emergency amount stays available.
+          {earn ? " Earn returns can change and are not guaranteed." : ""}
         </span>
       </div>
     </aside>
@@ -480,7 +501,13 @@ function GroupPowerVisual({ group }: { group: PublicGroupSummary }) {
   );
 }
 
-function SwipeReviewInvitation({ onReview }: { onReview: () => void }) {
+function SwipeReviewInvitation({
+  label = "Slide to review invite",
+  onReview,
+}: {
+  label?: string;
+  onReview: () => void;
+}) {
   const startX = useRef<number | null>(null);
   const moved = useRef(false);
   const currentOffset = useRef(0);
@@ -524,8 +551,8 @@ function SwipeReviewInvitation({ onReview }: { onReview: () => void }) {
         style={{ transform: `translateX(${offset}px)` }}
         type="button"
       >
-        <span>Review invitation</span>
-        <span className="invite-move-cue">Move <ArrowRight aria-hidden="true" size={16} /></span>
+        <span>{label}</span>
+        <span className="invite-move-cue">Slide <ArrowRight aria-hidden="true" size={16} /></span>
       </button>
     </div>
   );
@@ -592,6 +619,7 @@ export function App() {
     status: "idle",
   });
   const [mode, setMode] = useState<"personal" | "group">("personal");
+  const [creationStep, setCreationStep] = useState(0);
   const [yieldMode, setYieldMode] = useState<"safe" | "earn">("safe");
   const [createdVaultReceipt, setCreatedVaultReceipt] =
     useState<CreatedVaultReceipt | null>(null);
@@ -699,6 +727,37 @@ export function App() {
       : null;
   const nimWithdrawalAvailable = Boolean(swapAdapter && nimiqWallet && evmSession);
   const connectedAddress = evmSession?.address.toLowerCase();
+  const portfolioTotalSaved = useMemo(
+    () => vaults
+      .filter((vault) => vault.isOriginalMember)
+      .reduce((sum, vault) => sum + Number(vault.deposited), 0),
+    [vaults]
+  );
+  const portfolioTotalTarget = useMemo(
+    () => vaults
+      .filter((vault) => vault.isOriginalMember)
+      .reduce((sum, vault) => sum + Number(vault.target), 0),
+    [vaults]
+  );
+  const savingsJourney = useMemo(() => {
+    if (!connectedAddress) return [];
+    let running = 0;
+    return [...activity]
+      .filter(
+        (item) =>
+          item.title === "Deposit confirmed" &&
+          item.member?.toLowerCase() === connectedAddress &&
+          item.amount
+      )
+      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+      .map((item) => {
+        running += Number(item.amount);
+        return {
+          amount: running,
+          label: item.timestamp.toLocaleDateString(undefined, { day: "numeric", month: "short" }),
+        };
+      });
+  }, [activity, connectedAddress]);
   const connectedMember = snapshot?.members.find(
     (member) => member.member.toLowerCase() === connectedAddress
   );
@@ -761,6 +820,23 @@ export function App() {
     [maturity, planContribution, planFrequency, planStartDate, preferredDays, target]
   );
   const hasContributionPlan = Number(planContribution) > 0;
+  const creationStepTitles = mode === "group"
+    ? ["Circle", "Shared rules", "Your plan", "Review"]
+    : ["Goal", "Your plan", "Protection", "Review"];
+  const creationStepReady = (() => {
+    if (creationStep === 0) {
+      if (mode === "group")
+        return Boolean(vaultName.trim()) && maxParticipants >= 4 && maxParticipants <= 50;
+      return Number(target) > 0;
+    }
+    if (creationStep === 1)
+      return mode === "group" || (Number(planContribution) > 0 && Boolean(estimatedMaturity));
+    if (creationStep === 2)
+      return mode === "group"
+        ? Number(target) > 0 && Number(planContribution) > 0 && Boolean(estimatedMaturity)
+        : yieldMode !== "earn" || earnRiskAccepted;
+    return yieldMode !== "earn" || earnRiskAccepted;
+  })();
   const joinPlanProjection = useMemo(
     () => calculatePlanProjection({
       target: Number(joinTarget),
@@ -1912,11 +1988,11 @@ export function App() {
           <button aria-label="Close wallet connection" className="overlay-backdrop" onClick={() => setConnectionSheetOpen(false)} type="button" />
           <section className="connection-sheet" role="dialog" aria-modal="true" aria-label="Connect wallets">
             <div className="sheet-grabber" />
-            <span className="eyebrow">Polygon wallet access</span>
+            <span className="eyebrow">Wallet</span>
             <h2>Connect to continue</h2>
-            <p>Your EVM address owns vault positions and signs Polygon transactions. Nimiq Pay is optional for now and is only needed for NIM actions.</p>
+            <p>Your Polygon wallet keeps your savings. Nimiq Pay is optional and is only needed when you use NIM.</p>
             <button className={evmSession ? "connection-row complete" : "connection-row"} disabled={evm.status === "connecting" || Boolean(evmSession)} onClick={() => void connectEvm()} type="button">
-              <span>01</span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect EVM wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Required for vault ownership and transactions"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+              <span>01</span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
             </button>
             <button className={nimiqWallet ? "connection-row complete optional" : "connection-row optional"} disabled={nimiq.status === "connecting" || Boolean(nimiqWallet)} onClick={() => void connectNimiq()} type="button">
               <span>02</span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay (optional)"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Only needed for NIM payments and swaps"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
@@ -2046,7 +2122,11 @@ export function App() {
         <section className="route-page discover-page">
           <div className="discover-hero">
             <span className="eyebrow">Save better, together</span>
-            <SavingsJourneyChart />
+            <SavingsJourneyChart
+              history={savingsJourney}
+              saved={portfolioTotalSaved}
+              target={portfolioTotalTarget}
+            />
           </div>
           <div className="discover-section-heading">
             <div><h2>Group savings circles</h2><p>Live from the current testnet deployment.</p></div>
@@ -2083,12 +2163,16 @@ export function App() {
                   </div>
                   <div className="circle-meta"><span><UsersRound aria-hidden="true" size={13} />{group.memberCount}/{group.maxMemberCount} participants</span><span><CircleDollarSign aria-hidden="true" size={13} />Independent targets</span><span><CalendarDays aria-hidden="true" size={13} />Due {group.maturity.toLocaleDateString()}</span></div>
                   {group.publicJoining ? (
-                    <button className="join-circle-button" onClick={() => requestGroupJoin(group)} type="button">
-                      <span>{group.joiningOpen ? "Join public circle" : group.memberCount >= group.maxMemberCount ? "Circle full" : "Enrollment closed"}</span>
-                      {group.joiningOpen ? <ArrowRight aria-hidden="true" size={18} /> : <LockKeyhole aria-hidden="true" size={17} />}
-                    </button>
+                    group.joiningOpen ? (
+                      <SwipeReviewInvitation label="Slide to join circle" onReview={() => requestGroupJoin(group)} />
+                    ) : (
+                      <button className="join-circle-button" disabled type="button">
+                        <span>{group.memberCount >= group.maxMemberCount ? "Circle full" : "Enrollment closed"}</span>
+                        <LockKeyhole aria-hidden="true" size={17} />
+                      </button>
+                    )
                   ) : (
-                    <SwipeReviewInvitation onReview={() => requestGroupJoin(group)} />
+                    <SwipeReviewInvitation label="Slide to review invite" onReview={() => requestGroupJoin(group)} />
                   )}
                 </article>
               ))}
@@ -2154,41 +2238,52 @@ export function App() {
               </button>
               <button
                 className="text-action"
-                onClick={() => setCreatedVaultReceipt(null)}
+                onClick={() => {
+                  setCreatedVaultReceipt(null);
+                  setCreationStep(0);
+                }}
                 type="button"
               >
                 Create another vault
               </button>
             </article>
           ) : (
-          <article className="panel narrow-panel">
-            <div className="panel-heading">
+          <article className="panel narrow-panel creation-wizard">
+            <div className="creation-wizard-header">
+              <button
+                aria-label={creationStep === 0 ? "Close creation" : "Previous step"}
+                className="wizard-back"
+                onClick={() => creationStep === 0 ? navigate("discover") : setCreationStep((step) => Math.max(0, step - 1))}
+                type="button"
+              >
+                <ArrowLeft aria-hidden="true" size={19} />
+              </button>
               <div>
-                <span className="step">01</span>
-                <div>
-                  <h2>Create a savings vault</h2>
-                  <p>Choose who saves and define the target.</p>
-                </div>
+                <span>Step {creationStep + 1} of {creationStepTitles.length}</span>
+                <h2>{creationStepTitles[creationStep]}</h2>
               </div>
-              <div className="segmented swipe-tabs" {...createModeSwipe}>
+              <div className="wizard-progress" aria-label={`Step ${creationStep + 1} of ${creationStepTitles.length}`}>
+                {creationStepTitles.map((title, index) => <i className={index <= creationStep ? "active" : ""} key={title} />)}
+              </div>
+            </div>
+            {creationStep === 0 && <div className="segmented swipe-tabs creation-mode-picker" {...createModeSwipe}>
                 <button
                   className={mode === "personal" ? "active" : ""}
-                  onClick={() => setMode("personal")}
+                  onClick={() => { setMode("personal"); setCreationStep(0); }}
                   type="button"
                 >
                   Personal
                 </button>
                 <button
                   className={mode === "group" ? "active" : ""}
-                  onClick={() => setMode("group")}
+                  onClick={() => { setMode("group"); setCreationStep(0); }}
                   type="button"
                 >
                   Group
                 </button>
-              </div>
-            </div>
-            <form className="form-grid" onSubmit={createVaultSubmit}>
-              <fieldset className="creation-section full-width">
+              </div>}
+            <form className="form-grid creation-step-frame" key={`${mode}-${creationStep}`} onSubmit={createVaultSubmit}>
+              {creationStep === 0 && <fieldset className="creation-section full-width">
                 <legend><b>1</b>{mode === "group" ? "Circle identity" : "Savings goal"}</legend>
                 <div className="plan-field-grid">
                   <label>
@@ -2210,15 +2305,15 @@ export function App() {
                       value={vaultPurpose}
                     />
                   </label>
-                  {mode === "group" && vaultName.trim() && <label><span>Visibility</span><select onChange={(event) => setGroupVisibility(event.target.value as "public" | "invite-only")} value={groupVisibility}><option value="public">Public — discoverable</option><option value="invite-only">Invite-only</option></select></label>}
-                  {mode === "group" && vaultName.trim() && <label><span>Maximum participants</span><input max="50" min="4" onChange={(event) => setMaxParticipants(Number(event.target.value))} placeholder="Example: 6" required type="number" value={maxParticipants} /><small>At least four savers are required before activation.</small></label>}
-                  {mode === "group" && vaultName.trim() && <label className="full-width"><span>Enrollment deadline</span><input onChange={(event) => setEnrollmentDeadline(event.target.value)} required type="datetime-local" value={enrollmentDeadline} /><small>Must be before the shared maturity date.</small></label>}
+                  {mode === "group" && <label><span>Who can join?</span><select onChange={(event) => setGroupVisibility(event.target.value as "public" | "invite-only")} value={groupVisibility}><option value="public">Anyone</option><option value="invite-only">Invited wallets only</option></select></label>}
+                  {mode === "group" && <label><span>Maximum savers</span><input max="50" min="4" onChange={(event) => setMaxParticipants(Number(event.target.value))} placeholder="Example: 6" required type="number" value={maxParticipants} /><small>At least four people are needed.</small></label>}
+                  {mode === "group" && <label className="full-width"><span>Join by</span><input onChange={(event) => setEnrollmentDeadline(event.target.value)} required type="datetime-local" value={enrollmentDeadline} /><small>People must join before this time.</small></label>}
                   {mode === "personal" && <label><span>Target amount</span><div className="input-unit"><input min="0.000001" onChange={(event) => setTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={target} /><b>USDT</b></div><small>The most you plan to save in this vault.</small></label>}
                   {mode === "personal" && <label><span>Start date</span><input onChange={(event) => setPlanStartDate(event.target.value)} required type="date" value={planStartDate} /></label>}
                 </div>
-              </fieldset>
+              </fieldset>}
 
-              {mode === "group" && vaultName.trim() && <fieldset className="creation-section full-width progressive-section"><legend><b>2</b>Shared circle rules</legend><div className="shared-rule-copy"><p>Every member owns an independent position. The circle shares its mode, maturity, membership limit and cooperative-exit rules—not a pooled balance.</p><p>At least four members must join before activation. Activation permanently freezes membership. Market buyers receive the locked claim, not group voting rights.</p></div><div className="mode-picker embedded">
+              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><b>2</b>Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p></div><div className="mode-picker embedded">
                 <button
                   className={yieldMode === "safe" ? "active" : ""}
                   onClick={() => {
@@ -2244,9 +2339,9 @@ export function App() {
                 </button>
               </div></fieldset>}
 
-              {(mode === "personal" ? Number(target) > 0 : Boolean(vaultName.trim())) && <fieldset className="creation-section full-width progressive-section">
+              {creationStep === (mode === "group" ? 2 : 1) && <fieldset className="creation-section full-width progressive-section">
                 <legend><b>{mode === "group" ? "3" : "2"}</b>{mode === "group" ? "Your savings goal" : "Savings plan"}</legend>
-                {mode === "group" && <p className="section-guidance">These terms belong only to your position. Future members choose their own target, schedule and emergency allocation.</p>}
+                {mode === "group" && <p className="section-guidance">This target and plan belong to you. Other people choose their own.</p>}
                 <div className="plan-field-grid">
                 {mode === "group" && <label><span>Your personal target</span><div className="input-unit"><input min="0.000001" onChange={(event) => setTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={target} /><b>USDT</b></div></label>}
                 {mode === "group" && <label><span>Personal saving purpose <small>Optional</small></span><input maxLength={100} onChange={(event) => setVaultPurpose(event.target.value)} placeholder="Saving for flights and accommodation" value={vaultPurpose} /></label>}
@@ -2318,7 +2413,7 @@ export function App() {
                   <Target aria-hidden="true" size={18} />
                   <div>
                     <strong>Plan check</strong>
-                    <span>Informational only — your contract target remains authoritative.</span>
+                    <span>This is a guide for your savings plan.</span>
                   </div>
                 </div>
                 <dl>
@@ -2360,7 +2455,7 @@ export function App() {
               </label>}
               </fieldset>}
 
-              {estimatedMaturity && Number(planContribution) > 0 && <fieldset className="creation-section full-width progressive-section">
+              {creationStep === (mode === "group" ? 3 : 2) && <fieldset className="creation-section full-width progressive-section">
                 <legend><b>{mode === "group" ? "4" : "3"}</b>{mode === "group" ? "Review and create" : "Vault protection"}</legend>
                 {mode === "personal" && <div className="mode-picker embedded">
                   <button className={yieldMode === "safe" ? "active" : ""} onClick={() => { setYieldMode("safe"); setEarnRiskAccepted(false); }} type="button"><strong>Safe</strong><span>Locked funds remain in the vault and earn no yield.</span></button>
@@ -2393,7 +2488,7 @@ export function App() {
                   <div><dt>Expected completion</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>}
               </fieldset>}
-              {mode === "personal" && estimatedMaturity && Number(planContribution) > 0 && <fieldset className="creation-section full-width progressive-section">
+              {mode === "personal" && creationStep === 3 && <fieldset className="creation-section full-width progressive-section">
                 <legend><b>4</b>Review</legend>
                 <dl className="creation-review">
                   <div><dt>Goal</dt><dd>{target} mUSDT{vaultName ? ` for ${vaultName}` : ""}</dd></div>
@@ -2404,14 +2499,26 @@ export function App() {
                   <div><dt>Estimated outcome</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>
               </fieldset>}
-              {estimatedMaturity && Number(planContribution) > 0 && mode === "group" && groupCreationBlockReason && (
+              {creationStep === 3 && mode === "group" && groupCreationBlockReason && (
                 <div className="notice warning-notice full-width" role="status">
                   <strong>{groupVisibility === "public" ? "Public circles need newer contracts" : "This invite-only flow is not supported by the current factory"}</strong>
                   <span>{groupCreationBlockReason}</span>
                 </div>
               )}
-              {estimatedMaturity && Number(planContribution) > 0 && <button
-                className="primary full-width"
+              {creationStep < 3 && <div className="wizard-next-row full-width">
+                <span>{creationStepReady ? "Ready for the next step" : "Finish this step to continue"}</span>
+                <button
+                  aria-label="Continue to next step"
+                  className="wizard-next"
+                  disabled={!creationStepReady}
+                  onClick={() => setCreationStep((step) => Math.min(3, step + 1))}
+                  type="button"
+                >
+                  <ArrowRight aria-hidden="true" size={20} />
+                </button>
+              </div>}
+              {creationStep === 3 && <button
+                className="primary full-width wizard-create"
                 disabled={
                   riskActionsDisabled ||
                   (mode === "group" && Boolean(groupCreationBlockReason)) ||
@@ -2419,7 +2526,7 @@ export function App() {
                 }
                 type="submit"
               >
-                Create {mode === "group" ? "Group Vault" : "Personal Vault"}
+                Create {mode === "group" ? "group vault" : "personal vault"}
               </button>}
             </form>
           </article>

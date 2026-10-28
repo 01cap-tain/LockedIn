@@ -473,6 +473,8 @@ export interface ActivityItem {
   title: string;
   detail: string;
   vault?: string;
+  member?: string;
+  amount?: string;
   timestamp: Date;
 }
 
@@ -1243,9 +1245,22 @@ export async function loadPublicGroups(
 ): Promise<PublicGroupSummary[]> {
   const provider = publicReadProvider(preferredProvider);
   const factory = new Contract(factoryAddress(), factoryAbi, provider);
+  const read = async <T,>(operation: () => Promise<T>): Promise<T> => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (attempt === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 220 * (attempt + 1)));
+      }
+    }
+    throw lastError;
+  };
   const [countValue, protocolVersion] = await Promise.all([
-    factory.getFunction("vaultCount")(),
-    factory.getFunction("PROTOCOL_VERSION")(),
+    read(() => factory.getFunction("vaultCount")()),
+    read(() => factory.getFunction("PROTOCOL_VERSION")()),
   ]);
   const count = BigInt(countValue);
   const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.8.0";
@@ -1253,23 +1268,23 @@ export async function loadPublicGroups(
   // discovery screen does not wait on one RPC round trip per historic vault.
   const addresses = await Promise.all(
     Array.from({ length: Number(count) }, (_, index) =>
-      factory.getFunction("vaultAt")(index).then((address: string) => getAddress(address))
+      read(() => factory.getFunction("vaultAt")(index)).then((address: string) => getAddress(address))
     )
   );
 
   const groups = await Promise.all(
     addresses.map(async (address) => {
       const vault = new Contract(address, vaultAbi, provider);
-      const isGroup = Boolean(await vault.getFunction("isGroup")());
+      const isGroup = Boolean(await read(() => vault.getFunction("isGroup")()));
       if (!isGroup) return null;
       const [creator, maturity, mode, memberCount, acceptedCount, lifecycle] =
         await Promise.all([
-          vault.getFunction("groupCreator")(),
-          vault.getFunction("maturity")(),
-          vault.getFunction("mode")(),
-          vault.getFunction("memberCount")(),
-          vault.getFunction("acceptedMemberCount")(),
-          vault.getFunction("groupLifecycle")(),
+          read(() => vault.getFunction("groupCreator")()),
+          read(() => vault.getFunction("maturity")()),
+          read(() => vault.getFunction("mode")()),
+          read(() => vault.getFunction("memberCount")()),
+          read(() => vault.getFunction("acceptedMemberCount")()),
+          read(() => vault.getFunction("groupLifecycle")()),
         ]);
 
       // A factory can retain immutable vaults created by an earlier vault
@@ -1293,7 +1308,7 @@ export async function loadPublicGroups(
         ]);
       const members = await Promise.all(
         Array.from({ length: Number(memberCount) }, async (_, index) => {
-          const stored = await vault.getFunction("position")(index);
+          const stored = await read(() => vault.getFunction("position")(index));
           const target = BigInt(stored.target);
           const deposited = BigInt(stored.deposited);
           return {
@@ -2177,7 +2192,13 @@ export async function loadActivity(
   }
 
   const entries: Array<Omit<ActivityItem, "timestamp">> = [];
-  const push = (log: Log, title: string, detail: string, vault?: string) =>
+  const push = (
+    log: Log,
+    title: string,
+    detail: string,
+    vault?: string,
+    metadata?: Pick<ActivityItem, "member" | "amount">
+  ) =>
     entries.push({
       id: `${log.transactionHash}-${log.index}`,
       blockNumber: log.blockNumber,
@@ -2185,6 +2206,7 @@ export async function loadActivity(
       title,
       detail,
       vault,
+      ...metadata,
     });
 
   for (const log of factoryLogs) {
@@ -2211,7 +2233,11 @@ export async function loadActivity(
           log,
           "Deposit confirmed",
           `${formatUnits(event.args.amount, USDT_DECIMALS)} mUSDT`,
-          vault
+          vault,
+          {
+            member: getAddress(event.args.member),
+            amount: formatUnits(event.args.amount, USDT_DECIMALS),
+          }
         );
       if (event.name === "EmergencyWithdrawn")
         push(
