@@ -1403,6 +1403,286 @@ footer {
   }
 }
 
+/* Available-circle catalogue keeps the group animation informative, not dominant. */
+.circle-catalog-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 4px 2px;
+}
+.circle-catalog-header > div { display: grid; gap: 4px; }
+.circle-catalog-header h1 { margin: 0; color: #f5f2e9; font-family: inherit; font-size: clamp(22px, 6vw, 30px); }
+.circle-catalog-header p { margin: 0; color: #a8aea8; font-size: 12px; }
+
+.available-circles-page .circle-stack { display: grid; gap: 12px; }
+.available-circles-page .circle-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 126px;
+  column-gap: 14px;
+  border-radius: 19px;
+  padding: 15px;
+}
+.available-circles-page .circle-card-top,
+.available-circles-page .circle-card > h3,
+.available-circles-page .circle-address,
+.available-circles-page .circle-roadmap,
+.available-circles-page .circle-meta,
+.available-circles-page .review-invitation-track,
+.available-circles-page .join-circle-button { grid-column: 1; }
+.available-circles-page .circle-card > h3 { margin: 9px 0 3px; font-family: inherit; font-size: 17px; }
+.available-circles-page .circle-address { margin: 0 0 10px; }
+.available-circles-page .circle-roadmap { margin-top: 4px; }
+.available-circles-page .circle-meta { gap: 7px 12px; margin: 10px 0; }
+
+.compact-circle-visual {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1 / span 7;
+  width: 126px;
+  height: 112px;
+  align-self: center;
+  overflow: hidden;
+  border: 1px solid rgba(155, 139, 232, .24);
+  border-radius: 18px;
+  background: radial-gradient(circle at center, rgba(244, 200, 74, .13), #151916 62%);
+}
+.compact-circle-visual > svg { position: absolute; inset: 11px 3px; width: 120px; height: 90px; }
+.compact-power-line { stroke: rgba(155, 139, 232, .58); stroke-width: 1; stroke-dasharray: 4 5; animation: power-line-flow 1.1s linear infinite; }
+.compact-power-pulse { fill: #f4c84a; filter: drop-shadow(0 0 4px rgba(244, 200, 74, .8)); }
+.compact-member { position: absolute; z-index: 2; display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid rgba(155, 139, 232, .6); border-radius: 9px; color: #f5f2e9; background: #242925; font-size: 8px; font-weight: 800; }
+.compact-member-1 { top: 7px; left: 7px; }
+.compact-member-2 { top: 7px; right: 7px; }
+.compact-member-3 { bottom: 7px; left: 7px; }
+.compact-member-4 { right: 7px; bottom: 7px; }
+.compact-cash-core { position: absolute; z-index: 3; top: 50%; left: 50%; width: 48px; height: 48px; overflow: hidden; border-radius: 50%; background: #f4c84a; transform: translate(-50%, -50%); }
+.compact-cash-core .group-cash-animation { width: 100%; height: 100%; }
+
+@media (max-width: 390px) {
+  .available-circles-page .circle-card { grid-template-columns: minmax(0, 1fr) 104px; column-gap: 10px; }
+  .compact-circle-visual { width: 104px; transform: scale(.9); transform-origin: right center; }
+}
+
+/* Typography system ---------------------------------------------------- */
+:root {
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-interface: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --type-brand: 600 clamp(28px, 5vw, 32px) / 1 var(--font-display);
+  --type-page-title: 600 clamp(26px, 5vw, 28px) / 1.12 var(--font-display);
+  --type-balance: 700 clamp(36px, 8vw, 44px) / 1.05 var(--font-interface);
+  --type-section: 700 clamp(20px, 4vw, 24px) / 1.2 var(--font-interface);
+  --type-card: 600 clamp(17px, 3.8vw, 19px) / 1.25 var(--font-interface);
+  --type-body: 400 15px / 1.55 var(--font-interface);
+  --type-action: 600 14px / 1.2 var(--font-interface);
+  --type-label: 600 12px / 1.25 var(--font-interface);
+  --type-supporting: 400 13px / 1.45 var(--font-interface);
+}
+
+html,
+body,
+#root,
+.page-shell {
+  font-family: var(--font-interface);
+}
+
+body { font: var(--type-body); }
+
+/* Fraunces is reserved for identity and a small number of major headings. */
+.wordmark {
+  font: var(--type-brand) !important;
+  letter-spacing: -.035em;
+}
+
+h1,
+.discover-hero h1,
+.circle-catalog-header h1,
+.home-section-heading h1,
+.celebration-card h2 {
+  font: var(--type-page-title) !important;
+  letter-spacing: -.025em;
+}
+
+/* Product content and names stay interface-led rather than editorial. */
+h2,
+h3,
+.circle-card h3,
+.vault-row h3,
+.vault-card h3,
+.listing-card h3,
+.listing-view h2,
+.creation-wizard h2,
+.profile-sheet h2,
+.section-title h2,
+.home-section-heading h2 {
+  font-family: var(--font-interface) !important;
+  letter-spacing: -.012em;
+}
+
+.home-section-heading h2,
+.discover-section-heading h2,
+.section-title h2 {
+  font: var(--type-section) !important;
+}
+
+.circle-card h3,
+.vault-row h3,
+.vault-card h3,
+.listing-card h3,
+.home-card-copy > strong,
+.home-card-title > strong,
+.quick-vault-list strong,
+.upcoming-card strong {
+  font: var(--type-card) !important;
+}
+
+button,
+input,
+textarea,
+select,
+option,
+.app-nav,
+.bottom-nav,
+.drawer-nav,
+.text-action,
+.primary,
+.secondary,
+.outline-action {
+  font-family: var(--font-interface) !important;
+}
+
+button,
+.app-nav a,
+.drawer-nav button,
+.primary,
+.secondary,
+.outline-action {
+  font-weight: 600;
+}
+
+input,
+textarea,
+select {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+input::placeholder,
+textarea::placeholder {
+  font-family: var(--font-interface);
+  font-weight: 400;
+}
+
+.home-summary-amount strong,
+.major-balance,
+.receipt-amount > div strong,
+.saver-payout-ticket strong {
+  font: var(--type-balance) !important;
+  letter-spacing: -.025em;
+}
+
+.listing-art-value strong,
+.saver-payout-ticket strong,
+.receipt-amount > div strong,
+.vault-art strong {
+  font-family: var(--font-interface) !important;
+}
+
+.tag,
+.pace,
+.eyebrow,
+.kicker,
+.listing-status,
+label > span,
+legend {
+  font-family: var(--font-interface) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+p,
+.transaction-copy p,
+.notice span,
+.home-empty span,
+.circle-catalog-header p,
+.member-avatar-note,
+.invitation-disclaimer,
+label small,
+.field-hint {
+  font-family: var(--font-interface);
+  font-size: max(13px, .8125rem);
+}
+
+code,
+.circle-address,
+.wallet-address,
+.account-menu-trigger,
+.wallet-chip {
+  font-family: var(--font-interface) !important;
+}
+
+/* Financial and time data must not jump as digits change. */
+:where(
+  input[type="number"],
+  time,
+  code,
+  .home-summary-amount,
+  .home-progress,
+  .home-summary-meta,
+  .vault-row,
+  .vault-card,
+  .listing-card,
+  .listing-view,
+  .quote,
+  .receipt-amount,
+  .saver-payout-ticket,
+  .test-token-card,
+  .wallet-balance,
+  .circle-roadmap,
+  .milestone-row,
+  .progress-copy,
+  .creation-receipt
+) {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+@media (min-width: 720px) {
+  :root {
+    --type-body: 400 16px / 1.55 var(--font-interface);
+    --type-action: 600 15px / 1.2 var(--font-interface);
+  }
+}
+
+
+.savings-lock-animation {
+  width: min(190px, 52vw);
+  height: 150px;
+  margin: -18px auto -8px;
+  overflow: hidden;
+}
+
+.savings-lock-animation canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.group-power-visual .power-member b {
+  display: grid;
+  place-items: center;
+}
+
+.group-power-visual .power-member b svg {
+  position: static;
+  width: 20px;
+  height: 20px;
+  color: currentColor;
+}
+
+.compact-member svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Discover opens with a visual savings trajectory, not marketing copy. */
 .discover-hero {
   display: grid;
@@ -8163,3 +8443,1196 @@ select,
 }
 
 .creation-wizard .creation-section > legend svg { color: var(--accent); }
+
+/* LockedIn semantic colour system ---------------------------------------
+   Vault identity, yield mode and progress state are deliberately separate.
+   Keep this final layer token-driven so new screens inherit one vocabulary. */
+:root {
+  --color-background: #111411;
+  --color-card: #1a1e1b;
+  --color-elevated: #242925;
+  --color-text: #f5f2e9;
+  --color-text-secondary: #a8aea8;
+  --color-brand: #f4c84a;
+  --color-success: #55c58a;
+  --color-information: #6fa8ff;
+  --color-warning: #e5a84b;
+  --color-error: #df6b65;
+  --color-group: #9b8be8;
+  --color-border: #343a35;
+  --color-focus: #fff1ae;
+  --bg-canvas: var(--color-background);
+  --bg-surface: var(--color-card);
+  --bg-elevated: var(--color-elevated);
+  --bg-input: #151915;
+  --bg-hover: #292e2a;
+  --border-subtle: var(--color-border);
+  --border-accent: rgba(244, 200, 74, .52);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: #858c86;
+  --accent: var(--color-brand);
+  --accent-strong: #ffdc72;
+  --status-error: var(--color-error);
+  --status-error-bg: #2a1918;
+}
+
+body,
+#root,
+.page-shell,
+.discover-page,
+.market-page,
+.page-shell:has(.market-page),
+.page-shell:has(.discover-page) {
+  color: var(--color-text);
+  background: var(--color-background);
+}
+
+:is(.panel, .creation-section, .plan-details, .weekday-picker, .plan-preview,
+  .trust-summary, .join-position-review, .group-activation-card,
+  .emergency-withdrawal-card, .group-exit-explainer, .market-fallback-card,
+  .technical-details, .pace-summary, .reward-card, .reward-funding-note,
+  .wallet-details > div, .test-token-card, .connection-row, .mini-vault-card,
+  .recent-trade-card, .trade-history-row, .timeline-item, .vault-row,
+  .listing-card, .circle-card) {
+  border-color: var(--color-border);
+  color: var(--color-text);
+  background: var(--color-card);
+}
+
+:is(.dashboard-grid > .vault-main.vault-detail-sheet, .market-detail-sheet,
+  .profile-sheet, .connection-sheet, .quick-vault-sheet) {
+  border-color: var(--color-border) !important;
+  color: var(--color-text) !important;
+  background: var(--color-card) !important;
+}
+
+/* Personal and group identity stays visible before the label is read. */
+.vault-row.personal-vault,
+.mini-vault-card.personal-vault,
+.vault-detail-sheet.personal-vault,
+.creation-wizard.personal-vault,
+.vault-created-state.personal-vault,
+.listing-card.personal-listing {
+  border-color: rgba(244, 200, 74, .42) !important;
+  box-shadow: inset 0 2px 0 rgba(244, 200, 74, .82) !important;
+}
+
+.vault-row.group-vault,
+.mini-vault-card.group-vault,
+.circle-card.group-vault,
+.vault-detail-sheet.group-vault,
+.creation-wizard.group-vault,
+.vault-created-state.group-vault,
+.listing-card.group-listing {
+  border-color: rgba(155, 139, 232, .48) !important;
+  box-shadow: inset 0 2px 0 rgba(155, 139, 232, .86) !important;
+}
+
+.vault-art.personal,
+.listing-art.personal {
+  color: #211c0c;
+  background: #d9b743;
+}
+
+.vault-art.group,
+.listing-art.group {
+  color: #15121f;
+  background: #9b8be8;
+}
+
+.tag.personal {
+  border-color: rgba(244, 200, 74, .48);
+  color: #ffe48b;
+  background: rgba(244, 200, 74, .12);
+}
+
+.tag.group {
+  border-color: rgba(155, 139, 232, .55);
+  color: #c9beff;
+  background: rgba(155, 139, 232, .14);
+}
+
+.tag.safe {
+  border-color: rgba(85, 197, 138, .5);
+  color: #86dfac;
+  background: rgba(85, 197, 138, .13);
+}
+
+.tag.earn {
+  border-color: rgba(111, 168, 255, .52);
+  color: #a8cbff;
+  background: rgba(111, 168, 255, .14);
+}
+
+.personal-vault :where(.vault-card-progress i, .progress-track > span),
+.personal-vault.vault-row .vault-card-progress i,
+.vault-row.personal-vault .progress-track > span,
+.vault-detail-sheet.personal-vault .progress-track > span {
+  background: var(--color-brand);
+}
+
+.group-vault :where(.vault-card-progress i, .progress-track > span),
+.group-vault.vault-row .vault-card-progress i,
+.vault-row.group-vault .progress-track > span,
+.vault-detail-sheet.group-vault .progress-track > span {
+  background: var(--color-group);
+}
+
+.circle-card .group-power-visual,
+.group-power-visual .power-member {
+  border-color: rgba(155, 139, 232, .45);
+}
+
+.group-power-visual :where(.power-member, .power-more) {
+  color: #d8d0ff;
+}
+
+.group-power-visual :where(.power-line, .power-pulse),
+.group-vault .milestone-row .reached {
+  color: var(--color-group);
+  stroke: var(--color-group);
+  fill: var(--color-group);
+}
+
+/* Progress state is explicit in both icon/text and colour. */
+.pace.ahead,
+.pace.on-track,
+.pace.complete,
+.pace.completed,
+.pace-summary.ahead,
+.pace-summary.on-track,
+.pace-summary.completed,
+.status-pill.complete,
+.circle-state.active,
+.circle-state.completed {
+  border-color: rgba(85, 197, 138, .46);
+  color: #8ce1b0;
+  background: rgba(85, 197, 138, .12);
+}
+
+.pace.behind,
+.pace-summary.behind,
+.warning,
+.warning-notice,
+.circle-state.ready {
+  border-color: rgba(229, 168, 75, .5);
+  color: #f3c477;
+  background: rgba(229, 168, 75, .12);
+}
+
+.pace-summary.behind svg,
+.warning svg { color: var(--color-warning); }
+
+.notice.error,
+.transaction.error,
+.field-error,
+.destructive {
+  color: #ffaaa4;
+}
+
+.notice.error,
+.transaction.error {
+  border-color: rgba(223, 107, 101, .58);
+  background: rgba(223, 107, 101, .12);
+}
+
+button.destructive {
+  border-color: rgba(223, 107, 101, .55);
+  color: #ffaaa4;
+  background: rgba(223, 107, 101, .1);
+}
+
+.listing-status.pending,
+.circle-state.open,
+.status-pill:not(.complete) {
+  border-color: #4a534c;
+  color: #c0c7c1;
+  background: #29302b;
+}
+
+.listing-status.authorized,
+.listing-status.expiring { color: #f3c477; background: rgba(229, 168, 75, .12); }
+
+/* Brand yellow is reserved for the dominant action and selected navigation. */
+.primary,
+.join-circle-button,
+.bottom-create-button {
+  border-color: var(--color-brand);
+  color: #211c0c;
+  background: var(--color-brand);
+}
+
+.secondary,
+.outline-action {
+  border-color: var(--color-border);
+  color: var(--color-text);
+  background: var(--color-elevated);
+}
+
+.secondary:hover:not(:disabled),
+.outline-action:hover:not(:disabled) {
+  border-color: #515a52;
+  color: var(--color-text);
+  background: #2d332e;
+}
+
+.bottom-nav-main button.active,
+.view-switch button.active,
+.activity-view-tabs button.active,
+.history-tabs button.active,
+.vault-view-tabs button.active {
+  color: var(--color-brand);
+}
+
+.group-exit-panel .primary,
+.group-activation-card .primary,
+.create-action-stack .group-action > span {
+  border-color: var(--color-group);
+  color: #17131f;
+  background: var(--color-group);
+}
+
+.aave-status,
+.earn-info,
+.tag.earn svg { color: var(--color-information); }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  opacity: .58;
+  color: #9ba19b;
+}
+
+/* Save and emergency-withdraw shortcuts use a single calm vault chooser. */
+.quick-vault-layer {
+  position: fixed;
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+}
+
+.quick-vault-layer .overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 4, .78);
+  backdrop-filter: blur(12px) saturate(.75);
+}
+
+.quick-vault-sheet {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(100%, 560px);
+  height: 55vh;
+  max-height: 55vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  padding: 28px 16px calc(18px + env(safe-area-inset-bottom));
+  box-shadow: 0 -24px 70px rgba(0, 0, 0, .58);
+  animation: action-sheet-up 420ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.quick-vault-sheet > header {
+  display: grid;
+  gap: 5px;
+}
+
+.quick-vault-sheet h2,
+.quick-vault-sheet p { margin: 0; }
+.quick-vault-sheet h2 { color: var(--color-text); font-size: 21px; }
+.quick-vault-sheet p { max-width: 50ch; color: var(--color-text-secondary); font-size: 10px; line-height: 1.5; }
+.quick-vault-sheet .eyebrow { color: var(--color-brand); }
+.quick-vault-sheet.withdraw .eyebrow { color: var(--color-success); }
+
+.quick-vault-list {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  overflow-y: auto;
+  padding: 1px 1px 18px;
+}
+
+.quick-vault-list > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  padding: 11px;
+  color: var(--color-text);
+  background: var(--color-elevated);
+  text-align: left;
+}
+
+.quick-vault-list > button.personal-vault { box-shadow: inset 0 2px 0 var(--color-brand); }
+.quick-vault-list > button.group-vault { box-shadow: inset 0 2px 0 var(--color-group); }
+.quick-vault-list > button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.quick-vault-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.quick-vault-list small { color: var(--color-text-secondary); font-size: 9px; }
+
+.quick-vault-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 14px;
+  color: #211c0c;
+  background: var(--color-brand);
+}
+
+.group-vault .quick-vault-icon { color: #17131f; background: var(--color-group); }
+
+.create-action-stack > button:nth-child(2) { animation-delay: 35ms; }
+.create-action-stack > button:nth-child(3) { animation-delay: 70ms; }
+.create-action-stack > button:nth-child(4) { animation-delay: 105ms; }
+.create-action-stack .withdraw-action > span { color: #112219; background: var(--color-success); }
+
+/* Focused usability corrections --------------------------------------- */
+/* Keep the shared-circle energy animation warm and legible. Violet still
+   identifies group cards, but it no longer floods the illustration. */
+.circle-card .group-power-visual {
+  border-color: rgba(244, 200, 74, .22);
+  background: radial-gradient(circle at 50% 50%, #25271f 0 31%, #171a17 70%);
+}
+
+.group-power-visual .power-member {
+  border-color: rgba(244, 200, 74, .7);
+  color: var(--color-text);
+  background: #30342f;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .36), 0 0 0 3px rgba(244, 200, 74, .06);
+}
+
+.group-power-visual .power-line {
+  stroke: rgba(244, 200, 74, .62);
+  fill: none;
+}
+
+.group-power-visual .power-pulse {
+  stroke: none;
+  fill: #ffe17d;
+  filter: drop-shadow(0 0 6px rgba(255, 216, 91, .95));
+}
+
+.group-power-visual .power-member i span { background: var(--color-brand); }
+.group-power-visual .cash-core {
+  background: #ffe38a;
+  box-shadow: 0 0 0 10px rgba(255, 227, 138, .08), 0 0 42px rgba(244, 200, 74, .16);
+}
+
+/* The global action menu is intentionally plain and evenly sized. */
+.create-action-stack > button:not(.create-action-close) {
+  width: 250px;
+  min-width: 250px;
+  height: 62px;
+  justify-content: flex-start;
+  border-radius: 20px;
+  padding: 9px 14px;
+}
+
+.bottom-create-button {
+  border-color: #6fda9d;
+  color: #102019;
+  background: var(--color-success) !important;
+  box-shadow: 0 8px 28px rgba(85, 197, 138, .26);
+}
+
+.bottom-create-button:hover:not(:disabled) { background: #6fda9d !important; }
+
+/* Three explicit goal states: active, achieved, and exited. */
+.vault-view-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* The grabber, heading and scrollable list each own a grid row. This prevents
+   the heading from sliding behind vault cards on short mobile screens. */
+.quick-vault-sheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.quick-vault-sheet > header {
+  position: relative;
+  z-index: 2;
+  padding: 0 2px 4px;
+  background: var(--color-card);
+}
+
+.quick-vault-list {
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.quick-vault-list > button { min-height: 68px; flex: 0 0 auto; }
+
+/* iOS-style wheel date selection. The value format remains unchanged. */
+.wheel-date-picker {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  padding: 10px;
+  color: var(--color-text);
+  background: #141814;
+}
+
+.wheel-date-labels {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.wheel-date-picker.date-only .wheel-date-labels {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wheel-date-columns {
+  height: 164px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(17, 20, 17, .94), transparent 34%, transparent 66%, rgba(17, 20, 17, .94)),
+    var(--color-elevated);
+}
+
+.wheel-date-columns [data-rwp-highlight-wrapper] {
+  border-top: 1px solid rgba(244, 200, 74, .46);
+  border-bottom: 1px solid rgba(244, 200, 74, .46);
+  color: var(--color-text);
+  background: rgba(244, 200, 74, .08);
+}
+
+.wheel-date-columns [data-rwp-option] {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.wheel-date-columns [data-rwp-highlight-item] {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.wheel-date-columns [data-rwp]:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+.wheel-date-output {
+  color: var(--color-brand);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.schedule-step { align-content: start; }
+
+/* Compact creation navigation: circular map, no redundant step copy. */
+.wizard-progress { gap: 8px; }
+
+.wizard-progress i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #515851;
+  border-radius: 50%;
+  background: transparent;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.wizard-progress i.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  transform: scale(1.08);
+}
+
+.creation-wizard-header > div:nth-child(2) { gap: 0; }
+
+.wizard-next-row {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wizard-back svg,
+.wizard-next svg { stroke-width: 2.2; }
+
+/* Keep the global action unmistakably green across older CSS layers. */
+.bottom-nav > .bottom-create-button,
+.bottom-create-button {
+  border-color: #6fda9d !important;
+  color: #102019 !important;
+  background-color: #55c58a !important;
+  box-shadow: 0 0 0 6px rgba(85, 197, 138, .12), 0 14px 38px rgba(0, 0, 0, .46) !important;
+}
+
+.bottom-create-button svg { color: #102019 !important; }
+
+/* Savings-first connected home ----------------------------------------- */
+.savings-home {
+  display: grid;
+  gap: 18px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 4px 0 110px;
+  color: #f5f2e9;
+}
+
+.home-summary,
+.home-section {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 22px;
+  padding: 18px;
+  background: #1a1e1b;
+}
+
+.home-summary { background: linear-gradient(145deg, #20251f, #171b18 72%); }
+
+.home-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.home-section-heading h1,
+.home-section-heading h2 {
+  margin: 3px 0 0;
+  color: #f5f2e9;
+  font-family: inherit;
+  line-height: 1.12;
+}
+
+.home-section-heading h1 { font-size: clamp(22px, 5vw, 32px); }
+.home-section-heading h2 { font-size: 18px; }
+
+.home-summary-amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px 12px;
+}
+
+.home-summary-amount strong { color: #f5f2e9; font-size: clamp(29px, 8vw, 44px); line-height: 1; }
+.home-summary-amount span,
+.home-summary-meta,
+.home-card-copy small,
+.home-empty span,
+.upcoming-card small,
+.home-activity-list small { color: #a8aea8; }
+
+.home-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+}
+
+.home-progress i,
+.home-card-copy > i {
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #303631;
+}
+
+.home-progress i span,
+.home-card-copy > i span { display: block; height: 100%; border-radius: inherit; background: #f4c84a; }
+.home-goal-card.group-vault .home-card-copy > i span { background: #9b8be8; }
+.home-progress b { color: #f4c84a; font-size: 13px; }
+
+.home-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  font-size: 12px;
+}
+
+.home-summary-meta span { display: inline-flex; align-items: center; gap: 6px; }
+
+.home-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.home-quick-actions button {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 17px;
+  padding: 11px;
+  color: #f5f2e9;
+  text-align: left;
+  background: #1a1e1b;
+}
+
+.home-quick-actions button > svg { width: 20px; color: #f4c84a; }
+.home-quick-actions button:nth-child(2) > svg { color: #9b8be8; }
+.home-quick-actions button span { display: grid; gap: 2px; }
+.home-quick-actions button strong { font-size: 12px; }
+.home-quick-actions button small { color: #a8aea8; font-size: 10px; }
+
+.home-card-list { display: grid; gap: 10px; }
+.home-goal-card,
+.upcoming-card {
+  display: grid;
+  width: 100%;
+  min-height: 82px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(244, 200, 74, .24);
+  border-radius: 17px;
+  padding: 13px;
+  color: #f5f2e9;
+  text-align: left;
+  background: #151916;
+}
+
+.home-goal-card.group-vault,
+.upcoming-card.group-vault { border-color: rgba(155, 139, 232, .32); }
+.home-card-icon,
+.upcoming-card > svg:first-child { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 13px; padding: 10px; color: #171a17; background: #f4c84a; }
+.home-goal-card.group-vault .home-card-icon,
+.upcoming-card.group-vault > svg:first-child { background: #9b8be8; }
+.home-card-icon svg { width: 19px; }
+.home-card-copy { display: grid; min-width: 0; gap: 6px; }
+.home-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-card-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.home-card-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.home-card-title .tag { flex: 0 0 auto; }
+
+.home-empty {
+  display: flex;
+  min-height: 82px;
+  align-items: center;
+  gap: 12px;
+  border-radius: 16px;
+  padding: 14px;
+  background: #151916;
+}
+.home-empty > svg { flex: 0 0 auto; color: #f4c84a; }
+.home-empty.group-empty > svg { color: #9b8be8; }
+.home-empty div { display: grid; gap: 4px; }
+.home-empty span { font-size: 12px; }
+
+.home-activity-list { display: grid; }
+.home-activity-list article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.home-activity-list article:last-child { border-bottom: 0; }
+.home-activity-list article > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 11px; color: #55c58a; background: rgba(85, 197, 138, .1); }
+.home-activity-list article div { display: grid; gap: 3px; }
+.home-activity-list article b { color: #f4c84a; font-size: 12px; }
+
+.listing-form-error { display: flex; align-items: center; gap: 7px; margin: 0; }
+
+/* Transaction feedback must sit above every bottom sheet. */
+.transaction {
+  z-index: 1000 !important;
+  bottom: calc(88px + env(safe-area-inset-bottom)) !important;
+  color: #f5f2e9;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .62);
+}
+
+.mobile-app-header {
+  min-height: 58px;
+  padding-block: 8px;
+}
+.mobile-app-header .wordmark { font-size: clamp(15px, 4vw, 19px); }
+.mobile-app-header .menu-icon,
+.mobile-app-header .account-menu-trigger { min-height: 40px; }
+
+@media (max-width: 560px) {
+  .savings-home { gap: 13px; }
+  .home-summary, .home-section { border-radius: 18px; padding: 15px; }
+  .home-section-heading { align-items: flex-start; }
+  .home-section-heading .primary.compact { padding-inline: 11px; }
+  .home-quick-actions { grid-template-columns: 1fr; }
+  .home-quick-actions button { min-height: 58px; }
+  .home-goal-card .pace { grid-column: 2; justify-self: start; }
+}
+
+/* Final typography cascade: keep this after legacy component layers. */
+:root {
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-interface: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --type-brand: 600 clamp(28px, 5vw, 32px) / 1 var(--font-display);
+  --type-page-title: 600 clamp(26px, 5vw, 28px) / 1.12 var(--font-display);
+  --type-balance: 700 clamp(36px, 8vw, 44px) / 1.05 var(--font-interface);
+  --type-section: 700 clamp(20px, 4vw, 24px) / 1.2 var(--font-interface);
+  --type-card: 600 clamp(17px, 3.8vw, 19px) / 1.25 var(--font-interface);
+  --type-body: 400 15px / 1.55 var(--font-interface);
+  --type-action: 600 14px / 1.2 var(--font-interface);
+  --type-label: 600 12px / 1.25 var(--font-interface);
+  --type-supporting: 400 13px / 1.45 var(--font-interface);
+}
+
+html,
+body,
+#root,
+.page-shell { font-family: var(--font-interface) !important; }
+body { font: var(--type-body); }
+
+.page-shell :where(h2, h3, h4, p, span, small, strong, b, em, code, time, label, legend, button, input, textarea, select, option, a, blockquote) {
+  font-family: var(--font-interface) !important;
+}
+
+.wordmark,
+.wordmark *,
+h1,
+h1 *,
+.discover-hero h1,
+.discover-hero h1 *,
+.circle-catalog-header h1,
+.circle-catalog-header h1 *,
+.home-section-heading h1,
+.home-section-heading h1 *,
+.celebration-card h2,
+.celebration-card h2 * {
+  font-family: var(--font-display) !important;
+}
+
+.wordmark,
+.mobile-app-header .wordmark {
+  font: var(--type-brand) !important;
+  letter-spacing: -.035em;
+}
+
+h1,
+.discover-hero h1,
+.circle-catalog-header h1,
+.home-section-heading h1,
+.celebration-card h2 {
+  font: var(--type-page-title) !important;
+  letter-spacing: -.025em;
+}
+
+.home-section-heading h2,
+.discover-section-heading h2,
+.section-title h2 {
+  font: var(--type-section) !important;
+}
+
+.circle-card h3,
+.vault-row h3,
+.vault-card h3,
+.listing-card h3,
+.home-card-copy > strong,
+.home-card-title > strong,
+.quick-vault-list strong,
+.upcoming-card strong {
+  font: var(--type-card) !important;
+}
+
+button,
+.app-nav a,
+.drawer-nav button,
+.bottom-nav-main button,
+.primary,
+.secondary,
+.outline-action,
+.text-action {
+  font: var(--type-action) !important;
+}
+
+.bottom-nav-main button { font-size: 14px !important; }
+
+input,
+textarea,
+select,
+option {
+  font-family: var(--font-interface) !important;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+input::placeholder,
+textarea::placeholder {
+  font-family: var(--font-interface);
+  font-weight: 400;
+}
+
+.home-summary-amount strong,
+.major-balance,
+.receipt-amount > strong,
+.receipt-amount > div strong,
+.saver-payout-ticket strong {
+  font: var(--type-balance) !important;
+  letter-spacing: -.025em;
+}
+
+.buyer-decision-strip strong,
+.listing-art-value strong,
+.vault-art strong {
+  font-family: var(--font-interface) !important;
+}
+
+.tag,
+.pace,
+.eyebrow,
+.kicker,
+.listing-status,
+label > span,
+legend {
+  font: var(--type-label) !important;
+}
+
+small,
+label small,
+.field-hint,
+.transaction-copy p,
+.notice span,
+.home-empty span,
+.circle-catalog-header p,
+.member-avatar-note,
+.invitation-disclaimer {
+  font: var(--type-supporting) !important;
+}
+
+code,
+.circle-address,
+.wallet-address,
+.account-menu-trigger,
+.wallet-chip {
+  font-family: var(--font-interface) !important;
+}
+
+:where(
+  input[type="number"],
+  time,
+  code,
+  .home-summary-amount,
+  .home-progress,
+  .home-summary-meta,
+  .vault-row,
+  .vault-card,
+  .listing-card,
+  .listing-view,
+  .quote,
+  .receipt-amount,
+  .saver-payout-ticket,
+  .test-token-card,
+  .wallet-balance,
+  .circle-roadmap,
+  .milestone-row,
+  .progress-copy,
+  .creation-receipt
+) {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+@media (min-width: 720px) {
+  :root {
+    --type-body: 400 16px / 1.55 var(--font-interface);
+    --type-action: 600 15px / 1.2 var(--font-interface);
+  }
+}
+
+/* Compact mobile rhythm -------------------------------------------------
+   The display scale above is intentionally generous on tablets and desktop.
+   Phones need a tighter, component-aware scale so labels never compete for
+   the same horizontal space. */
+@media (max-width: 430px) {
+  :root {
+    --type-brand: 600 20px / 1 var(--font-display);
+    --type-page-title: 600 22px / 1.12 var(--font-display);
+    --type-balance: 700 29px / 1.05 var(--font-interface);
+    --type-section: 700 18px / 1.2 var(--font-interface);
+    --type-card: 600 15px / 1.25 var(--font-interface);
+    --type-body: 400 14px / 1.48 var(--font-interface);
+    --type-action: 600 13px / 1.2 var(--font-interface);
+    --type-label: 600 11px / 1.25 var(--font-interface);
+    --type-supporting: 400 12px / 1.42 var(--font-interface);
+  }
+
+  .mobile-app-header {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    min-height: 50px;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding: 6px 10px;
+  }
+
+  .mobile-app-header .menu-icon {
+    width: 34px;
+    min-height: 34px;
+    padding: 7px;
+  }
+
+  .mobile-app-header .wordmark {
+    min-width: 0;
+    justify-self: start;
+    font: var(--type-brand) !important;
+    white-space: nowrap;
+  }
+
+  .mobile-app-header .account-menu-trigger {
+    width: auto;
+    min-width: 0;
+    max-width: 82px;
+    height: 34px;
+    min-height: 34px;
+    gap: 5px;
+    padding: 0 8px;
+    font-size: 10px !important;
+  }
+
+  .mobile-app-header .account-menu-trigger svg { width: 12px; height: 12px; }
+
+  .savings-home { gap: 9px; padding-bottom: 94px; }
+  .home-summary,
+  .home-section { border-radius: 15px; padding: 12px; }
+  .home-section-heading { margin-bottom: 8px; }
+  .home-summary-amount { gap: 2px; }
+  .home-summary-amount strong { font-size: 28px !important; }
+  .home-progress { gap: 8px; margin: 10px 0 8px; }
+  .home-progress i { height: 5px; }
+  .home-summary-meta { gap: 5px 10px; font-size: 10px; }
+  .home-summary-meta svg { width: 12px; height: 12px; }
+
+  .home-quick-actions { gap: 7px; }
+  .home-quick-actions button {
+    min-height: 46px;
+    gap: 9px;
+    border-radius: 13px;
+    padding: 8px 10px;
+  }
+  .home-quick-actions button > svg { width: 17px; height: 17px; }
+  .home-quick-actions button strong { font-size: 12px; }
+  .home-quick-actions button small { font-size: 10px !important; }
+
+  .upcoming-card {
+    min-height: 66px;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 8px;
+    border-radius: 14px;
+    padding: 9px;
+  }
+  .upcoming-card > svg:first-child {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    padding: 8px;
+  }
+  .upcoming-card > span { min-width: 0; }
+  .upcoming-card strong { font-size: 13px !important; }
+  .upcoming-card small {
+    display: block;
+    overflow: hidden;
+    font-size: 10px !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .upcoming-card .pace {
+    grid-column: 2;
+    justify-self: start;
+    padding: 3px 6px;
+    font-size: 9px !important;
+  }
+  .upcoming-card > svg:last-child {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    width: 15px;
+    height: 15px;
+  }
+
+  .home-goal-card {
+    min-height: 68px;
+    gap: 9px;
+    padding: 10px;
+  }
+  .home-card-icon { width: 34px; height: 34px; border-radius: 10px; }
+  .home-card-copy { gap: 4px; }
+
+  .circle-catalog-header {
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-top: 1px;
+  }
+  .circle-catalog-header .icon-button { width: 34px; height: 34px; min-width: 34px; }
+  .circle-catalog-header > div { min-width: 0; gap: 2px; }
+  .circle-catalog-header h1 { font-size: 20px !important; }
+  .circle-catalog-header p { font-size: 11px !important; line-height: 1.35; }
+  .discover-section-heading { margin-bottom: 8px; }
+  .discover-section-heading h2 { font-size: 16px !important; }
+  .discover-section-heading p { font-size: 10px; }
+  .available-circles-page .circle-stack { gap: 9px; }
+
+  .available-circles-page .circle-card {
+    grid-template-columns: minmax(0, 1fr) 84px;
+    column-gap: 8px;
+    border-radius: 15px;
+    padding: 11px;
+  }
+  .available-circles-page .circle-card > h3 {
+    margin: 6px 0 2px;
+    font-size: 14px !important;
+  }
+  .available-circles-page .circle-address { margin-bottom: 7px; font-size: 9px; }
+  .available-circles-page .circle-roadmap {
+    gap: 4px;
+    margin-top: 3px;
+    padding: 8px;
+    border-radius: 10px;
+  }
+  .available-circles-page .circle-roadmap > i { height: 4px; }
+  .available-circles-page .circle-roadmap > div { font-size: 8px; }
+  .available-circles-page .circle-meta {
+    display: grid;
+    gap: 4px;
+    margin: 7px 0;
+    font-size: 9px;
+  }
+  .available-circles-page .circle-meta > span { justify-content: flex-start; gap: 5px; }
+  .available-circles-page .join-circle-button {
+    grid-column: 1 / -1;
+    min-height: 36px;
+    border-radius: 11px;
+    padding: 8px 10px;
+  }
+
+  .compact-circle-visual {
+    width: 84px;
+    height: 88px;
+    border-radius: 14px;
+  }
+  .compact-circle-visual > svg {
+    inset: 7px 2px;
+    width: 80px;
+    height: 74px;
+  }
+  .compact-member {
+    width: 20px;
+    height: 20px;
+    border-radius: 7px;
+  }
+  .compact-member-1 { top: 5px; left: 5px; }
+  .compact-member-2 { top: 5px; right: 5px; }
+  .compact-member-3 { bottom: 5px; left: 5px; }
+  .compact-member-4 { right: 5px; bottom: 5px; }
+  .compact-cash-core { width: 36px; height: 36px; }
+
+  .bottom-nav { right: 8px; bottom: calc(7px + env(safe-area-inset-bottom)); left: 8px; width: min(calc(100% - 16px), 536px); gap: 7px; }
+  .bottom-nav-main { border-radius: 27px; padding: 5px; }
+  .bottom-nav-main button {
+    min-height: 42px;
+    gap: 2px;
+    border-radius: 22px;
+    padding: 3px;
+    font-size: 9px !important;
+  }
+  .bottom-nav-main button svg { width: 16px; height: 16px; }
+  .bottom-create-button,
+  .bottom-nav > .bottom-create-button {
+    width: 54px;
+    min-width: 54px;
+    height: 54px;
+  }
+}
+
+/* Every circle in the catalogue uses the same rounded violet identity line. */
+.available-circles-page .circle-card.group-vault {
+  position: relative;
+  box-shadow: none !important;
+}
+
+.available-circles-page .circle-card.group-vault::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-group);
+  content: "";
+}
+
+/* Home should feel informative rather than compressed on narrow phones. */
+@media (max-width: 430px) {
+  .home-summary {
+    min-height: 190px;
+    padding: 16px;
+  }
+
+  .home-summary-amount {
+    display: grid;
+    gap: 5px;
+  }
+
+  .home-summary-amount span { font-size: 11px; }
+  .home-progress { margin-block: 14px 11px; }
+  .home-progress i { height: 7px; }
+
+  .home-summary-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .home-summary-meta span {
+    min-width: 0;
+    min-height: 40px;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 11px;
+    padding: 7px 8px;
+    background: rgba(255, 255, 255, .035);
+    line-height: 1.3;
+  }
+
+  .market-browser .listing-card > .listing-art {
+    min-height: 164px;
+    padding: 15px;
+  }
+
+  .market-browser .listing-art-top {
+    top: 13px;
+    right: 13px;
+    left: 13px;
+  }
+
+  .market-browser .listing-art-value {
+    right: 14px;
+    bottom: 14px;
+    left: 14px;
+    gap: 3px;
+  }
+
+  .market-browser .listing-art-value small {
+    font-size: 8px;
+    line-height: 1.25;
+    letter-spacing: .05em;
+  }
+}

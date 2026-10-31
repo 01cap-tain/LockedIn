@@ -20,6 +20,7 @@ import {
   loadPublicGroups,
   joinPublicGroup,
   loadExitListing,
+  loadExitPosition,
   fundExitListing,
   groupCreationUnsupportedReason,
   loadExitMarket,
@@ -36,10 +37,12 @@ import {
   withdrawEmergency,
   withdrawLocked,
   verifyDeployment,
+  warmTransactionPreflight,
   type ActivityItem,
   type CompletedTrade,
   type CreateVaultInput,
   type ExitListingSnapshot,
+  type ExitPositionSnapshot,
   type GroupExitRequestSnapshot,
   type VaultSnapshot,
   type VaultSummary,
@@ -65,6 +68,8 @@ import {
 import { SavingsCalendar } from "./components/SavingsCalendar";
 import { GroupCashAnimation } from "./components/GroupCashAnimation";
 import { LoadingAnimation } from "./components/LoadingAnimation";
+import { WheelDatePicker } from "./components/WheelDatePicker";
+import { SavingsLockAnimation } from "./components/SavingsLockAnimation";
 import {
   calculatePlanProjection,
   calculateSavingsPace,
@@ -104,6 +109,9 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
+  MoveLeft,
+  MoveRight,
+  PiggyBank,
   Plus,
   RefreshCw,
   Target,
@@ -116,7 +124,7 @@ import {
   X,
 } from "lucide-react";
 
-type AppRoute = "discover" | "vaults" | "position" | "groups" | "market" | "rewards" | "activity" | "wallet";
+type AppRoute = "discover" | "explore-circles" | "vaults" | "position" | "groups" | "market" | "rewards" | "activity" | "wallet";
 type VaultDetailTab = "overview" | "circle" | "withdraw" | "activity";
 type NimiqState =
   | { status: "idle" | "connecting" }
@@ -141,10 +149,12 @@ type DeploymentState =
 type ListingFilter = "all" | "personal" | "group";
 type MarketView = "fund" | "mine" | "recent";
 type HistoryView = "trades" | "events";
-type VaultView = "active" | "sold";
+type VaultView = "active" | "completed" | "sold";
+type QuickVaultAction = "save" | "withdraw";
 type CelebrationState = {
   title: string;
   message: string;
+  kind?: "deposit" | "withdrawal" | "default";
 };
 type CachedPublicGroup = Omit<PublicGroupSummary, "maturity" | "enrollmentDeadline" | "members"> & {
   maturity: string;
@@ -170,9 +180,8 @@ const PROFILE_VAULT_TABS = ["personal", "group", "purchased", "listed"] as const
 const MARKET_TABS = ["fund", "mine", "recent"] as const;
 const HISTORY_TABS = ["trades", "events"] as const;
 const VAULT_DETAIL_TABS = ["overview", "circle", "withdraw", "activity"] as const;
-const VAULT_VIEW_TABS = ["active", "sold"] as const;
+const VAULT_VIEW_TABS = ["active", "completed", "sold"] as const;
 const LISTING_FILTER_TABS = ["all", "personal", "group"] as const;
-const CREATE_MODE_TABS = ["personal", "group"] as const;
 
 const routes: Array<{ id: AppRoute; label: string }> = [
   { id: "discover", label: "Discover circles" },
@@ -227,7 +236,7 @@ const SaverListingAnimation = lazy(() =>
 );
 function routeFromHash(): AppRoute {
   const value = window.location.hash.replace(/^#\/?/, "");
-  return routes.some((route) => route.id === value) || value === "wallet"
+  return routes.some((route) => route.id === value) || value === "wallet" || value === "explore-circles"
     ? (value as AppRoute)
     : "discover";
 }
@@ -512,7 +521,7 @@ function GroupPowerVisual({ group }: { group: PublicGroupSummary }) {
           key={member.address}
           title={walletDisplayName(member.address)}
         >
-          <b>{walletAvatarLabel(member.address)}</b>
+          <b aria-hidden="true"><UserRound size={18} /></b>
           <i>
             <span style={{ width: `${member.progressPercent}%` }} />
           </i>
@@ -524,6 +533,29 @@ function GroupPowerVisual({ group }: { group: PublicGroupSummary }) {
       {group.memberCount > 4 && (
         <span className="power-more">+{group.memberCount - 4}</span>
       )}
+    </div>
+  );
+}
+
+/** A compact version of the shared-goal animation for the circle catalogue. */
+function CompactCircleVisual({ group }: { group: PublicGroupSummary }) {
+  const members = group.members.slice(0, 4);
+  const points: ReadonlyArray<readonly [number, number]> = [[16, 16], [104, 16], [16, 74], [104, 74]];
+  return (
+    <div className="compact-circle-visual" aria-label={`${group.memberCount} savers powering this circle`}>
+      <svg aria-hidden="true" viewBox="0 0 120 90">
+        {members.map((member, index) => {
+          const point = points[index] ?? points[0]!;
+          return <g key={member.address}>
+            <line className="compact-power-line" x1={point[0]} x2="60" y1={point[1]} y2="45" />
+            <circle className="compact-power-pulse" r="2.5">
+              <animateMotion begin={`${index * .3}s`} dur="2s" path={`M ${point[0]} ${point[1]} L 60 45`} repeatCount="indefinite" />
+            </circle>
+          </g>;
+        })}
+      </svg>
+      {members.map((member, index) => <span aria-label={walletDisplayName(member.address)} className={`compact-member compact-member-${index + 1}`} key={member.address}><UserRound aria-hidden="true" size={14} /></span>)}
+      <div className="compact-cash-core"><GroupCashAnimation /></div>
     </div>
   );
 }
@@ -662,7 +694,7 @@ export function App() {
   const [planStartDate, setPlanStartDate] = useState(() => localDateInput());
   const [vaultPlans, setVaultPlans] = useState(loadVaultPlans);
   const [emergencyPercent, setEmergencyPercent] = useState(10);
-  const [maxParticipants, setMaxParticipants] = useState(8);
+  const [maxParticipants, setMaxParticipants] = useState(4);
   const [groupVisibility, setGroupVisibility] = useState<"public" | "invite-only">("public");
   const [enrollmentDeadline, setEnrollmentDeadline] = useState(() => futureInput(7));
   const [joinTarget, setJoinTarget] = useState("100");
@@ -709,6 +741,10 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [quickVaultAction, setQuickVaultAction] =
+    useState<QuickVaultAction | null>(null);
+  const [pendingVaultAction, setPendingVaultAction] =
+    useState<QuickVaultAction | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -722,6 +758,8 @@ export function App() {
   const [openingVault, setOpeningVault] = useState(false);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [marketPositionPickerOpen, setMarketPositionPickerOpen] = useState(false);
+  const [exitDraft, setExitDraft] = useState<ExitPositionSnapshot | null>(null);
+  const [exitDraftLoading, setExitDraftLoading] = useState(false);
   const [vaultDetailTab, setVaultDetailTab] = useState<VaultDetailTab>("overview");
   const [vaultView, setVaultView] = useState<VaultView>("active");
   const [celebration, setCelebration] = useState<CelebrationState | null>(null);
@@ -739,7 +777,6 @@ export function App() {
   const vaultDetailSwipe = useSwipeTabs(VAULT_DETAIL_TABS, vaultDetailTab, setVaultDetailTab);
   const vaultViewSwipe = useSwipeTabs(VAULT_VIEW_TABS, vaultView, setVaultView);
   const listingFilterSwipe = useSwipeTabs(LISTING_FILTER_TABS, listingFilter, setListingFilter);
-  const createModeSwipe = useSwipeTabs(CREATE_MODE_TABS, mode, setMode);
 
   const evmSession = evm.status === "connected" ? evm.session : null;
   const nimiqWallet = nimiq.status === "connected" ? nimiq.wallet : null;
@@ -855,20 +892,24 @@ export function App() {
   );
   const hasContributionPlan = Number(planContribution) > 0;
   const creationStepTitles = mode === "group"
-    ? ["Circle", "Shared rules", "Your plan", "Review"]
-    : ["Goal", "Your plan", "Protection", "Review"];
+    ? ["Circle", "Shared rules", "Your goal", "Schedule", "Review"]
+    : ["Goal", "Contribution", "Schedule", "Protection", "Review"];
   const creationStepReady = (() => {
     if (creationStep === 0) {
       if (mode === "group")
         return Boolean(vaultName.trim()) && maxParticipants >= 4 && maxParticipants <= 50;
       return Number(target) > 0;
     }
-    if (creationStep === 1)
-      return mode === "group" || (Number(planContribution) > 0 && Boolean(estimatedMaturity));
-    if (creationStep === 2)
-      return mode === "group"
-        ? Number(target) > 0 && Number(planContribution) > 0 && Boolean(estimatedMaturity)
-        : yieldMode !== "earn" || earnRiskAccepted;
+    if (mode === "group") {
+      if (creationStep === 1) return true;
+      if (creationStep === 2)
+        return Number(target) > 0 && Number(planContribution) > 0;
+      if (creationStep === 3) return Boolean(estimatedMaturity);
+      return yieldMode !== "earn" || earnRiskAccepted;
+    }
+    if (creationStep === 1) return Number(planContribution) > 0;
+    if (creationStep === 2) return Boolean(estimatedMaturity);
+    if (creationStep === 3) return yieldMode !== "earn" || earnRiskAccepted;
     return yieldMode !== "earn" || earnRiskAccepted;
   })();
   const joinPlanProjection = useMemo(
@@ -934,9 +975,10 @@ export function App() {
     : null;
   // These projections are display-only. EarlyExitMarket independently reads
   // live chain state and recalculates the quote inside the funding transaction.
+  const exitComposerPosition = exitDraft ?? snapshot;
   const systemDiscount = exitState?.reference.discountPercent ?? 4.5;
-  const projectedSaverPayout = snapshot
-    ? Number(snapshot.currentValue) * (1 - systemDiscount / 100)
+  const projectedSaverPayout = exitComposerPosition
+    ? Number(exitComposerPosition.currentValue) * (1 - systemDiscount / 100)
     : 0;
   const projectedFee = projectedSaverPayout * 0.009;
   const selectedListing = exitState?.listing;
@@ -979,14 +1021,14 @@ export function App() {
     [activePositionKeys, vaults]
   );
   const canComposeListing = Boolean(
-    snapshot &&
-      snapshot.ownsLockedPosition &&
-      snapshot.isOriginalMember &&
-      (!snapshot.isGroup || snapshot.groupLifecycle === "active") &&
+    exitComposerPosition &&
+      exitComposerPosition.ownsLockedPosition &&
+      exitComposerPosition.isOriginalMember &&
+      (!exitComposerPosition.isGroup || exitComposerPosition.groupLifecycle === "active") &&
       (!selectedListing ||
         (!selectedListing.active &&
-          selectedListing.vault === snapshot.address &&
-          selectedListing.positionId === snapshot.positionId))
+          selectedListing.vault === exitComposerPosition.address &&
+          selectedListing.positionId === exitComposerPosition.positionId))
   );
   const filteredListings = useMemo(
     () =>
@@ -1069,6 +1111,47 @@ export function App() {
       // that record out of active goals and show the completed sale separately.
       vault.access === "owner"
   );
+  const activeVaults = visibleVaults.filter(
+    (vault) => vault.progressPercent < 100
+  );
+  const completedVaults = visibleVaults.filter(
+    (vault) => vault.progressPercent >= 100
+  );
+  const displayedVaults = vaultView === "completed" ? completedVaults : activeVaults;
+  const dashboardVaults = vaults.filter(
+    (vault) => vault.isOriginalMember && vault.access === "owner"
+  );
+  const dashboardPersonalGoals = dashboardVaults.filter((vault) => !vault.isGroup);
+  const dashboardCircles = dashboardVaults.filter((vault) => vault.isGroup);
+  const portfolioProgress = portfolioTotalTarget > 0
+    ? Math.min(100, (portfolioTotalSaved / portfolioTotalTarget) * 100)
+    : 0;
+  const portfolioProgressLabel = portfolioProgress > 0 && portfolioProgress < 1
+    ? portfolioProgress.toFixed(2)
+    : portfolioProgress.toFixed(1);
+  const nearestMaturity = dashboardVaults
+    .filter((vault) => vault.maturity.getTime() > clock)
+    .sort((left, right) => left.maturity.getTime() - right.maturity.getTime())[0]?.maturity;
+  const upcomingVault = dashboardVaults
+    .filter((vault) => {
+      if (!evmSession) return false;
+      const plan = vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)];
+      return Boolean(plan?.contributionAmount && vault.progressPercent < 100);
+    })
+    .sort((left, right) => left.maturity.getTime() - right.maturity.getTime())[0];
+  const upcomingPlan = upcomingVault && evmSession
+    ? vaultPlans[vaultPlanKey(evmSession.chainId, upcomingVault.address, upcomingVault.positionId)]
+    : undefined;
+  const quickActionVaults = vaults.filter((vault) => {
+    if (!vault.isOriginalMember) return false;
+    if (quickVaultAction === "withdraw")
+      return Number(vault.emergencyBalance) > 0;
+    return (
+      vault.access === "owner" &&
+      vault.progressPercent < 100 &&
+      vault.maturity.getTime() > Date.now()
+    );
+  });
 
   useEffect(() => {
     const updateRoute = () => setRoute(routeFromHash());
@@ -1295,7 +1378,10 @@ export function App() {
     return evmSession;
   }
 
-  async function refreshPortfolio(session = requireSession()): Promise<void> {
+  async function refreshPortfolio(
+    session = requireSession(),
+    reopenCurrentVault = true
+  ): Promise<void> {
     // The chain remains authoritative. This MVP reconstructs the portfolio and
     // activity feed from contract views and events rather than trusting a DB.
     setPortfolioLoading(true);
@@ -1329,6 +1415,7 @@ export function App() {
         setNativeTokenBalance(formatAssetAmount(nativeBalanceResult.value, 18));
       void refreshPublicTradeHistory();
       if (
+        reopenCurrentVault &&
         snapshot &&
         nextVaults.some(
           (vault) =>
@@ -1439,11 +1526,58 @@ export function App() {
 
   function startVaultCreation(nextMode: "personal" | "group"): void {
     setMode(nextMode);
+    if (nextMode === "group") setMaxParticipants(4);
     setCreationStep(0);
     setCreatedVaultReceipt(null);
     setCreateMenuOpen(false);
     navigate("vaults");
   }
+
+  function startQuickVaultAction(action: QuickVaultAction): void {
+    setCreateMenuOpen(false);
+    setQuickVaultAction(action);
+    if (!walletAccessReady) setConnectionSheetOpen(true);
+  }
+
+  async function chooseQuickActionVault(vault: VaultSummary): Promise<void> {
+    const action = quickVaultAction;
+    if (!action) return;
+    setQuickVaultAction(null);
+    setPendingVaultAction(action);
+    setVaultDetailTab(action === "withdraw" ? "withdraw" : "overview");
+    setSnapshot(null);
+    navigate(vault.isGroup ? "groups" : "position");
+    try {
+      await openVault(vault.address, vault.positionId);
+    } catch (error) {
+      setPendingVaultAction(null);
+      setTransaction({ status: "error", message: describeContractError(error) });
+    }
+  }
+
+  useEffect(() => {
+    if (!snapshot || !pendingVaultAction) return;
+    if (
+      pendingVaultAction === "withdraw" &&
+      snapshot.isGroup &&
+      vaultDetailTab !== "withdraw"
+    ) {
+      setVaultDetailTab("withdraw");
+      return;
+    }
+    const selector =
+      pendingVaultAction === "withdraw"
+        ? ".vault-detail-sheet .emergency-withdrawal-card"
+        : ".vault-detail-sheet .funding-action";
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>(selector)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      setPendingVaultAction(null);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [snapshot, pendingVaultAction, vaultDetailTab]);
 
   function requestGroupJoin(group: PublicGroupSummary): void {
     if (!group.publicJoining) {
@@ -1581,6 +1715,52 @@ export function App() {
     setMinimumPayout(defaultFloor);
   }
 
+  async function openExitComposer(vault: VaultSummary): Promise<void> {
+    const session = requireSession();
+    setMarketPositionPickerOpen(false);
+    setSnapshot(null);
+    const immediatePosition: ExitPositionSnapshot | null = vault.isGroup
+      ? null
+      : {
+          address: vault.address,
+          positionId: vault.positionId,
+          ownsLockedPosition: vault.access === "owner",
+          isOriginalMember: vault.isOriginalMember,
+          isGroup: false,
+          groupLifecycle: "not-applicable",
+          currentValue: vault.currentValue,
+        };
+    setExitDraft(immediatePosition);
+    setExitState(null);
+    setExitDraftLoading(vault.isGroup);
+    if (immediatePosition) {
+      setMinimumPayout((Number(immediatePosition.currentValue) * .955).toFixed(6));
+    }
+    void warmTransactionPreflight(session.signer, session.address);
+    try {
+      // The listing form does not need the full vault/member/Aave detail graph.
+      // Read its small position and pricing snapshots concurrently so the
+      // bottom sheet can respond immediately on mobile public RPCs.
+      const [position, market] = await Promise.all([
+        immediatePosition
+          ? Promise.resolve(immediatePosition)
+          : loadExitPosition(session.signer, vault.address, vault.positionId),
+        loadExitMarket(session.signer, vault),
+      ]);
+      setExitDraft(position);
+      setExitState(market);
+      const floor =
+        market.listing?.minimumPayout ??
+        (
+          Number(position.currentValue) *
+          (1 - market.reference.discountPercent / 100)
+        ).toFixed(6);
+      setMinimumPayout(floor);
+    } finally {
+      setExitDraftLoading(false);
+    }
+  }
+
   async function runTransaction(
     message: string,
     action: () => Promise<void>,
@@ -1593,7 +1773,14 @@ export function App() {
       setTransaction({ status: "pending", message });
       await action();
       setTransaction({ status: "success", message: success });
-      if (successCelebration) setCelebration(successCelebration);
+      if (successCelebration) {
+        if (successCelebration.kind === "deposit" || successCelebration.kind === "withdrawal") {
+          setSnapshot(null);
+          setPendingVaultAction(null);
+          setQuickVaultAction(null);
+        }
+        setCelebration(successCelebration);
+      }
       return true;
     } catch (error) {
       setTransaction({
@@ -1638,17 +1825,33 @@ export function App() {
     );
     if (!confirmed) return;
 
+    const closesVaultAction =
+      successCelebration?.kind === "deposit" ||
+      successCelebration?.kind === "withdrawal";
+
     // A confirmed transaction and a follow-up RPC refresh are separate
     // outcomes. Never report a successful on-chain action as failed merely
     // because a public Amoy endpoint was slow immediately afterwards.
     try {
-      await refreshPortfolio();
+      await refreshPortfolio(requireSession(), !closesVaultAction);
       if (!snapshot && selectedListing)
         setExitState(
           await loadExitListing(requireSession().signer, selectedListing.id)
         );
     } catch (error) {
       console.warn("Confirmed transaction; follow-up refresh deferred", error);
+    }
+  }
+
+  function dismissCelebration(): void {
+    const closesVaultAction =
+      celebration?.kind === "deposit" || celebration?.kind === "withdrawal";
+    setCelebration(null);
+    if (closesVaultAction) {
+      setSnapshot(null);
+      setOpeningVault(false);
+      setPendingVaultAction(null);
+      setQuickVaultAction(null);
     }
   }
 
@@ -1670,7 +1873,10 @@ export function App() {
     try {
       const session = requireSession();
       await assertWalletCanAffordTransaction(session);
-      setTransaction({ status: "pending", message: "Creating vault…" });
+      setTransaction({
+        status: "pending",
+        message: "Open your wallet to confirm the vault transaction.",
+      });
       const input: CreateVaultInput = {
         groupMode: mode,
         yieldMode,
@@ -1759,7 +1965,9 @@ export function App() {
       setCelebration({
         title: "Congratulations, savings habit unlocked",
         message: "Your matured savings have been released to your wallet.",
+        kind: "withdrawal",
       });
+      setSnapshot(null);
     } catch (error) {
       setWithdrawalNeedsRetry(snapshot.vaultMode === "earn");
       setTransaction({
@@ -1792,7 +2000,9 @@ export function App() {
     setCelebration({
       title: "Congratulations, savings habit unlocked",
       message: "Your matured savings were released and are ready for the selected payout flow.",
+      kind: "withdrawal",
     });
+    setSnapshot(null);
     return after - before;
   }
 
@@ -2177,7 +2387,7 @@ export function App() {
                   const remaining = Math.max(0, Number(vault.target) - Number(vault.deposited));
                   const next = Math.min(remaining, plan?.contributionAmount ?? remaining);
                   return (
-                    <button className="mini-vault-card companion-vault-card" key={`${vault.address}-${vault.positionId}`} onClick={() => { setProfileOpen(false); navigate(vault.isGroup ? "groups" : "position"); void openVault(vault.address, vault.positionId); }} type="button">
+                    <button className={`mini-vault-card companion-vault-card ${vault.isGroup ? "group-vault" : "personal-vault"}`} key={`${vault.address}-${vault.positionId}`} onClick={() => { setProfileOpen(false); navigate(vault.isGroup ? "groups" : "position"); void openVault(vault.address, vault.positionId); }} type="button">
                       <span><b><Target aria-hidden="true" size={15} />{plan?.vaultName || (vault.isGroup ? "Group savings goal" : "Personal savings goal")}</b>{vault.legacy && <em className="tag legacy">Legacy vault</em>}<em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace.replace("-", " ")}</em></span>
                       <strong>{vault.deposited} of {vault.target} USDT</strong>
                       <i><span style={{ width: `${vault.progressPercent}%` }} /></i>
@@ -2332,16 +2542,72 @@ export function App() {
       )}
 
       {/* The discover route is intentionally usable without either wallet. */}
-      {route === "discover" && (
-        <section className="route-page discover-page">
-          <div className="discover-hero">
+      {(route === "discover" || route === "explore-circles") && (
+        <section className={`route-page discover-page ${route === "explore-circles" ? "available-circles-page" : ""}`}>
+          {walletAccessReady && route === "discover" ? (
+            <div className="savings-home">
+              <section className="home-summary" aria-labelledby="savings-summary-title">
+                <div className="home-section-heading">
+                  <div><span className="eyebrow">Your savings</span><h1 id="savings-summary-title">Build your goals steadily.</h1></div>
+                </div>
+                <div className="home-summary-amount"><strong>{amountLabel(portfolioTotalSaved)} USDT</strong><span>saved toward {amountLabel(portfolioTotalTarget)} USDT</span></div>
+                <div className="home-progress" aria-label={`${portfolioProgressLabel}% of combined savings goals reached`}><i><span style={{ width: `${portfolioProgress}%` }} /></i><b>{portfolioProgressLabel}%</b></div>
+                <div className="home-summary-meta"><span><Target aria-hidden="true" size={15} />{dashboardVaults.length} active {dashboardVaults.length === 1 ? "goal" : "goals"}</span><span><CalendarDays aria-hidden="true" size={15} />{nearestMaturity ? `Next goal ${nearestMaturity.toLocaleDateString()}` : "No maturity scheduled"}</span></div>
+              </section>
+
+              <section className="home-quick-actions" aria-label="Savings shortcuts">
+                <button onClick={() => startVaultCreation("personal")} type="button"><Target aria-hidden="true" /><span><strong>Create goal</strong><small>Start personal savings</small></span></button>
+                <button onClick={() => navigate("explore-circles")} type="button"><UsersRound aria-hidden="true" /><span><strong>Join circle</strong><small>Find an available circle</small></span></button>
+              </section>
+
+              <section className="home-section">
+                <div className="home-section-heading"><div><span className="eyebrow">Coming up</span><h2>Next contribution</h2></div></div>
+                {upcomingVault && upcomingPlan ? (
+                  <button className={`upcoming-card ${upcomingVault.isGroup ? "group-vault" : "personal-vault"}`} onClick={() => { navigate(upcomingVault.isGroup ? "groups" : "position"); void openVault(upcomingVault.address, upcomingVault.positionId); }} type="button">
+                    <CalendarDays aria-hidden="true" />
+                    <span><strong>{upcomingPlan.vaultName || (upcomingVault.isGroup ? "Group circle" : "Savings goal")}</strong><small>{contributionPlanText(upcomingPlan.contributionAmount, upcomingPlan.frequency, upcomingPlan.preferredDays)}</small></span>
+                    <em className={`pace ${upcomingVault.pace}`}><PaceIcon status={upcomingVault.pace === "complete" ? "completed" : upcomingVault.pace} />{upcomingVault.pace === "on-track" ? "On track" : upcomingVault.pace === "behind" ? "Behind" : "Completed"}</em>
+                    <ArrowRight aria-hidden="true" />
+                  </button>
+                ) : <div className="home-empty"><CalendarDays aria-hidden="true" /><div><strong>No contribution planned yet</strong><span>Add a plan to one of your goals to see what is due next.</span></div></div>}
+              </section>
+
+              <section className="home-section">
+                <div className="home-section-heading"><div><span className="eyebrow">Personal savings</span><h2>My goals</h2></div><button className="text-action" onClick={() => navigate("position")} type="button">View all</button></div>
+                {dashboardPersonalGoals.length === 0 ? <div className="home-empty"><Target aria-hidden="true" /><div><strong>No personal goals yet</strong><span>Create a goal when you are ready to start saving.</span></div></div> : <div className="home-card-list">{dashboardPersonalGoals.slice(0, 3).map((vault) => {
+                  const plan = evmSession ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)] : undefined;
+                  return <button className="home-goal-card personal-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("position"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><Target aria-hidden="true" /></span><span className="home-card-copy"><strong>{plan?.vaultName || "Personal savings goal"}</strong><small>{vault.deposited} of {vault.target} USDT · {plan ? contributionPlanText(plan.contributionAmount, plan.frequency, plan.preferredDays) : "Flexible contributions"}</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>Due {vault.maturity.toLocaleDateString()}</small></span><em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace === "behind" ? "Behind" : "Completed"}</em></button>;
+                })}</div>}
+              </section>
+
+              <section className="home-section">
+                <div className="home-section-heading"><div><span className="eyebrow">Shared savings</span><h2>My circles</h2></div><button className="text-action" onClick={() => navigate("groups")} type="button">View circles</button></div>
+                {dashboardCircles.length === 0 ? <div className="home-empty group-empty"><UsersRound aria-hidden="true" /><div><strong>You have not joined a circle</strong><span>Explore a public circle or create one with people you trust.</span></div></div> : <div className="home-card-list">{dashboardCircles.slice(0, 3).map((vault) => {
+                  const plan = evmSession ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)] : undefined;
+                  const group = publicGroups.find((entry) => entry.address.toLowerCase() === vault.address.toLowerCase());
+                  return <button className="home-goal-card group-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("groups"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><UsersRound aria-hidden="true" /></span><span className="home-card-copy"><span className="home-card-title"><strong>{plan?.vaultName || group?.groupName || "Savings circle"}</strong><em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em></span><small>Your progress: {vault.deposited} of {vault.target} USDT</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>{group ? `${group.memberCount}/${group.maxMemberCount} savers · Circle ${group.progressPercent.toFixed(1)}% complete` : `${vault.memberCount} savers`} · Due {vault.maturity.toLocaleDateString()}</small></span><ArrowRight aria-hidden="true" /></button>;
+                })}</div>}
+              </section>
+
+              <section className="home-section">
+                <div className="home-section-heading"><div><span className="eyebrow">Latest updates</span><h2>Recent activity</h2></div><button className="text-action" onClick={() => navigate("activity")} type="button">View history</button></div>
+                {activity.length === 0 ? <div className="home-empty"><History aria-hidden="true" /><div><strong>No savings activity yet</strong><span>Your deposits, withdrawals and goal updates will appear here.</span></div></div> : <div className="home-activity-list">{activity.slice(0, 5).map((item, index) => <article key={`${item.transactionHash ?? item.title}-${index}`}><span><CircleCheckBig aria-hidden="true" /></span><div><strong>{item.title}</strong><small>{item.timestamp.toLocaleString()}</small></div>{item.amount && <b>{item.amount} USDT</b>}</article>)}</div>}
+              </section>
+            </div>
+          ) : <>
+          {route === "explore-circles" ? (
+            <header className="circle-catalog-header">
+              <button aria-label="Back to home" className="icon-button" onClick={() => navigate("discover")} type="button"><ArrowLeft aria-hidden="true" size={18} /></button>
+              <div><h1>Join a circle</h1></div>
+            </header>
+          ) : <div className="discover-hero">
             <span className="eyebrow">Save better, together</span>
             <SavingsJourneyChart
               history={savingsJourney}
               saved={portfolioTotalSaved}
               target={portfolioTotalTarget}
             />
-          </div>
+          </div>}
           <div className="discover-section-heading">
             <div><h2>Group savings circles</h2><p>Live from the current testnet deployment.</p></div>
             <button aria-label="Refresh circles" className="icon-button" onClick={() => void refreshPublicGroups()} type="button" title="Refresh circles"><RefreshCw aria-hidden="true" size={17} /></button>
@@ -2357,19 +2623,19 @@ export function App() {
           ) : publicGroupsStatus === "error" ? (
             <div className="circle-recovery"><RefreshCw aria-hidden="true" size={20} /><div><strong>Your savings circles are refreshing</strong><span>We could not reach the selected network. Check your connection and try again.</span></div><button className="secondary icon-action" onClick={() => void refreshPublicGroups()} type="button"><RefreshCw aria-hidden="true" size={15} />Refresh circles</button></div>
           ) : publicGroups.length === 0 ? (
-            <article className="empty-circle"><UsersRound aria-hidden="true" className="empty-icon" size={26} /><h3>No group circles yet</h3><p>Create the first invitation-based group on this deployment.</p><button className="primary icon-action" onClick={() => navigate("vaults")} type="button"><Plus aria-hidden="true" size={17} />Create group vault</button></article>
+            <article className="empty-circle"><UsersRound aria-hidden="true" className="empty-icon" size={26} /><h3>No group circles yet</h3><p>Create the first invitation-based group on this deployment.</p><button className="primary icon-action" onClick={() => startVaultCreation("group")} type="button"><Plus aria-hidden="true" size={17} />Create group vault</button></article>
           ) : (
             <div className="circle-stack">
               {publicGroups.map((group, index) => (
-                <article className="circle-card" key={group.address}>
+                <article className="circle-card group-vault" key={group.address}>
                   <div className="circle-card-top">
                     <div><span className={`tag ${group.vaultMode}`}>{group.vaultMode}</span><span className={`circle-state ${group.lifecycle}`}>{group.lifecycle}</span></div>
                     <small>Circle {String(index + 1).padStart(2, "0")}</small>
                   </div>
                   <h3>{group.groupName || `Savings Circle ${index + 1}`}</h3>
                   <p className="circle-address">Created by {walletDisplayName(group.creator)}</p>
-                  <GroupPowerVisual group={group} />
-                  <p className="member-avatar-note">Wallet initials represent the members powering this shared goal.</p>
+                  {route === "explore-circles" ? <CompactCircleVisual group={group} /> : <GroupPowerVisual group={group} />}
+                  {route !== "explore-circles" && <p className="member-avatar-note">Wallet initials represent the members powering this shared goal.</p>}
                   <div className="circle-roadmap">
                     <div><span>Collecting</span><span>Goal</span><span>Maturity</span></div>
                     <i><span style={{ width: `${group.progressPercent}%` }} /></i>
@@ -2393,6 +2659,7 @@ export function App() {
             </div>
           )}
           <p className="invitation-disclaimer">Public circles accept members until activation, capacity or their enrollment deadline. Deposits begin only after activation.</p>
+          </>}
         </section>
       )}
 
@@ -2412,7 +2679,7 @@ export function App() {
       {!deploymentBlocked && route === "vaults" && (
         <section className="route-page">
           {createdVaultReceipt ? (
-            <article className="panel narrow-panel vault-created-state" role="status">
+            <article className={`panel narrow-panel vault-created-state ${createdVaultReceipt.vaultType}-vault`} role="status">
               <div className="completion-watermark" aria-hidden="true">
                 <Check />
               </div>
@@ -2462,7 +2729,7 @@ export function App() {
               </button>
             </article>
           ) : (
-          <article className="panel narrow-panel creation-wizard">
+          <article className={`panel narrow-panel creation-wizard ${mode}-vault`}>
             <div className="creation-wizard-header">
               <button
                 aria-label={creationStep === 0 ? "Close creation" : "Previous step"}
@@ -2470,32 +2737,15 @@ export function App() {
                 onClick={() => creationStep === 0 ? navigate("discover") : setCreationStep((step) => Math.max(0, step - 1))}
                 type="button"
               >
-                <ArrowLeft aria-hidden="true" size={19} />
+                <MoveLeft aria-hidden="true" size={21} />
               </button>
               <div>
-                <span>Step {creationStep + 1} of {creationStepTitles.length}</span>
                 <h2>{creationStepTitles[creationStep]}</h2>
               </div>
               <div className="wizard-progress" aria-label={`Step ${creationStep + 1} of ${creationStepTitles.length}`}>
                 {creationStepTitles.map((title, index) => <i className={index <= creationStep ? "active" : ""} key={title} />)}
               </div>
             </div>
-            {creationStep === 0 && <div className="segmented swipe-tabs creation-mode-picker" {...createModeSwipe}>
-                <button
-                  className={mode === "personal" ? "active" : ""}
-                  onClick={() => { setMode("personal"); setCreationStep(0); }}
-                  type="button"
-                >
-                  Personal
-                </button>
-                <button
-                  className={mode === "group" ? "active" : ""}
-                  onClick={() => { setMode("group"); setCreationStep(0); }}
-                  type="button"
-                >
-                  Group
-                </button>
-              </div>}
             <form className="form-grid creation-step-frame" key={`${mode}-${creationStep}`} onSubmit={createVaultSubmit}>
               {creationStep === 0 && <fieldset className="creation-section full-width">
                 <legend>{mode === "group" ? <UsersRound aria-hidden="true" size={15} /> : <Target aria-hidden="true" size={15} />}{mode === "group" ? "Circle identity" : "Savings goal"}</legend>
@@ -2521,9 +2771,9 @@ export function App() {
                   </label>
                   {mode === "group" && <label><span>Who can join?</span><select onChange={(event) => setGroupVisibility(event.target.value as "public" | "invite-only")} value={groupVisibility}><option value="public">Anyone</option><option value="invite-only">Invited wallets only</option></select></label>}
                   {mode === "group" && <label><span>Maximum savers</span><input max="50" min="4" onChange={(event) => setMaxParticipants(Number(event.target.value))} placeholder="Example: 6" required type="number" value={maxParticipants} /><small>At least four people are needed.</small></label>}
-                  {mode === "group" && <label className="full-width"><span>Join by</span><input onChange={(event) => setEnrollmentDeadline(event.target.value)} required type="datetime-local" value={enrollmentDeadline} /><small>People must join before this time.</small></label>}
+                  {mode === "group" && <label className="full-width"><span>Join by</span><WheelDatePicker includeTime label="Group joining deadline" onChange={setEnrollmentDeadline} value={enrollmentDeadline} /><small>People must join before this time.</small></label>}
                   {mode === "personal" && <label><span>Target amount</span><div className="input-unit"><input min="0.000001" onChange={(event) => setTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={target} /><b>USDT</b></div><small>The most you plan to save in this vault.</small></label>}
-                  {mode === "personal" && <label><span>Start date</span><input onChange={(event) => setPlanStartDate(event.target.value)} required type="date" value={planStartDate} /></label>}
+                  {mode === "personal" && <label className="full-width"><span>Start date</span><WheelDatePicker label="Savings start date" onChange={setPlanStartDate} value={planStartDate} /></label>}
                 </div>
               </fieldset>}
 
@@ -2554,8 +2804,8 @@ export function App() {
               </div></fieldset>}
 
               {creationStep === (mode === "group" ? 2 : 1) && <fieldset className="creation-section full-width progressive-section">
-                <legend><CalendarDays aria-hidden="true" size={15} />{mode === "group" ? "Your savings goal" : "Savings plan"}</legend>
-                {mode === "group" && <p className="section-guidance">This target and plan belong to you. Other people choose their own.</p>}
+                <legend><CircleDollarSign aria-hidden="true" size={15} />{mode === "group" ? "Your savings goal" : "Contribution amount"}</legend>
+                {mode === "group" && <p className="section-guidance">This target belongs to you. Other people choose their own.</p>}
                 <div className="plan-field-grid">
                 {mode === "group" && <label><span>Your personal target</span><div className="input-unit"><input min="0.000001" onChange={(event) => setTarget(event.target.value)} placeholder="Example: 500" required step="0.000001" type="number" value={target} /><b>USDT</b></div></label>}
                 {mode === "group" && <label><span>Personal saving purpose <small>Optional</small></span><input maxLength={100} onChange={(event) => setVaultPurpose(event.target.value)} placeholder="Saving for flights and accommodation" value={vaultPurpose} /></label>}
@@ -2579,7 +2829,31 @@ export function App() {
                 </div>
                 <QuickAmounts values={[5, 10, 20]} unit="USDT" value={planContribution} onSelect={setPlanContribution} />
               </label>
-              {Number(planContribution) > 0 && <label>
+                </div>
+              {mode === "group" && <label className="range-field">
+                <span>
+                  Your emergency allocation <strong>{emergencyPercent}%</strong>
+                </span>
+                <input
+                  max="15"
+                  min="10"
+                  onChange={(event) =>
+                    setEmergencyPercent(Number(event.target.value))
+                  }
+                  type="range"
+                  value={emergencyPercent}
+                />
+                <small>
+                  Available anytime and never sold with an early exit.
+                </small>
+              </label>}
+              </fieldset>}
+
+              {creationStep === (mode === "group" ? 3 : 2) && <fieldset className="creation-section full-width progressive-section schedule-step">
+                <legend><CalendarDays aria-hidden="true" size={15} />Saving schedule</legend>
+                <p className="section-guidance">Choose how often you plan to save {planContribution || "your contribution"} mUSDT.</p>
+                <div className="plan-field-grid">
+              <label className="full-width">
                 <span>Contribution frequency</span>
                 <select
                   onChange={(event) => setPlanFrequency(event.target.value as ContributionFrequency)}
@@ -2590,9 +2864,10 @@ export function App() {
                   <option value="monthly">Once a month</option>
                   <option value="custom">Flexible days</option>
                 </select>
-              </label>}
+                <small>For weekly plans, the contribution amount applies on every chosen day.</small>
+              </label>
                 </div>
-              {Number(planContribution) > 0 && (planFrequency === "weekly" || planFrequency === "custom") && (
+              {(planFrequency === "weekly" || planFrequency === "custom") && (
                 <fieldset className="weekday-picker full-width">
                   <legend>Preferred contribution days</legend>
                   <div>
@@ -2621,13 +2896,11 @@ export function App() {
                   </small>
                 </fieldset>
               )}
-              {Number(planContribution) > 0 && (
-                <p className="frequency-explainer full-width">
-                  {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
-                </p>
-              )}
-              {Number(planContribution) > 0 && <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleDateString() : "Choose a contribution schedule"}</strong><small>Calculated after your contribution amount and frequency are known.</small></div></div>}
-              {Number(planContribution) > 0 && <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
+              <p className="frequency-explainer full-width">
+                {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
+              </p>
+              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleDateString() : "Choose a contribution schedule"}</strong><small>Calculated from your goal, contribution amount and this schedule.</small></div></div>
+              <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
                   <div>
@@ -2654,27 +2927,10 @@ export function App() {
                     This plan may not reach the target in time. Increase the contribution amount or frequency; you can still save whenever possible.
                   </p>
                 )}
-              </aside>}
-              {mode === "group" && <label className="range-field">
-                <span>
-                  Your emergency allocation <strong>{emergencyPercent}%</strong>
-                </span>
-                <input
-                  max="15"
-                  min="10"
-                  onChange={(event) =>
-                    setEmergencyPercent(Number(event.target.value))
-                  }
-                  type="range"
-                  value={emergencyPercent}
-                />
-                <small>
-                  Available anytime and never sold with an early exit.
-                </small>
-              </label>}
+              </aside>
               </fieldset>}
 
-              {creationStep === (mode === "group" ? 3 : 2) && <fieldset className="creation-section full-width progressive-section">
+              {creationStep === (mode === "group" ? 4 : 3) && <fieldset className="creation-section full-width progressive-section">
                 <legend>{mode === "group" ? <CircleCheckBig aria-hidden="true" size={15} /> : <LockKeyhole aria-hidden="true" size={15} />}{mode === "group" ? "Review and create" : "Vault protection"}</legend>
                 {mode === "personal" && <div className="mode-picker embedded">
                   <button className={yieldMode === "safe" ? "active" : ""} onClick={() => { setYieldMode("safe"); setEarnRiskAccepted(false); }} type="button"><strong>Safe</strong><span>Locked funds remain in the vault and earn no yield.</span></button>
@@ -2707,7 +2963,7 @@ export function App() {
                   <div><dt>Expected completion</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>}
               </fieldset>}
-              {mode === "personal" && creationStep === 3 && <fieldset className="creation-section full-width progressive-section">
+              {mode === "personal" && creationStep === 4 && <fieldset className="creation-section full-width progressive-section">
                 <legend><CircleCheckBig aria-hidden="true" size={15} />Review</legend>
                 <dl className="creation-review">
                   <div><dt>Goal</dt><dd>{target} mUSDT{vaultName ? ` for ${vaultName}` : ""}</dd></div>
@@ -2718,25 +2974,24 @@ export function App() {
                   <div><dt>Estimated outcome</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>
               </fieldset>}
-              {creationStep === 3 && mode === "group" && groupCreationBlockReason && (
+              {creationStep === 4 && mode === "group" && groupCreationBlockReason && (
                 <div className="notice warning-notice full-width" role="status">
                   <strong>{groupVisibility === "public" ? "Public circles need newer contracts" : "This invite-only flow is not supported by the current factory"}</strong>
                   <span>{groupCreationBlockReason}</span>
                 </div>
               )}
-              {creationStep < 3 && <div className="wizard-next-row full-width">
-                <span>{creationStepReady ? "Ready for the next step" : "Finish this step to continue"}</span>
+              {creationStep < 4 && <div className="wizard-next-row full-width">
                 <button
                   aria-label="Continue to next step"
                   className="wizard-next"
                   disabled={!creationStepReady}
-                  onClick={() => setCreationStep((step) => Math.min(3, step + 1))}
+                  onClick={() => setCreationStep((step) => Math.min(4, step + 1))}
                   type="button"
                 >
-                  <ArrowRight aria-hidden="true" size={20} />
+                  <MoveRight aria-hidden="true" size={23} />
                 </button>
               </div>}
-              {creationStep === 3 && <button
+              {creationStep === 4 && <button
                 className="primary full-width wizard-create"
                 disabled={
                   riskActionsDisabled ||
@@ -2772,7 +3027,8 @@ export function App() {
             </div>
             <div className="vault-view-tabs swipe-tabs" role="tablist" aria-label="Savings position status" {...vaultViewSwipe}>
               <button aria-selected={vaultView === "active"} className={vaultView === "active" ? "active" : ""} onClick={() => setVaultView("active")} role="tab" type="button">Active goals</button>
-              <button aria-selected={vaultView === "sold"} className={vaultView === "sold" ? "active" : ""} onClick={() => setVaultView("sold")} role="tab" type="button">Completed exits</button>
+              <button aria-selected={vaultView === "completed"} className={vaultView === "completed" ? "active" : ""} onClick={() => setVaultView("completed")} role="tab" type="button">Achieved</button>
+              <button aria-selected={vaultView === "sold"} className={vaultView === "sold" ? "active" : ""} onClick={() => setVaultView("sold")} role="tab" type="button">Exited</button>
             </div>
             {vaultView === "sold" ? (
               visibleSoldPositions.length === 0 ? (
@@ -2788,13 +3044,13 @@ export function App() {
                   ))}
                 </div>
               )
-            ) : visibleVaults.length === 0 ? (
+            ) : displayedVaults.length === 0 ? (
               <div className="empty-mini">
-                No active savings goals for this account.
+                {vaultView === "completed" ? "No achieved savings goals yet." : "No active savings goals for this account."}
               </div>
             ) : (
               <div className="vault-list">
-                {visibleVaults.map((vault) => {
+                {displayedVaults.map((vault) => {
                   const plan = evmSession
                     ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)]
                     : undefined;
@@ -2819,8 +3075,8 @@ export function App() {
                     className={
                       snapshot?.address === vault.address &&
                       snapshot.positionId === vault.positionId
-                        ? "vault-row selected"
-                        : "vault-row"
+                        ? `vault-row selected ${vault.isGroup ? "group-vault" : "personal-vault"}`
+                        : `vault-row ${vault.isGroup ? "group-vault" : "personal-vault"}`
                     }
                     key={`${vault.address}-${vault.positionId.toString()}`}
                     onClick={() => {
@@ -2876,7 +3132,7 @@ export function App() {
             )}
           </aside>
           {(openingVault || snapshot) && <button aria-label="Close vault details" className="vault-detail-backdrop" onClick={() => { setSnapshot(null); setOpeningVault(false); }} type="button" />}
-          <article className={`panel vault-main ${openingVault || snapshot ? "vault-detail-sheet" : ""}`}>
+          <article className={`panel vault-main ${openingVault || snapshot ? "vault-detail-sheet" : ""} ${snapshot ? snapshot.isGroup ? "group-vault" : "personal-vault" : ""}`}>
             {openingVault && !snapshot ? (
               <div className="vault-sheet-loading" role="status">
                 <div className="sheet-grabber" />
@@ -3312,6 +3568,7 @@ export function App() {
                         {
                           title: "You moved closer to your goal",
                           message: `This contribution puts you about ${depositDaysCloser} ${depositDaysCloser === 1 ? "day" : "days"} closer to your planned finish.`,
+                          kind: "deposit",
                         }
                       );
                     }}
@@ -3367,6 +3624,15 @@ export function App() {
                           formatAssetAmount(readyAmount!, 6)
                         );
                       }}
+                      onContractActionComplete={() => {
+                        setSnapshot(null);
+                        setPendingVaultAction(null);
+                        setCelebration({
+                          title: "Your savings are locked in",
+                          message: "Your contribution was confirmed and added to this savings goal.",
+                          kind: "deposit",
+                        });
+                      }}
                       contractActionLabel="Deposit ready USDT into vault"
                           />
                         ) : (
@@ -3400,6 +3666,7 @@ export function App() {
                         {
                           title: "Congratulations, savings habit unlocked",
                           message: "Your emergency funds are back in your wallet. Your recorded goal progress is unchanged.",
+                          kind: "withdrawal",
                         }
                       );
                     }}
@@ -3500,7 +3767,12 @@ export function App() {
                             snapshot.address,
                             requestId
                           ),
-                        "Cooperative group exit completed."
+                        "Cooperative group exit completed.",
+                        {
+                          title: "Congratulations, savings habit unlocked",
+                          message: "Your authorized group savings position has been released to your wallet.",
+                          kind: "withdrawal",
+                        }
                       )
                     }
                     onMarket={() => {
@@ -3740,6 +4012,7 @@ export function App() {
                 disabled={riskActionsDisabled}
                 onClick={() => {
                   setSnapshot(null);
+                  setExitDraft(null);
                   setExitState(null);
                   setMarketPositionPickerOpen(true);
                 }}
@@ -3793,12 +4066,13 @@ export function App() {
                       <button
                         className={
                           selectedListing?.id === entry.listing.id
-                            ? "listing-card selected"
-                            : "listing-card"
+                            ? `listing-card selected ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
+                            : `listing-card ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
                         }
                         key={entry.listing.id.toString()}
                         onClick={() => {
                           setSnapshot(null);
+                          setExitDraft(null);
                           setMarketPositionPickerOpen(false);
                           setExitState(entry);
                         }}
@@ -3848,6 +4122,8 @@ export function App() {
           </aside>
             </div>
             {(marketPositionPickerOpen ||
+              exitDraftLoading ||
+              exitDraft ||
               canComposeListing ||
               ownActiveListing ||
               selectedListing?.active) && (
@@ -3858,6 +4134,7 @@ export function App() {
                   onClick={() => {
                     setMarketPositionPickerOpen(false);
                     setSnapshot(null);
+                    setExitDraft(null);
                     setExitState(null);
                   }}
                   type="button"
@@ -3869,13 +4146,20 @@ export function App() {
                     onClick={() => {
                       setMarketPositionPickerOpen(false);
                       setSnapshot(null);
+                      setExitDraft(null);
                       setExitState(null);
                     }}
                     type="button"
                   >
                     <X aria-hidden="true" size={16} /> Close details
                   </button>
-            {marketPositionPickerOpen ? (
+            {exitDraftLoading ? (
+              <div className="market-position-loading" role="status">
+                <LoadingAnimation />
+                <strong>Preparing your exit price</strong>
+                <span>Reading only this position and its live contract discount.</span>
+              </div>
+            ) : marketPositionPickerOpen ? (
               <div className="market-position-sheet">
                 <div className="section-title">
                   <div>
@@ -3900,13 +4184,15 @@ export function App() {
                       <button
                         key={`exit-${vault.address}-${vault.positionId.toString()}`}
                         onClick={() => {
-                          void openVault(vault.address, vault.positionId)
-                            .then(() => setMarketPositionPickerOpen(false))
+                          void openExitComposer(vault)
                             .catch((error) =>
-                              setTransaction({
-                                status: "error",
-                                message: describeContractError(error),
-                              })
+                              {
+                                setExitDraft(null);
+                                setTransaction({
+                                  status: "error",
+                                  message: describeContractError(error),
+                                });
+                              }
                             );
                         }}
                         type="button"
@@ -3929,15 +4215,15 @@ export function App() {
                   )}
                 </div>
               </div>
-            ) : canComposeListing && snapshot ? (
+            ) : canComposeListing && exitComposerPosition ? (
               <ListingComposer
-                snapshot={snapshot}
+                snapshot={exitComposerPosition}
                 exitState={exitState}
                 expiration={exitExpiration}
                 claim={projectedSaverPayout}
                 fee={projectedFee}
                 minimumPayout={minimumPayout}
-                disabled={riskActionsDisabled}
+                disabled={riskActionsDisabled || !exitState}
                 onExpiration={setExitExpiration}
                 onMinimumPayout={setMinimumPayout}
                 onSubmit={() =>
@@ -3948,7 +4234,7 @@ export function App() {
                     () =>
                       createExitListing(
                         requireSession().signer,
-                        snapshot,
+                        exitComposerPosition,
                         exitExpiration,
                         minimumPayout
                       ),
@@ -3997,7 +4283,7 @@ export function App() {
                   </span>
                 </div>
                 <button
-                  className="secondary"
+                  className="secondary destructive"
                   disabled={actionsDisabled}
                   onClick={() =>
                     void transactAndRefresh(
@@ -4389,13 +4675,17 @@ export function App() {
 
       {celebration && (
         <div className="celebration-layer" role="dialog" aria-modal="true" aria-labelledby="celebration-title">
-          <button aria-label="Close celebration" className="overlay-backdrop" onClick={() => setCelebration(null)} type="button" />
+          <button aria-label="Close celebration" className="overlay-backdrop" onClick={dismissCelebration} type="button" />
           <article className="celebration-card">
-            <span className="celebration-watermark" aria-hidden="true"><Check /></span>
+            {celebration.kind === "deposit" || celebration.kind === "withdrawal" ? (
+              <SavingsLockAnimation mode={celebration.kind} />
+            ) : (
+              <span className="celebration-watermark" aria-hidden="true"><Check /></span>
+            )}
             <small>LockedIn milestone</small>
             <h2 id="celebration-title">{celebration.title}</h2>
             <p>{celebration.message}</p>
-            <button className="primary full-width" onClick={() => setCelebration(null)} type="button">Keep saving</button>
+            <button className="primary full-width" onClick={dismissCelebration} type="button">{celebration.kind === "withdrawal" ? "Done" : "Keep saving"}</button>
           </article>
         </div>
       )}
@@ -4446,20 +4736,60 @@ export function App() {
         <div className="create-action-layer" role="dialog" aria-modal="true" aria-label="Create savings">
           <button aria-label="Close create menu" className="create-action-backdrop" onClick={() => setCreateMenuOpen(false)} type="button" />
           <div className="create-action-stack">
+            <button className="save-action" onClick={() => startQuickVaultAction("save")} type="button">
+              <span><PiggyBank aria-hidden="true" size={20} /></span>
+              <strong>Add savings</strong>
+            </button>
+            <button className="withdraw-action" onClick={() => startQuickVaultAction("withdraw")} type="button">
+              <span><WalletCards aria-hidden="true" size={20} /></span>
+              <strong>Withdraw</strong>
+            </button>
             <button onClick={() => startVaultCreation("personal")} type="button">
               <span><Vault aria-hidden="true" size={20} /></span>
-              <strong>Create personal vault</strong>
+              <strong>Create goal</strong>
             </button>
-            <button onClick={() => startVaultCreation("group")} type="button">
+            <button className="group-action" onClick={() => startVaultCreation("group")} type="button">
               <span><UsersRound aria-hidden="true" size={20} /></span>
-              <strong>Create group vault</strong>
+              <strong>Create circle vault</strong>
             </button>
           </div>
         </div>
       )}
+      {quickVaultAction && walletAccessReady && (
+        <div className="overlay-layer quick-vault-layer" role="dialog" aria-modal="true" aria-labelledby="quick-vault-title">
+          <button aria-label="Close vault chooser" className="overlay-backdrop" onClick={() => setQuickVaultAction(null)} type="button" />
+          <aside className={`quick-vault-sheet ${quickVaultAction}`}>
+            <div className="sheet-grabber" />
+            <header>
+              <span className="eyebrow">{quickVaultAction === "save" ? "Add savings" : "Withdraw"}</span>
+              <h2 id="quick-vault-title">Choose a vault</h2>
+              <p>{quickVaultAction === "save" ? "Select the goal you want to fund." : "Only emergency funds are available here. Use Exits to sell a locked position."}</p>
+            </header>
+            <div className="quick-vault-list">
+              {quickActionVaults.length === 0 ? (
+                <div className="empty-mini">
+                  {quickVaultAction === "save" ? "No active goal currently accepts another contribution." : "No emergency balance is currently available to withdraw."}
+                </div>
+              ) : quickActionVaults.map((vault) => {
+                const plan = evmSession
+                  ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)]
+                  : undefined;
+                return (
+                  <button className={vault.isGroup ? "group-vault" : "personal-vault"} key={`${vault.address}-${vault.positionId.toString()}`} onClick={() => void chooseQuickActionVault(vault)} type="button">
+                    <span className="quick-vault-icon">{vault.isGroup ? <UsersRound aria-hidden="true" size={20} /> : <Vault aria-hidden="true" size={20} />}</span>
+                    <span><strong>{plan?.vaultName || (vault.isGroup ? "Group savings circle" : "Personal savings goal")}</strong><small>{quickVaultAction === "save" ? `${vault.deposited} of ${vault.target} USDT saved` : `${vault.emergencyBalance} USDT emergency balance`}</small></span>
+                    <span className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</span>
+                    <ArrowRight aria-hidden="true" size={17} />
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        </div>
+      )}
       <nav className={`bottom-nav ${createMenuOpen ? "create-open" : ""}`} aria-label="Quick navigation">
         <div className="bottom-nav-main">
-          <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><Home aria-hidden="true" />Discover</button>
+          <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><Home aria-hidden="true" />Home</button>
           <button className={route === "position" || route === "groups" ? "active" : ""} onClick={() => navigate("position")} type="button"><Vault aria-hidden="true" />Vaults</button>
           <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><HandCoins aria-hidden="true" />Exits</button>
         </div>
@@ -4751,13 +5081,13 @@ function GroupInvitationPanel({
             <button className="primary" disabled={disabled} onClick={onAccept}>
               Accept complete terms
             </button>
-            <button className="secondary" disabled={disabled} onClick={onDecline}>
+            <button className="secondary destructive" disabled={disabled} onClick={onDecline}>
               Decline
             </button>
           </>
         )}
         {canCancel && (
-          <button className="secondary" disabled={disabled} onClick={onCancel}>
+          <button className="secondary destructive" disabled={disabled} onClick={onCancel}>
             Cancel unactivated group
           </button>
         )}
@@ -4908,7 +5238,7 @@ function GroupExitPanel({
                     )}
                   {canVote && request.connectedMemberApproved && (
                     <button
-                      className="secondary"
+                      className="secondary destructive"
                       disabled={disabled}
                       onClick={() => onRevoke(request.id)}
                       type="button"
@@ -4930,7 +5260,7 @@ function GroupExitPanel({
                     )}
                   {isRequester && request.status === "pending" && (
                     <button
-                      className="secondary"
+                      className="secondary destructive"
                       disabled={disabled}
                       onClick={() => onCancel(request.id)}
                       type="button"
@@ -4998,7 +5328,7 @@ function ListingComposer({
   onMinimumPayout,
   onSubmit,
 }: {
-  snapshot: VaultSnapshot;
+  snapshot: Pick<VaultSnapshot, "isGroup">;
   exitState: ExitListingSnapshot | null;
   expiration: string;
   claim: number;
@@ -5010,6 +5340,15 @@ function ListingComposer({
   onSubmit: () => void;
 }) {
   const pricing = exitState?.reference;
+  const expirationTime = new Date(expiration).getTime();
+  const payoutValue = Number(minimumPayout);
+  const formError = !Number.isFinite(expirationTime) || expirationTime <= Date.now()
+    ? "Choose a listing expiration in the future."
+    : !Number.isFinite(payoutValue) || payoutValue <= 0
+      ? "Enter a minimum payout greater than zero."
+      : payoutValue > claim
+        ? "The minimum payout cannot be higher than the current system payout."
+        : null;
   return (
     <div className="listing-composer">
       <div className="section-title">
@@ -5051,22 +5390,27 @@ function ListingComposer({
           </small>
         </div>
       )}
+      {!pricing && (
+        <div className="inline-state" role="status">
+          <RefreshCw aria-hidden="true" className="spin" size={17} />
+          <div><strong>Loading the live exit price</strong><span>The form is ready; confirmation unlocks as soon as the contract quote arrives.</span></div>
+        </div>
+      )}
       <form
         className="exit-create"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
+          if (formError) return;
           onSubmit();
         }}
       >
         <label>
           <span>Listing expiration</span>
-          <input
-            onChange={(event) => onExpiration(event.target.value)}
-            type="datetime-local"
-            value={expiration}
-          />
+          <WheelDatePicker includeTime label="Exit listing expiration" onChange={onExpiration} value={expiration} />
           <small>You control the listing window, not the discount.</small>
         </label>
+        {formError && <p className="field-error listing-form-error" role="alert"><AlertTriangle aria-hidden="true" size={15} />{formError}</p>}
         <label>
           <span>Minimum payout</span>
           <div className="input-unit">
@@ -5101,7 +5445,7 @@ function ListingComposer({
             claim. Your emergency balance remains yours.
           </span>
         </div>
-        <button className="primary" disabled={disabled}>
+        <button className="primary" disabled={disabled || Boolean(formError)} type="submit">
           {exitState?.listing ? "Relist at system price" : "Create listing"}
         </button>
       </form>
@@ -5229,7 +5573,7 @@ function ListingDetail({
       )}
       <div className="offer-actions">
         {isSeller && listing.active && (
-          <button className="secondary" disabled={disabled} onClick={onCancel}>
+          <button className="secondary destructive" disabled={disabled} onClick={onCancel}>
             Cancel listing
           </button>
         )}

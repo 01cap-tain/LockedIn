@@ -27,6 +27,7 @@ interface NimSwapFlowProps {
   exactUsdtRequired?: bigint;
   withdrawalUsdtAmount?: bigint;
   onContractAction: (readyDestinationAmount?: bigint) => Promise<bigint | void>;
+  onContractActionComplete?: () => void;
   contractActionLabel: string;
 }
 
@@ -141,6 +142,7 @@ export function NimSwapFlow(props: NimSwapFlowProps) {
       setState((current) => withStage(current, first ? "DESTINATION_ASSET_CONFIRMED" : "COMPLETED", {
         confirmedSourceAmount: confirmedSourceAmount ?? current.confirmedSourceAmount,
       }));
+      if (!first) props.onContractActionComplete?.();
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Contract action failed.";
       setState((current) => withStage(current, "FAILED", { error: contractActionFailure(props.kind, reason) }));

@@ -139,6 +139,13 @@ const USDT_DECIMALS = 6;
 const POLYGON_AMOY_CHAIN_ID = 80_002n;
 const AMOY_MIN_PRIORITY_FEE = parseUnits("25", "gwei");
 let amoyReadProvider: JsonRpcProvider | undefined;
+let cachedTransactionOverrides:
+  | { expiresAt: number; value: Record<string, bigint> }
+  | undefined;
+const nativeGasStatusCache = new Map<
+  string,
+  { expiresAt: number; balance: bigint; requiredReserve: bigint }
+>();
 let amoyReadProviderIndex = 0;
 
 function rpcBatchMaxCount(): number {
@@ -167,18 +174,34 @@ function resetAmoyReadProvider(): void {
 
 async function withAmoyReadRetry<T>(
   operation: () => Promise<T>,
-  shouldRetry: (error: unknown) => boolean = () => true
+  shouldRetry: (error: unknown) => boolean = () => true,
+  options: { attempts?: number; timeoutMs?: number } = {}
 ): Promise<T> {
   const isAmoy = (import.meta.env.VITE_EVM_CHAIN_ID ?? "").toLowerCase() === "0x13882";
   if (!isAmoy) return operation();
 
+  const attempts = options.attempts ?? 3;
+  const timeoutMs = options.timeoutMs ?? 12_000;
   let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return await operation();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          operation(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`Polygon Amoy read timed out after ${timeoutMs}ms.`)),
+              timeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch (error) {
       lastError = error;
-      if (!shouldRetry(error) || attempt === 2) break;
+      if (!shouldRetry(error) || attempt === attempts - 1) break;
       resetAmoyReadProvider();
       await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
     }
@@ -402,12 +425,23 @@ export interface VaultSummary {
   memberCount: number;
   target: string;
   deposited: string;
+  emergencyBalance: string;
   currentValue: string;
   progressPercent: number;
   expectedProgressPercent: number;
   pace: "on-track" | "behind" | "complete";
   vaultMode: "safe" | "earn";
   legacy: boolean;
+}
+
+export interface ExitPositionSnapshot {
+  address: string;
+  positionId: bigint;
+  ownsLockedPosition: boolean;
+  isOriginalMember: boolean;
+  isGroup: boolean;
+  groupLifecycle: VaultSnapshot["groupLifecycle"];
+  currentValue: string;
 }
 
 export interface PublicGroupSummary {
@@ -562,8 +596,11 @@ function factoryFor(signer: Signer): Contract {
 async function assertFactoryDeployment(signer: Signer): Promise<void> {
   // Calling an ABI against an address with no bytecode produces the confusing
   // `could not decode result data` error. Fail early with an actionable message.
-  const provider = readProviderFor(signer);
-  if ((await provider.getCode(factoryAddress())) === "0x") {
+  if ((await withAmoyReadRetry(
+    () => readProviderFor(signer).getCode(factoryAddress()),
+    undefined,
+    { attempts: 2, timeoutMs: 5_000 }
+  )) === "0x") {
     throw new Error(
       "No VaultFactory contract exists at the configured address on this network. Redeploy it and restart the app."
     );
@@ -661,16 +698,27 @@ export async function verifyDeployment(
 }
 
 async function marketFor(signer: Signer): Promise<Contract> {
-  const readProvider = readProviderFor(signer);
-  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
-  const address = await readFactory.getFunction("earlyExitMarket")();
+  const configured = import.meta.env.VITE_EXPECTED_MARKET_ADDRESS;
+  const address = configured && !/^0x0{40}$/i.test(configured)
+    ? getAddress(configured)
+    : await withAmoyReadRetry(async () => {
+    const readFactory = new Contract(
+      factoryAddress(),
+      factoryAbi,
+      readProviderFor(signer)
+    );
+    return readFactory.getFunction("earlyExitMarket")();
+  }, undefined, { attempts: 1, timeoutMs: 4_000 });
   return new Contract(address, marketAbi, signer);
 }
 
 async function marketReaderFor(signer: Signer): Promise<Contract> {
   const readProvider = readProviderFor(signer);
-  const readFactory = new Contract(factoryAddress(), factoryAbi, readProvider);
-  const address = await readFactory.getFunction("earlyExitMarket")();
+  const configured = import.meta.env.VITE_EXPECTED_MARKET_ADDRESS;
+  const address = configured && !/^0x0{40}$/i.test(configured)
+    ? getAddress(configured)
+    : await new Contract(factoryAddress(), factoryAbi, readProvider)
+        .getFunction("earlyExitMarket")();
   return new Contract(address, marketAbi, readProvider);
 }
 
@@ -735,7 +783,10 @@ function groupExitStatusLabel(
 async function transactionOverrides(
   signer: Signer
 ): Promise<Record<string, bigint>> {
-  return withAmoyReadRetry<Record<string, bigint>>(async () => {
+  if (cachedTransactionOverrides && cachedTransactionOverrides.expiresAt > Date.now())
+    return cachedTransactionOverrides.value;
+
+  const value = await withAmoyReadRetry<Record<string, bigint>>(async () => {
     const provider = readProviderFor(signer);
     const network = await provider.getNetwork();
     if (network.chainId !== POLYGON_AMOY_CHAIN_ID)
@@ -759,14 +810,20 @@ async function transactionOverrides(
       maxFeePerGas:
         reportedMaxFee > calculatedMaxFee ? reportedMaxFee : calculatedMaxFee,
     };
-  });
+  }, undefined, { attempts: 1, timeoutMs: 4_000 });
+  cachedTransactionOverrides = { expiresAt: Date.now() + 15_000, value };
+  return value;
 }
 
 export async function loadNativeGasStatus(
   signer: Signer,
   address: string
 ): Promise<{ balance: bigint; requiredReserve: bigint }> {
-  return withAmoyReadRetry(async () => {
+  const cacheKey = address.toLowerCase();
+  const cached = nativeGasStatusCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now())
+    return { balance: cached.balance, requiredReserve: cached.requiredReserve };
+  const value = await withAmoyReadRetry(async () => {
     const provider = readProviderFor(signer);
     const [balance, feeData] = await Promise.all([
       provider.getBalance(address),
@@ -775,7 +832,20 @@ export async function loadNativeGasStatus(
     const feePerGas =
       feeData.maxFeePerGas ?? feeData.gasPrice ?? AMOY_MIN_PRIORITY_FEE;
     return { balance, requiredReserve: feePerGas * 1_500_000n };
-  });
+  }, undefined, { attempts: 1, timeoutMs: 4_000 });
+  nativeGasStatusCache.set(cacheKey, { ...value, expiresAt: Date.now() + 30_000 });
+  return value;
+}
+
+/** Starts read-only transaction preparation before the user reaches Confirm. */
+export async function warmTransactionPreflight(
+  signer: Signer,
+  address: string
+): Promise<void> {
+  await Promise.allSettled([
+    transactionOverrides(signer),
+    loadNativeGasStatus(signer, address),
+  ]);
 }
 
 /**
@@ -787,7 +857,7 @@ export async function loadNativeGasStatus(
 async function confirmTransaction(signer: Signer, hash: string) {
   const receipt = await withAmoyReadRetry(() =>
     readProviderFor(signer).waitForTransaction(hash, 1, 60_000)
-  );
+  , undefined, { timeoutMs: 65_000 });
   if (!receipt)
     throw new Error(
       `Transaction ${hash} was submitted but confirmation timed out. Check it on PolygonScan before retrying.`
@@ -832,9 +902,14 @@ export async function createVault(
       overrides
     );
   } else {
-    const protocolVersion = String(
-      await factory.getFunction("PROTOCOL_VERSION")()
-    );
+    const protocolVersion = String(await withAmoyReadRetry(() => {
+      const readFactory = new Contract(
+        factoryAddress(),
+        factoryAbi,
+        readProviderFor(signer)
+      );
+      return readFactory.getFunction("PROTOCOL_VERSION")();
+    }, undefined, { attempts: 2, timeoutMs: 5_000 }));
     const unsupportedReason = groupCreationUnsupportedReason(
       protocolVersion,
       input.groupVisibility ?? "invite-only"
@@ -1225,6 +1300,10 @@ async function loadVaultsForSignerOnce(
         memberCount: Number(memberCount),
         target: formatUnits(target, USDT_DECIMALS),
         deposited: formatUnits(deposited, USDT_DECIMALS),
+        emergencyBalance: formatUnits(
+          BigInt(stored.emergencyBalance),
+          USDT_DECIMALS
+        ),
         currentValue: formatUnits(currentValue, USDT_DECIMALS),
         progressPercent,
         expectedProgressPercent,
@@ -1415,14 +1494,14 @@ export async function depositToVault(
     const approval = await token.getFunction("approve")(
       vaultAddressResolved,
       parsed,
-      await transactionOverrides(signer)
+      { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
     );
     await confirmTransaction(signer, approval.hash);
   }
   const deposit = await vault.getFunction("deposit")(
     positionId,
     parsed,
-    await transactionOverrides(signer)
+    { ...(await transactionOverrides(signer)), gasLimit: 1_200_000n }
   );
   await confirmTransaction(signer, deposit.hash);
 }
@@ -1488,7 +1567,7 @@ export async function requestMockUsdt(
     throw new Error("Mock-token minting is unavailable for this deployment.");
   }
   const token = new Contract(tokenAddress, tokenAbi, signer);
-  const overrides = await transactionOverrides(signer);
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit: 250_000n };
   const transaction = await token.getFunction("mint")(
     await signer.getAddress(),
     amount(value),
@@ -1504,7 +1583,7 @@ export async function withdrawEmergency(
   value: string
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
-  const overrides = await transactionOverrides(signer);
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit: 300_000n };
   const transaction = await vault.getFunction("withdrawEmergency")(
     positionId,
     amount(value),
@@ -1519,7 +1598,7 @@ export async function withdrawLocked(
   positionId: bigint
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
-  const overrides = await transactionOverrides(signer);
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit: 1_200_000n };
   const transaction = await vault.getFunction("withdrawLocked")(
     positionId,
     overrides
@@ -1596,7 +1675,7 @@ async function sendGroupExitTransaction(
   requestId?: bigint
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
-  const overrides = await transactionOverrides(signer);
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit: 500_000n };
   const transaction =
     requestId === undefined
       ? await vault.getFunction(functionName)(overrides)
@@ -1704,27 +1783,56 @@ function rayRateToApy(rate: bigint): number {
   return Math.expm1(apr) * 100;
 }
 
+/** Reads only the position fields required to open the early-exit composer. */
+export async function loadExitPosition(
+  signer: Signer,
+  vaultAddress: string,
+  positionId: bigint
+): Promise<ExitPositionSnapshot> {
+  return withAmoyReadRetry(async () => {
+    const address = getAddress(vaultAddress);
+    const signerAddress = getAddress(await signer.getAddress());
+    const vault = new Contract(address, vaultAbi, readProviderFor(signer));
+    const [stored, owner, currentValue, isGroup, lifecycle] = await Promise.all([
+      vault.getFunction("position")(positionId),
+      vault.getFunction("positionOwner")(positionId),
+      vault.getFunction("positionValue")(positionId),
+      vault.getFunction("isGroup")(),
+      vault.getFunction("groupLifecycle")(),
+    ]);
+    return {
+      address,
+      positionId,
+      ownsLockedPosition: getAddress(String(owner)) === signerAddress,
+      isOriginalMember: getAddress(String(stored.member)) === signerAddress,
+      isGroup: Boolean(isGroup),
+      groupLifecycle: groupLifecycleLabel(BigInt(lifecycle)),
+      currentValue: formatUnits(currentValue, USDT_DECIMALS),
+    };
+  }, undefined, { attempts: 1, timeoutMs: 4_000 });
+}
+
 export async function loadExitMarket(
   signer: Signer,
-  vault: VaultSnapshot
+  vault: Pick<VaultSnapshot, "address" | "positionId">
 ): Promise<ExitListingSnapshot> {
-  return withAmoyReadRetry(() => loadExitMarketOnce(signer, vault));
+  return withAmoyReadRetry(
+    () => loadExitMarketOnce(signer, vault),
+    undefined,
+    { attempts: 1, timeoutMs: 4_000 }
+  );
 }
 
 async function loadExitMarketOnce(
   signer: Signer,
-  vault: VaultSnapshot
+  vault: Pick<VaultSnapshot, "address" | "positionId">
 ): Promise<ExitListingSnapshot> {
   const market = await marketReaderFor(signer);
   const marketAddress = await market.getAddress();
-  const reference = await market.getFunction("referenceDiscount")(
-    vault.address,
-    vault.positionId
-  );
-  const listingIdPlusOne: bigint = await market.getFunction("activeListing")(
-    vault.address,
-    vault.positionId
-  );
+  const [reference, listingIdPlusOne] = await Promise.all([
+    market.getFunction("referenceDiscount")(vault.address, vault.positionId),
+    market.getFunction("activeListing")(vault.address, vault.positionId) as Promise<bigint>,
+  ]);
   const referenceSnapshot = mapReferenceDiscount(reference);
   if (listingIdPlusOne === 0n)
     return { marketAddress, reference: referenceSnapshot, listing: null };
@@ -1856,12 +1964,19 @@ export async function loadAllExitListings(
 
 export async function createExitListing(
   signer: Signer,
-  vault: VaultSnapshot,
+  vault: Pick<VaultSnapshot, "address" | "positionId">,
   expiresAt: string,
   minimumPayout: string
 ): Promise<void> {
+  const expirationMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expirationMs) || expirationMs <= Date.now()) {
+    throw new Error("Choose a listing expiration in the future.");
+  }
+  if (!Number.isFinite(Number(minimumPayout)) || Number(minimumPayout) <= 0) {
+    throw new Error("Enter a minimum payout greater than zero.");
+  }
   const market = await marketFor(signer);
-  const expiration = BigInt(Math.floor(new Date(expiresAt).getTime() / 1_000));
+  const expiration = BigInt(Math.floor(expirationMs / 1_000));
   const payoutFloor = amount(minimumPayout);
   const overrides = await transactionOverrides(signer);
   const transaction = await market.getFunction("createListing")(
@@ -1869,7 +1984,12 @@ export async function createExitListing(
     vault.positionId,
     expiration,
     payoutFloor,
-    overrides
+    {
+      ...overrides,
+      // Embedded wallets can stall while estimating this state-changing call.
+      // A bounded limit keeps the prompt responsive; unused gas is not charged.
+      gasLimit: 750_000n,
+    }
   );
   await confirmTransaction(signer, transaction.hash);
 }
@@ -1915,9 +2035,9 @@ export async function fundExitListing(
     signer
   );
   const marketAddress = await market.getAddress();
-  const allowance: bigint = await token.getFunction("allowance")(
-    buyer,
-    marketAddress
+  const readToken = new Contract(await token.getAddress(), tokenAbi, readProvider);
+  const allowance: bigint = await withAmoyReadRetry(() =>
+    readToken.getFunction("allowance")(buyer, marketAddress)
   );
   if (allowance < totalPayment) {
     // Fixed limits avoid unreliable Amoy gas estimation in embedded wallets.
@@ -1942,7 +2062,7 @@ export async function cancelExitListing(
   listingId: bigint
 ): Promise<void> {
   const market = await marketFor(signer);
-  const overrides = await transactionOverrides(signer);
+  const overrides = { ...(await transactionOverrides(signer)), gasLimit: 180_000n };
   const transaction = await market.getFunction("cancelListing")(
     listingId,
     overrides
