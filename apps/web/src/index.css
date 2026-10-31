@@ -9635,4 +9635,10 @@ code,
     line-height: 1.25;
     letter-spacing: .05em;
   }
+
+  .mobile-app-header .account-menu-trigger:not(.connected) {
+    width: 98px;
+    min-width: 98px;
+    max-width: 98px;
+  }
 }
