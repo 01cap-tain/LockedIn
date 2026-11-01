@@ -3,6 +3,7 @@ import { network } from 'hardhat'
 import process from 'node:process'
 
 import { polygonAaveConfig } from '../scripts/polygon-aave-config.js'
+import { deploySafeV1Graph } from '../scripts/deploy-safe-v1-graph.js'
 
 const forkDescribe = process.env.POLYGON_RPC_URL ? describe : describe.skip
 
@@ -26,5 +27,34 @@ forkDescribe('Polygon Aave configuration (optional fork)', function () {
     expect(reserve.currentSupply).to.be.greaterThan(0n)
     // This is a live observation, not a promise that future redemptions succeed.
     expect(reserve.availableLiquidity).to.be.greaterThanOrEqual(0n)
+  })
+})
+
+forkDescribe('Safe-only V1 against Polygon production USDT (optional fork)', function () {
+  it('accepts the official six-decimal token and immutably disables Earn', async function () {
+    const { ethers } = await network.create('polygonFork')
+    const [deployer, maintenance] = await ethers.getSigners()
+    const unit = 10n ** 6n
+    const deployment = await deploySafeV1Graph({
+      ethers,
+      deployer,
+      asset: polygonAaveConfig.usdt,
+      maintenanceTreasury: await maintenance.getAddress(),
+      safetyCouncil: await deployer.getAddress(),
+      chainId: 137,
+      timelockDelay: 2 * 24 * 60 * 60,
+      maxPositionPrincipal: 1_000n * unit,
+      maxVaultPrincipal: 10_000n * unit,
+      maxProtocolPrincipal: 50_000n * unit,
+    })
+    expect(await deployment.factory.asset()).to.equal(polygonAaveConfig.usdt)
+    expect(await deployment.factory.PROTOCOL_VERSION()).to.equal('lockedin-circle/1.0.0-safe')
+    const latest = await ethers.provider.getBlock('latest')
+    await expect(deployment.factory.createPersonalVault(
+      100n * unit,
+      BigInt(latest.timestamp + 30 * 24 * 60 * 60),
+      1_000,
+      1,
+    )).to.be.revertedWithCustomError(deployment.factory, 'EarnDisabled')
   })
 })

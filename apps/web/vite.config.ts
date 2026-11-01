@@ -13,10 +13,10 @@ interface AmoyManifest {
     mockUsdt: { address: string };
     vaultFactory: { address: string; blockNumber: number };
     earlyExitMarket: { address: string };
-    rewardPool: { address: string };
     safetyController: { address: string };
   };
-  factoryConfiguration: { yieldAdapter: string };
+  profile?: string;
+  factoryConfiguration?: { yieldAdapter?: string; vaultMode?: string };
 }
 
 function amoyFactoryDefinition(mode: string): Record<string, string> {
@@ -48,9 +48,7 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     !manifest.contracts?.mockUsdt?.address ||
     !manifest.contracts?.vaultFactory?.address ||
     !manifest.contracts?.earlyExitMarket?.address ||
-    !manifest.contracts?.rewardPool?.address ||
-    !manifest.contracts?.safetyController?.address ||
-    !manifest.factoryConfiguration?.yieldAdapter
+    !manifest.contracts?.safetyController?.address
   ) {
     return {
       "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("false"),
@@ -90,14 +88,13 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
       String(manifest.contracts.vaultFactory.blockNumber)
     ),
     "import.meta.env.VITE_YIELD_ADAPTER_KIND": JSON.stringify(
-      manifest.factoryConfiguration.yieldAdapter
+      manifest.factoryConfiguration?.yieldAdapter ?? "Disabled"
     ),
     "import.meta.env.VITE_EXPECTED_CHAIN_ID": JSON.stringify(String(manifest.chainId)),
     "import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION": JSON.stringify(manifest.protocolVersion),
     "import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID": JSON.stringify(manifest.deploymentId),
     "import.meta.env.VITE_EXPECTED_ASSET_ADDRESS": JSON.stringify(manifest.contracts.mockUsdt.address),
     "import.meta.env.VITE_EXPECTED_MARKET_ADDRESS": JSON.stringify(manifest.contracts.earlyExitMarket.address),
-    "import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS": JSON.stringify(manifest.contracts.rewardPool.address),
     "import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS": JSON.stringify(manifest.contracts.safetyController.address),
     "import.meta.env.VITE_DEPLOYMENTS_JSON": JSON.stringify(JSON.stringify(deployments)),
   };

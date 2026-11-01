@@ -18,7 +18,9 @@ const manifest = JSON.parse(
 )
 const contracts = manifest.contracts
 const config = manifest.factoryConfiguration
-const adapterRate = 5n * 10n ** 25n
+if (manifest.profile !== 'safe-only-v1' || manifest.schemaVersion < 6) {
+  throw new Error('The latest manifest is not the corrected Safe-only V1 deployment.')
+}
 
 const targets = [
   {
@@ -27,51 +29,15 @@ const targets = [
     constructorArgs: [],
   },
   {
-    name: 'MockYieldAdapterFactory',
-    address: contracts.mockYieldAdapterFactory.address,
-    constructorArgs: [
-      contracts.mockUsdt.address,
-      manifest.chainId,
-      adapterRate,
-    ],
-  },
-  {
     name: 'SafetyController',
     address: contracts.safetyController.address,
-    constructorArgs: [
-      contracts.vaultFactory.address,
-      config.safety.authority,
-      config.safety.timelockSeconds,
-      config.safety.maxPositionPrincipal,
-      config.safety.maxVaultPrincipal,
-      config.safety.maxProtocolPrincipal,
-    ],
+    constructorArgs: manifest.constructorArguments.safety,
   },
   {
     name: 'VaultFactory',
     address: contracts.vaultFactory.address,
     constructorArgs: [
-      contracts.mockUsdt.address,
-      config.riskReserve,
-      config.maintenanceTreasury,
-      '0x0000000000000000000000000000000000000000',
-      '0x0000000000000000000000000000000000000000',
-      manifest.chainId,
-      contracts.mockYieldAdapterFactory.address,
-      contracts.safetyController.address,
-      contracts.rewardPool.address,
-    ],
-  },
-  {
-    name: 'RewardPool',
-    address: contracts.rewardPool.address,
-    constructorArgs: [
-      contracts.mockUsdt.address,
-      contracts.vaultFactory.address,
-      config.rewards.epochSeconds,
-      config.rewards.registrationGraceSeconds,
-      config.rewards.minimumRewardTarget,
-      config.rewards.minimumSavingDurationSeconds,
+      ...manifest.constructorArguments.factory,
     ],
   },
   {
@@ -79,9 +45,7 @@ const targets = [
     address: contracts.earlyExitMarket.address,
     constructorArgs: [
       contracts.mockUsdt.address,
-      contracts.rewardPool.address,
       contracts.vaultFactory.address,
-      config.riskReserve,
       config.maintenanceTreasury,
       contracts.safetyController.address,
     ],
@@ -89,7 +53,7 @@ const targets = [
   {
     name: 'SavingsVaultDeployer',
     address: contracts.savingsVaultDeployer.address,
-    constructorArgs: [],
+    constructorArgs: manifest.constructorArguments.vaultDeployer,
   },
 ]
 

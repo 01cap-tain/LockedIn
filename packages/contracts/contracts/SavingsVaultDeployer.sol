@@ -2,9 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {RewardPool} from "./RewardPool.sol";
 import {SavingsVault} from "./SavingsVault.sol";
-import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 import {SafetyController} from "./SafetyController.sol";
 
 /// @notice Size-isolated deployer used exclusively by its immutable VaultFactory.
@@ -22,14 +20,12 @@ contract SavingsVaultDeployer {
 
     function deployVault(
         IERC20 asset,
-        RewardPool rewardPool,
         uint64 maturity,
         bool isGroup,
         address groupCreator,
         address earlyExitMarket,
         SafetyController safetyController,
         SavingsVault.VaultMode mode,
-        IYieldAdapter yieldAdapter,
         address[] memory members,
         uint256[] memory targets,
         uint16[] memory emergencyBps,
@@ -45,14 +41,12 @@ contract SavingsVaultDeployer {
         vault = address(
             new SavingsVault(
                 asset,
-                rewardPool,
                 maturity,
                 isGroup,
                 groupCreator,
                 earlyExitMarket,
                 safetyController,
                 mode,
-                yieldAdapter,
                 members,
                 targets,
                 emergencyBps,

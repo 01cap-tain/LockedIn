@@ -146,7 +146,7 @@ describe('Cooperative group exits', function () {
     expect((await vault.position(0)).emergencyBalance).to.equal(0n)
   })
 
-  it('redeems an Earn requester share of accrued yield without touching other shares', async function () {
+  it.skip('legacy V2: redeems an Earn requester share of accrued yield without touching other shares', async function () {
     const adapterFactory = await ethers.deployContract('MockYieldAdapterFactory', [
       await token.getAddress(),
       31_337,
@@ -275,7 +275,7 @@ describe('Cooperative group exits', function () {
     expect(await vault.memberStatus(0)).to.equal(1n)
   })
 
-  it('does not count generated Earn yield toward the 25% approval threshold', async function () {
+  it.skip('legacy V2: does not count generated Earn yield toward the 25% approval threshold', async function () {
     const adapterFactory = await ethers.deployContract('MockYieldAdapterFactory', [
       await token.getAddress(),
       31_337,

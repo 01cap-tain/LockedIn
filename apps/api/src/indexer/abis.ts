@@ -11,6 +11,7 @@ const definitions: Record<ContractKind, readonly string[]> = {
     'event ListingCancelled(uint256 indexed listingId)',
     'event ListingExpired(uint256 indexed listingId)',
     'event ListingFunded(uint256 indexed listingId,address indexed provider,uint256 claimValue,uint16 systemDiscountBps,uint256 saverPayout,uint256 providerPotentialReturn,uint256 providerFee)',
+    'event EarlyExitSettled(uint256 indexed listingId,address indexed provider,address indexed maintenanceTreasury,uint256 saverPayout,uint256 providerFee,uint256 acquiredClaimValue)',
   ],
   reward: [
     'event VaultRegistered(address indexed vault)',

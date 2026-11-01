@@ -13,7 +13,7 @@ const result = JSON.parse(
   await readFile(path.join(directory, 'latest-flow.json'), 'utf8')
 )
 const { ethers } = await network.create('amoy')
-const vault = await ethers.getContractAt('SavingsVault', result.safeVault)
+const vault = await ethers.getContractAt('SavingsVault', result.vault)
 const listingFactory = JSON.parse(
   await readFile(path.join(directory, 'latest.json'), 'utf8')
 )

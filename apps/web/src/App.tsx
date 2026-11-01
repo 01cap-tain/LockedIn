@@ -189,12 +189,10 @@ const routes: Array<{ id: AppRoute; label: string }> = [
   { id: "groups", label: "Group vaults" },
   { id: "vaults", label: "Create vault" },
   { id: "market", label: "Early withdrawal" },
-  { id: "rewards", label: "Rewards" },
   { id: "activity", label: "Transaction history" },
 ];
 
 const secondaryRoutes: Array<{ id: AppRoute; label: string }> = [
-  { id: "rewards", label: "Rewards" },
   { id: "activity", label: "Transaction history" },
   { id: "wallet", label: "Wallet & network" },
 ];
@@ -679,10 +677,9 @@ export function App() {
   });
   const [mode, setMode] = useState<"personal" | "group">("personal");
   const [creationStep, setCreationStep] = useState(0);
-  const [yieldMode, setYieldMode] = useState<"safe" | "earn">("safe");
+  const yieldMode = "safe" as const;
   const [createdVaultReceipt, setCreatedVaultReceipt] =
     useState<CreatedVaultReceipt | null>(null);
-  const [earnRiskAccepted, setEarnRiskAccepted] = useState(false);
   const [withdrawalNeedsRetry, setWithdrawalNeedsRetry] = useState(false);
   const [target, setTarget] = useState("");
   const [maturity, setMaturity] = useState(() => futureInput(30));
@@ -891,6 +888,16 @@ export function App() {
     [maturity, planContribution, planFrequency, planStartDate, preferredDays, target]
   );
   const hasContributionPlan = Number(planContribution) > 0;
+  const maturityTime = new Date(maturity).getTime();
+  const minimumMaturityTime = Date.now() + 7 * 86_400_000;
+  const maximumMaturityTime = Date.now() + 5 * 365 * 86_400_000;
+  const maturityValidationError = !Number.isFinite(maturityTime)
+    ? "Choose a valid maturity date."
+    : maturityTime < minimumMaturityTime
+      ? "The plan must run for at least 7 days."
+      : maturityTime > maximumMaturityTime
+        ? "The plan cannot run for more than 5 years."
+        : null;
   const creationStepTitles = mode === "group"
     ? ["Circle", "Shared rules", "Your goal", "Schedule", "Review"]
     : ["Goal", "Contribution", "Schedule", "Protection", "Review"];
@@ -904,13 +911,13 @@ export function App() {
       if (creationStep === 1) return true;
       if (creationStep === 2)
         return Number(target) > 0 && Number(planContribution) > 0;
-      if (creationStep === 3) return Boolean(estimatedMaturity);
-      return yieldMode !== "earn" || earnRiskAccepted;
+      if (creationStep === 3) return Boolean(estimatedMaturity) && !maturityValidationError;
+      return true;
     }
     if (creationStep === 1) return Number(planContribution) > 0;
-    if (creationStep === 2) return Boolean(estimatedMaturity);
-    if (creationStep === 3) return yieldMode !== "earn" || earnRiskAccepted;
-    return yieldMode !== "earn" || earnRiskAccepted;
+    if (creationStep === 2) return Boolean(estimatedMaturity) && !maturityValidationError;
+    if (creationStep === 3) return true;
+    return true;
   })();
   const joinPlanProjection = useMemo(
     () => calculatePlanProjection({
@@ -954,6 +961,10 @@ export function App() {
       )
     : 1;
   const depositAmountNumber = Number(depositAmount);
+  const depositEmergencyPreview = snapshot && Number.isFinite(depositAmountNumber)
+    ? depositAmountNumber * snapshot.emergencyPercent / 100
+    : 0;
+  const depositLockedPreview = Math.max(0, depositAmountNumber - depositEmergencyPreview);
   const depositAmountError = snapshot && depositAmount !== ""
     ? !Number.isFinite(depositAmountNumber) || depositAmountNumber <= 0
       ? "Enter an amount greater than zero."
@@ -1861,11 +1872,10 @@ export function App() {
       setTransaction({ status: "error", message: "Enter a group name before creating the circle." });
       return;
     }
-    if (yieldMode === "earn" && !earnRiskAccepted) {
+    if (yieldMode !== "safe") {
       setTransaction({
         status: "error",
-        message:
-          "Acknowledge the variable-yield risks before creating an Earn vault.",
+        message: "Earn is not available in Safe-only V1.",
       });
       return;
     }
@@ -2180,7 +2190,7 @@ export function App() {
                   <span className="onboarding-kicker">Your protection</span>
                   <h2 id="onboarding-title">Part stays available. Part stays locked.</h2>
                   <p>Each contribution is split automatically. Your 10%–15% emergency amount remains available, while the rest follows your maturity date.</p>
-                  <div className="onboarding-example"><LockKeyhole aria-hidden="true" size={16} /><span>Safe earns no yield. Earn uses the testnet yield adapter and carries additional risk.</span></div>
+                  <div className="onboarding-example"><LockKeyhole aria-hidden="true" size={16} /><span>Safe-only V1 keeps locked savings inside the vault and does not offer yield or reward campaigns.</span></div>
                 </>
               )}
               {onboardingStep === 2 && (
@@ -2777,31 +2787,7 @@ export function App() {
                 </div>
               </fieldset>}
 
-              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><LockKeyhole aria-hidden="true" size={15} />Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p></div><div className="mode-picker embedded">
-                <button
-                  className={yieldMode === "safe" ? "active" : ""}
-                  onClick={() => {
-                    setYieldMode("safe");
-                    setEarnRiskAccepted(false);
-                  }}
-                  type="button"
-                >
-                  <strong>Safe</strong>
-                  <span>Held in this vault. No yield.</span>
-                </button>
-                <button
-                  className={yieldMode === "earn" ? "active" : ""}
-                  onClick={() => setYieldMode("earn")}
-                  type="button"
-                >
-                  <strong>Earn</strong>
-                  <span>
-                    {usesMockYieldAdapter
-                      ? "Uses a simulated testnet yield adapter. Not Aave."
-                      : "Supplied to Aave V3. Variable yield and protocol risk."}
-                  </span>
-                </button>
-              </div></fieldset>}
+              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><LockKeyhole aria-hidden="true" size={15} />Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p><p><strong>Safe-only:</strong> locked savings stay in the vault. V1 has no yield or reward campaign.</p></div></fieldset>}
 
               {creationStep === (mode === "group" ? 2 : 1) && <fieldset className="creation-section full-width progressive-section">
                 <legend><CircleDollarSign aria-hidden="true" size={15} />{mode === "group" ? "Your savings goal" : "Contribution amount"}</legend>
@@ -2899,7 +2885,7 @@ export function App() {
               <p className="frequency-explainer full-width">
                 {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
               </p>
-              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleDateString() : "Choose a contribution schedule"}</strong><small>Calculated from your goal, contribution amount and this schedule.</small></div></div>
+              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Allowed range: 7 days to 5 years.`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -2932,32 +2918,12 @@ export function App() {
 
               {creationStep === (mode === "group" ? 4 : 3) && <fieldset className="creation-section full-width progressive-section">
                 <legend>{mode === "group" ? <CircleCheckBig aria-hidden="true" size={15} /> : <LockKeyhole aria-hidden="true" size={15} />}{mode === "group" ? "Review and create" : "Vault protection"}</legend>
-                {mode === "personal" && <div className="mode-picker embedded">
-                  <button className={yieldMode === "safe" ? "active" : ""} onClick={() => { setYieldMode("safe"); setEarnRiskAccepted(false); }} type="button"><strong>Safe</strong><span>Locked funds remain in the vault and earn no yield.</span></button>
-                  <button className={yieldMode === "earn" ? "active" : ""} onClick={() => setYieldMode("earn")} type="button"><strong>Earn</strong><span>{usesMockYieldAdapter ? "Uses the testnet mock adapter." : "Supplied to Aave V3 with variable, non-guaranteed yield."}</span></button>
-                </div>}
+                {mode === "personal" && <div className="mode-picker embedded"><div className="active"><strong>Safe-only V1</strong><span>Locked funds remain in the vault. No yield or reward campaign is active.</span></div></div>}
                 {mode === "personal" && <label className="range-field"><span>Emergency allocation <strong>{emergencyPercent}%</strong></span><input max="15" min="10" onChange={(event) => setEmergencyPercent(Number(event.target.value))} type="range" value={emergencyPercent} /><small>This portion remains available anytime. The remainder is locked until maturity or transferred through an early exit.</small></label>}
-                <TrustSummary earn={yieldMode === "earn"} />
-              {yieldMode === "earn" && (
-                <label className="risk-ack full-width">
-                  <input
-                    checked={earnRiskAccepted}
-                    onChange={(event) =>
-                      setEarnRiskAccepted(event.target.checked)
-                    }
-                    required
-                    type="checkbox"
-                  />
-                  <span>
-                    {usesMockYieldAdapter
-                      ? "I understand this test deployment simulates yield and does not supply funds to Aave. Emergency funds remain in the vault."
-                      : "I understand Aave yield is variable and not guaranteed, withdrawals can temporarily fail, and smart-contract or protocol losses are possible. Emergency funds remain outside Aave."}
-                  </span>
-                </label>
-              )}
+                <TrustSummary />
                 {mode === "group" && <dl className="creation-review">
                   <div><dt>Circle</dt><dd>{vaultName || "Name required"} · {groupVisibility}</dd></div>
-                  <div><dt>Shared rules</dt><dd>{yieldMode} · matures {new Date(maturity).toLocaleDateString()} · max {maxParticipants}</dd></div>
+                  <div><dt>Shared rules</dt><dd>Safe · matures {new Date(maturity).toLocaleString()} · max {maxParticipants}</dd></div>
                   <div><dt>Your position</dt><dd>{target} mUSDT · {planContribution || "Flexible"} {planFrequency}</dd></div>
                   <div><dt>Emergency allocation</dt><dd>{emergencyPercent}% emergency · {100 - emergencyPercent}% locked</dd></div>
                   <div><dt>Expected completion</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
@@ -2968,9 +2934,9 @@ export function App() {
                 <dl className="creation-review">
                   <div><dt>Goal</dt><dd>{target} mUSDT{vaultName ? ` for ${vaultName}` : ""}</dd></div>
                   <div><dt>Schedule</dt><dd>{planContribution || "Flexible"} mUSDT · {planFrequency}</dd></div>
-                  <div><dt>Maturity</dt><dd>{new Date(maturity).toLocaleDateString()}</dd></div>
+                  <div><dt>Maturity</dt><dd>{new Date(maturity).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</dd></div>
                   <div><dt>Emergency allocation</dt><dd>{emergencyPercent}% emergency · {100 - emergencyPercent}% locked</dd></div>
-                  <div><dt>Mode</dt><dd>{yieldMode === "earn" ? "Earn · variable simulated yield" : "Safe · no yield"}</dd></div>
+                  <div><dt>Mode</dt><dd>Safe · no yield or reward campaign</dd></div>
                   <div><dt>Estimated outcome</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
                 </dl>
               </fieldset>}
@@ -2995,8 +2961,8 @@ export function App() {
                 className="primary full-width wizard-create"
                 disabled={
                   riskActionsDisabled ||
-                  (mode === "group" && Boolean(groupCreationBlockReason)) ||
-                  (yieldMode === "earn" && !earnRiskAccepted)
+                  Boolean(maturityValidationError) ||
+                  (mode === "group" && Boolean(groupCreationBlockReason))
                 }
                 type="submit"
               >
@@ -3562,7 +3528,13 @@ export function App() {
                             requireSession().signer,
                             snapshot.address,
                             snapshot.positionId,
-                            depositAmount
+                            depositAmount,
+                            (stage) => setTransaction({
+                              status: "pending",
+                              message: stage === "approval"
+                                ? "Approve this exact contribution in your wallet."
+                                : "Approval confirmed. Now confirm the savings transaction.",
+                            })
                           ),
                         "Deposit confirmed.",
                         {
@@ -3590,7 +3562,8 @@ export function App() {
                       />
                       <QuickAmounts values={[5, 10, 20]} unit="USDT" value={depositAmount} onSelect={setDepositAmount} />
                       {depositAmountError && <small className="field-error" id="deposit-amount-error">{depositAmountError}</small>}
-                      {!depositAmountError && <small className="field-hint">Up to {amountLabel(remainingGoal)} mUSDT remains toward your goal.</small>}
+                      {!depositAmountError && depositAmountNumber > 0 && <small className="field-hint">Review: {amountLabel(depositEmergencyPreview)} mUSDT stays available and {amountLabel(depositLockedPreview)} mUSDT is locked until maturity or an early exit.</small>}
+                      {!depositAmountError && depositAmountNumber <= 0 && <small className="field-hint">Up to {amountLabel(remainingGoal)} mUSDT remains toward your goal.</small>}
                     </label>
                     <button className="primary" disabled={riskActionsDisabled || Boolean(depositAmountError) || remainingGoal <= 0}>
                       Deposit
@@ -4332,17 +4305,25 @@ export function App() {
                     "Listing cancelled. You can relist this position."
                   )
                 }
-                onFund={() =>
+                onFund={() => {
+                  if (!window.confirm("Fund this exit at the live contract price? The locked savings claim transfers permanently after settlement; the saver keeps their emergency funds.")) return;
                   void transactAndRefresh(
                     "Funding listing at the live system price…",
                     () =>
                       fundExitListing(
                         requireSession().signer,
-                        selectedListing.id
+                        selectedListing.id,
+                        undefined,
+                        (stage) => setTransaction({
+                          status: "pending",
+                          message: stage === "approval"
+                            ? "Approve the exact exit payment in your wallet."
+                            : "Approval confirmed. Now confirm the irreversible claim purchase.",
+                        })
                       ),
                     "Listing funded and locked claim transferred."
-                  )
-                }
+                  );
+                }}
                 />
                 {purchaseAsset === "nim" &&
                 selectedListing.seller.toLowerCase() !== connectedAddress &&
@@ -5223,7 +5204,9 @@ function GroupExitPanel({
                     <button
                       className="primary"
                       disabled={disabled || !meetsApprovalThreshold}
-                      onClick={() => onApprove(request.id)}
+                      onClick={() => {
+                        if (window.confirm("Approve this member's cooperative exit? Your approval is recorded on-chain and may be revoked only while the request is pending.")) onApprove(request.id);
+                      }}
                       type="button"
                     >
                       Approve

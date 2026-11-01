@@ -122,10 +122,10 @@ describe('LockedIn Circle Phase 1', function () {
     expect(position.lockedBalance).to.equal(0n)
     expect(position.lockedWithdrawn).to.equal(true)
     expect(await vault.goalComplete(0)).to.equal(false)
-    expect(await (await ethers.getContractAt('RewardPool', await factory.rewardPool())).claimable(await creator.getAddress())).to.equal(0n)
+    expect(await vault.rewardsReady()).to.equal(false)
   })
 
-  it('activates equal group rewards only after every member completes', async function () {
+  it('keeps rewards disabled even after every group member completes', async function () {
     const groupMembers = [creator, memberTwo, memberThree, memberFour]
     const vault = await createActivatedGroup(
       ethers, factory, groupMembers, groupMembers.map(() => 100n * UNIT),
@@ -136,22 +136,15 @@ describe('LockedIn Circle Phase 1', function () {
       if (index === 0) await vault.deposit(index, 100n * UNIT)
     }
 
-    const pool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
-    await token.mint(await outsider.getAddress(), 20n * UNIT)
-    await token.connect(outsider).approve(await pool.getAddress(), 20n * UNIT)
-    await pool.connect(outsider).fundVault(await vault.getAddress(), 20n * UNIT)
-    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsNotReady')
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
 
     for (let index = 1; index < groupMembers.length; index += 1) {
       await vault.connect(groupMembers[index]).deposit(index, 100n * UNIT)
     }
     await networkHelpers.time.increaseTo(maturity)
-    await vault.activateRewards()
-    expect(await pool.claimable(await creator.getAddress())).to.equal(5n * UNIT)
-    expect(await pool.claimable(await memberTwo.getAddress())).to.equal(5n * UNIT)
-    expect(await pool.rewardEligible(await vault.getAddress(), await creator.getAddress())).to.equal(true)
-    await expect(pool.connect(outsider).activateRewards()).to.be.revertedWithCustomError(pool, 'VaultNotRegistered')
-    await expect(vault.activateRewards()).to.revert(ethers)
+    expect(await vault.rewardsReady()).to.equal(false)
+    expect(await vault.rewardEligibleCount()).to.equal(0n)
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
   })
 
   it('rejects unauthorized emergency and locked withdrawals', async function () {

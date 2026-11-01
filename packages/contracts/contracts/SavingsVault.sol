@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {RewardPool} from "./RewardPool.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 import {SafetyController} from "./SafetyController.sol";
 
@@ -18,7 +17,7 @@ interface IPublicGroupFactory {
 }
 
 /// @notice Non-upgradeable savings vault separating emergency ownership from a transferable locked claim.
-/// @dev Safe mode holds locked assets locally; Earn mode represents them with adapter shares.
+/// @dev V1 is Safe-only: locked assets remain in this contract and no reward campaign is active.
 contract SavingsVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -28,6 +27,8 @@ contract SavingsVault is ReentrancyGuard {
     uint64 public constant GROUP_EXIT_AUTHORIZATION_LIFETIME = 24 hours;
     uint16 public constant MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS = 2_500;
     uint256 public constant MIN_GROUP_SIZE = 4;
+    uint64 public constant MIN_MATURITY_DURATION = 7 days;
+    uint64 public constant MAX_MATURITY_DURATION = 5 * 365 days;
 
     enum VaultMode { Safe, Earn }
     enum MemberStatus { Active, CooperativeExit, MarketExit, Matured }
@@ -67,7 +68,8 @@ contract SavingsVault is ReentrancyGuard {
     error InsufficientEmergencyBalance();
     error NotMatured();
     error NothingToWithdraw();
-    error RewardsNotReady();
+    error RewardsDisabled();
+    error EarnDisabled();
     error PositionListed();
     error GroupOnly();
     error GroupNotActive();
@@ -89,7 +91,6 @@ contract SavingsVault is ReentrancyGuard {
     error PublicJoiningUnavailable();
 
     IERC20 public immutable asset;
-    RewardPool public immutable rewardPool;
     uint64 public immutable maturity;
     uint64 public immutable createdAt;
     bool public immutable isGroup;
@@ -123,7 +124,7 @@ contract SavingsVault is ReentrancyGuard {
     uint256 public nextGroupExitRequestId;
     uint256 public totalEmergencyLiability;
     uint256 public totalLockedLiability;
-    uint256 public totalLockedShares;
+    uint256 public constant totalLockedShares = 0;
 
     event Deposited(
         uint256 indexed positionId,
@@ -172,14 +173,12 @@ contract SavingsVault is ReentrancyGuard {
 
     constructor(
         IERC20 asset_,
-        RewardPool rewardPool_,
         uint64 maturity_,
         bool isGroup_,
         address groupCreator_,
         address earlyExitMarket_,
         SafetyController safetyController_,
         VaultMode mode_,
-        IYieldAdapter yieldAdapter_,
         address[] memory members_,
         uint256[] memory targets_,
         uint16[] memory emergencyBps_,
@@ -193,22 +192,26 @@ contract SavingsVault is ReentrancyGuard {
     ) {
         uint256 count = members_.length;
         if (
-            address(asset_) == address(0) || address(rewardPool_) == address(0) ||
-            groupCreator_ == address(0) || address(safetyController_) == address(0) || factory_ == address(0) ||
-            maturity_ <= block.timestamp || count == 0 || count != targets_.length ||
+            address(asset_) == address(0) || address(asset_).code.length == 0 ||
+            groupCreator_ == address(0) ||
+            earlyExitMarket_ == address(0) || earlyExitMarket_.code.length == 0 ||
+            address(safetyController_) == address(0) || address(safetyController_).code.length == 0 ||
+            factory_ == address(0) || factory_.code.length == 0 ||
+            maturity_ <= block.timestamp ||
+            uint256(maturity_) < block.timestamp + MIN_MATURITY_DURATION ||
+            uint256(maturity_) > block.timestamp + MAX_MATURITY_DURATION ||
+            count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
             (isGroup_ && !openEnrollment_ && count < MIN_GROUP_SIZE) ||
             (openEnrollment_ && (!isGroup_ || count != 1 || maxMemberCount_ < MIN_GROUP_SIZE ||
                 maxMemberCount_ < count ||
                 enrollmentDeadline_ <= block.timestamp || enrollmentDeadline_ >= maturity_ ||
                 publicMemberTarget_ != targets_[0] || publicEmergencyBps_ != emergencyBps_[0])) ||
-            (publicJoining_ && !openEnrollment_) ||
-            (mode_ == VaultMode.Safe && address(yieldAdapter_) != address(0)) ||
-            (mode_ == VaultMode.Earn && address(yieldAdapter_) == address(0))
+            (publicJoining_ && !openEnrollment_)
         ) revert InvalidConfiguration();
+        if (mode_ != VaultMode.Safe) revert EarnDisabled();
 
         asset = asset_;
-        rewardPool = rewardPool_;
         maturity = maturity_;
         createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
@@ -216,14 +219,14 @@ contract SavingsVault is ReentrancyGuard {
         earlyExitMarket = earlyExitMarket_;
         safetyController = safetyController_;
         mode = mode_;
-        yieldAdapter = yieldAdapter_;
+        yieldAdapter = IYieldAdapter(address(0));
         factory = factory_;
         publicJoining = publicJoining_;
         openEnrollment = openEnrollment_;
         maxMemberCount = openEnrollment_ ? maxMemberCount_ : uint32(count);
         enrollmentDeadline = openEnrollment_ ? enrollmentDeadline_ : 0;
 
-        bool creatorIncluded;
+        bool creatorIncluded = false;
         for (uint256 i; i < count; ++i) {
             if (
                 members_[i] == address(0) || targets_[i] == 0 ||
@@ -383,7 +386,7 @@ contract SavingsVault is ReentrancyGuard {
 
         requestId = nextGroupExitRequestId++;
         uint64 expiresAt = uint64(block.timestamp) + GROUP_EXIT_REQUEST_LIFETIME;
-        uint32 requiredApprovals;
+        uint32 requiredApprovals = 0;
         for (uint256 i; i < _positions.length; ++i) {
             address member = _positions[i].member;
             if (memberStatus[i] == MemberStatus.Active && member != msg.sender) {
@@ -453,7 +456,12 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function cancelGroupExit(uint256 requestId) external {
-        GroupExitRequest storage request = _pendingGroupExitRequest(requestId);
+        GroupExitRequest storage request = groupExitRequests[requestId];
+        if (
+            request.status != GroupExitRequestStatus.Pending &&
+            request.status != GroupExitRequestStatus.Authorized
+        ) revert GroupExitUnavailable();
+        if (_requestHasExpired(request)) revert GroupExitExpiredRequest();
         if (msg.sender != request.requester) revert MemberOnly();
         request.status = GroupExitRequestStatus.Cancelled;
         emit GroupExitCancelled(requestId, msg.sender);
@@ -488,28 +496,18 @@ contract SavingsVault is ReentrancyGuard {
         ) revert GroupExitUnavailable();
 
         uint256 principal = stored.lockedBalance;
-        uint256 shares = stored.lockedShares;
         stored.lockedBalance = 0;
         stored.lockedWithdrawn = true;
         totalLockedLiability -= principal;
-        if (mode == VaultMode.Earn) {
-            stored.lockedShares = 0;
-            totalLockedShares -= shares;
-        }
         rewardDisqualified[positionId] = true;
         request.status = GroupExitRequestStatus.Completed;
         _setMemberStatus(positionId, MemberStatus.CooperativeExit);
         safetyController.recordWithdrawal(principal);
 
-        // All accounting effects precede the external interaction. Any adapter
-        // or token failure reverts the entire transaction and preserves retryability.
-        uint256 amount;
-        if (mode == VaultMode.Earn) {
-            amount = yieldAdapter.withdraw(shares, msg.sender);
-        } else {
-            amount = principal;
-            _transferOutExact(msg.sender, amount);
-        }
+        // All accounting effects precede the external interaction. A failed token
+        // transfer reverts the entire transaction and preserves retryability.
+        uint256 amount = principal;
+        _transferOutExact(msg.sender, amount);
         _assertSolvent();
 
         emit RewardEligibilityRevoked(positionId, stored.member);
@@ -594,16 +592,6 @@ contract SavingsVault is ReentrancyGuard {
         asset.safeTransferFrom(msg.sender, address(this), amount);
         if (asset.balanceOf(address(this)) != balanceBefore + amount) revert TokenAccountingMismatch();
 
-        uint256 shares;
-        if (mode == VaultMode.Earn) {
-            // The external adapter call happens before local shares are committed. Any Aave or
-            // token failure reverts this transaction, including the inbound member transfer.
-            asset.forceApprove(address(yieldAdapter), lockedAmount);
-            shares = yieldAdapter.deposit(lockedAmount);
-            asset.forceApprove(address(yieldAdapter), 0);
-            stored.lockedShares += shares;
-            totalLockedShares += shares;
-        }
         stored.deposited += amount;
         stored.emergencyBalance += emergencyAmount;
         stored.lockedBalance += lockedAmount;
@@ -637,27 +625,17 @@ contract SavingsVault is ReentrancyGuard {
 
         uint256 principal = stored.lockedBalance;
         if (principal == 0 || stored.lockedWithdrawn) revert NothingToWithdraw();
-        uint256 shares = stored.lockedShares;
         stored.lockedBalance = 0;
         stored.lockedWithdrawn = true;
         totalLockedLiability -= principal;
-        if (mode == VaultMode.Earn) {
-            stored.lockedShares = 0;
-            totalLockedShares -= shares;
-        }
         if (memberStatus[positionId] == MemberStatus.Active) {
             _setMemberStatus(positionId, MemberStatus.Matured);
         }
         safetyController.recordWithdrawal(principal);
 
-        // Reverts roll these effects back if redemption or transfer fails.
-        uint256 amount;
-        if (mode == VaultMode.Earn) {
-            amount = yieldAdapter.withdraw(shares, msg.sender);
-        } else {
-            amount = principal;
-            _transferOutExact(msg.sender, amount);
-        }
+        // Reverts roll these effects back if the transfer fails.
+        uint256 amount = principal;
+        _transferOutExact(msg.sender, amount);
         _assertSolvent();
         emit LockedWithdrawn(positionId, msg.sender, amount);
     }
@@ -688,61 +666,35 @@ contract SavingsVault is ReentrancyGuard {
     function positionValue(uint256 positionId) public view returns (uint256) {
         Position storage stored = _position(positionId);
         if (stored.lockedWithdrawn) return 0;
-        if (mode == VaultMode.Safe) return stored.lockedBalance;
-        return yieldAdapter.convertToAssets(stored.lockedShares);
+        return stored.lockedBalance;
     }
 
     function accruedYield(uint256 positionId) external view returns (uint256) {
-        Position storage stored = _position(positionId);
-        uint256 current = positionValue(positionId);
-        return current > stored.lockedBalance ? current - stored.lockedBalance : 0;
+        _position(positionId);
+        return 0;
     }
 
-    function currentLiquidityRate() external view returns (uint256) {
-        return mode == VaultMode.Earn ? yieldAdapter.currentLiquidityRate() : 0;
+    function currentLiquidityRate() external pure returns (uint256) {
+        return 0;
     }
 
-    function rewardsReady() public view returns (bool) {
-        if (isGroup && !groupIsActive()) return false;
-        if (block.timestamp < maturity) return false;
-        if (isGroup && _rewardEligibleCount() < MIN_GROUP_SIZE) return false;
-        uint256 count = _positions.length;
-        bool hasEligibleMember;
-        for (uint256 i; i < count; ++i) {
-            if (!_rewardEligible(i)) continue;
-            hasEligibleMember = true;
-            if (!goalComplete(i)) return false;
-        }
-        return hasEligibleMember;
+    function rewardsReady() public pure returns (bool) {
+        return false;
     }
 
-    function rewardEligibleCount() external view returns (uint256 eligible) {
-        return _rewardEligibleCount();
+    function rewardEligibleCount() external pure returns (uint256) {
+        return 0;
     }
 
-    function rewardRecipientAt(uint256 eligibleIndex) external view returns (address) {
-        uint256 count = _positions.length;
-        uint256 current;
-        for (uint256 i; i < count; ++i) {
-            if (!_rewardEligible(i)) continue;
-            if (current == eligibleIndex) return _positions[i].member;
-            ++current;
-        }
-        revert UnknownPosition();
+    function rewardRecipientAt(uint256) external pure returns (address) {
+        revert RewardsDisabled();
     }
 
     /// @notice Returns the immutable target paired with an eligible reward recipient.
     /// @dev Protocol-revenue weight is capped at target, so yield and excess deposits
     /// cannot increase a group's epoch allocation.
-    function rewardTargetAt(uint256 eligibleIndex) external view returns (uint256) {
-        uint256 count = _positions.length;
-        uint256 current;
-        for (uint256 i; i < count; ++i) {
-            if (!_rewardEligible(i)) continue;
-            if (current == eligibleIndex) return _positions[i].target;
-            ++current;
-        }
-        revert UnknownPosition();
+    function rewardTargetAt(uint256) external pure returns (uint256) {
+        revert RewardsDisabled();
     }
 
     function marketPositionData(uint256 positionId)
@@ -770,9 +722,8 @@ contract SavingsVault is ReentrancyGuard {
         );
     }
 
-    function activateRewards() external {
-        if (!rewardsReady()) revert RewardsNotReady();
-        rewardPool.activateRewards();
+    function activateRewards() external pure {
+        revert RewardsDisabled();
     }
 
     function totalPrincipalLiability() external view returns (uint256) {
@@ -780,11 +731,7 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function isSolvent() external view returns (bool) {
-        if (mode == VaultMode.Safe) {
-            return asset.balanceOf(address(this)) >= totalEmergencyLiability + totalLockedLiability;
-        }
-        return asset.balanceOf(address(this)) >= totalEmergencyLiability
-            && yieldAdapter.totalShares() == totalLockedShares;
+        return asset.balanceOf(address(this)) >= totalEmergencyLiability + totalLockedLiability;
     }
 
     function _transferOutExact(address recipient, uint256 amount) internal {
@@ -800,13 +747,8 @@ contract SavingsVault is ReentrancyGuard {
     }
 
     function _assertSolvent() internal view {
-        uint256 requiredVaultBalance = mode == VaultMode.Safe
-            ? totalEmergencyLiability + totalLockedLiability
-            : totalEmergencyLiability;
-        if (
-            asset.balanceOf(address(this)) < requiredVaultBalance ||
-            (mode == VaultMode.Earn && yieldAdapter.totalShares() != totalLockedShares)
-        ) {
+        uint256 requiredVaultBalance = totalEmergencyLiability + totalLockedLiability;
+        if (asset.balanceOf(address(this)) < requiredVaultBalance) {
             revert Insolvent();
         }
     }
@@ -900,19 +842,6 @@ contract SavingsVault is ReentrancyGuard {
             if (memberStatus[i] == MemberStatus.Active && !goalComplete(i)) return false;
         }
         return true;
-    }
-
-    function _rewardEligibleCount() internal view returns (uint256 eligible) {
-        uint256 count = _positions.length;
-        for (uint256 i; i < count; ++i) {
-            if (_rewardEligible(i)) ++eligible;
-        }
-    }
-
-    function _rewardEligible(uint256 positionId) internal view returns (bool) {
-        MemberStatus status = memberStatus[positionId];
-        return !rewardDisqualified[positionId] &&
-            (status == MemberStatus.Active || status == MemberStatus.Matured);
     }
 
     function _setMemberStatus(uint256 positionId, MemberStatus nextStatus) internal {

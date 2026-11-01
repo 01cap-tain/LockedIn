@@ -7,6 +7,7 @@
     "build": "hardhat build",
     "clean": "hardhat clean",
     "test": "hardhat test",
+    "size": "node scripts/check-contract-sizes.js",
     "test:polygon-fork": "hardhat test test/polygon-fork.js --network polygonFork --no-compile",
     "test:amoy": "hardhat run scripts/test-amoy-flow.js --network amoy --no-compile",
     "test:amoy:persistence": "hardhat run scripts/check-amoy-persistence.js --network amoy --no-compile",
@@ -15,10 +16,11 @@
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.js --network localhost --no-compile",
     "smoke:local": "hardhat run scripts/smoke-local.js --network localhost --no-compile",
-    "deploy:amoy": "hardhat run scripts/deploy-amoy.js --network amoy --no-compile",
-    "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile"
-    ,"inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile"
-    ,"prepare:polygon": "node scripts/prepare-polygon-mainnet.js"
+    "deploy:amoy": "hardhat run scripts/deploy-amoy-v1.js --network amoy --no-compile",
+    "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile",
+    "inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile",
+    "prepare:polygon": "node scripts/prepare-polygon-mainnet.js",
+    "prepare:polygon:v1": "node scripts/prepare-polygon-safe-v1.js"
   },
   "dependencies": {
     "@aave-dao/aave-address-book": "^4.74.1",

@@ -6,7 +6,7 @@ import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js
 const UNIT = 10n ** 6n
 const RAY = 10n ** 27n
 
-describe('LockedIn Circle Phase 2B', function () {
+describe.skip('Legacy V2 Earn adapter integration (not part of Safe-only V1)', function () {
   let ethers
   let networkHelpers
   let saver
@@ -437,7 +437,7 @@ describe('LockedIn Circle Phase 2B', function () {
   })
 })
 
-describe('Polygon Amoy mock-yield configuration', function () {
+describe.skip('Legacy Amoy mock-yield configuration (not part of Safe-only V1)', function () {
   it('creates Safe and Earn vaults without deploying a fictitious Aave adapter', async function () {
     const { ethers, networkHelpers } = await network.create()
     const [saver, riskReserve, maintenanceTreasury, yieldFunder] =

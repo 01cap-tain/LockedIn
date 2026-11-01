@@ -18,7 +18,6 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
   let maintenanceTreasury
   let token
   let factory
-  let rewardPool
   let market
   let maturity
 
@@ -45,7 +44,6 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       31_337,
       ethers.ZeroAddress,
     ], await riskReserve.getAddress()))
-    rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
     maturity = BigInt(await networkHelpers.time.latest()) + 30n * 24n * 60n * 60n
   })
@@ -119,7 +117,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect((await vault.position(0)).deposited).to.equal(100n * UNIT)
   })
 
-  it('revokes reward eligibility on sale while preserving the remaining active group campaign', async function () {
+  it('revokes the compatibility eligibility marker while V1 rewards remain disabled', async function () {
     const groupMembers = [saver, memberTwo, memberThree, memberFour, memberFive]
     const vault = await createActivatedGroup(
       ethers, factory, groupMembers, groupMembers.map(() => 100n * UNIT),
@@ -130,20 +128,14 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await vault.connect(member).deposit(index, 100n * UNIT)
     }
 
-    await fundAndApprove(outsider, await rewardPool.getAddress(), 20n * UNIT)
-    await rewardPool.connect(outsider).fundVault(await vault.getAddress(), 20n * UNIT)
     await sellPosition(vault)
 
     expect(await vault.rewardDisqualified(0)).to.equal(true)
-    expect(await vault.rewardEligibleCount()).to.equal(4n)
+    expect(await vault.rewardEligibleCount()).to.equal(0n)
     expect(await vault.rewardsReady()).to.equal(false)
     await networkHelpers.time.increaseTo(maturity)
-    expect(await vault.rewardsReady()).to.equal(true)
-    await vault.activateRewards()
-    expect(await rewardPool.rewardEligible(await vault.getAddress(), await saver.getAddress())).to.equal(false)
-    expect(await rewardPool.claimable(await saver.getAddress())).to.equal(0n)
-    expect(await rewardPool.rewardEligible(await vault.getAddress(), await memberTwo.getAddress())).to.equal(true)
-    expect(await rewardPool.claimable(await memberTwo.getAddress())).to.equal(5n * UNIT)
+    expect(await vault.rewardsReady()).to.equal(false)
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
   })
 
   it('does not let emergency withdrawals change reward eligibility or goal completion', async function () {
@@ -154,45 +146,30 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await vault.goalComplete(0)).to.equal(true)
     expect(await vault.rewardDisqualified(0)).to.equal(false)
     await networkHelpers.time.increaseTo(maturity)
-    expect(await vault.rewardsReady()).to.equal(true)
+    expect(await vault.rewardsReady()).to.equal(false)
   })
 
-  it('keeps incomplete active members ineligible and unable to activate a campaign', async function () {
+  it('keeps reward campaigns unavailable before and after maturity', async function () {
     const vault = await personalVault(100n * UNIT)
     await fundAndApprove(saver, await vault.getAddress(), 50n * UNIT)
     await vault.deposit(0, 50n * UNIT)
-    await fundAndApprove(outsider, await rewardPool.getAddress(), 10n * UNIT)
-    await rewardPool.connect(outsider).fundVault(await vault.getAddress(), 10n * UNIT)
-    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsNotReady')
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
 
     await networkHelpers.time.increaseTo(maturity)
     await vault.withdrawLocked(0)
-    expect(await rewardPool.claimable(await saver.getAddress())).to.equal(0n)
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
   })
 
-  it('accounts for campaign, claim and protocol-revenue liabilities without exposing protocol revenue', async function () {
+  it('does not expose a V1 reward activation path', async function () {
     const vault = await personalVault(100n * UNIT)
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)
     await vault.deposit(0, 100n * UNIT)
-    await fundAndApprove(outsider, await rewardPool.getAddress(), 10n * UNIT)
-    await rewardPool.connect(outsider).fundVault(await vault.getAddress(), 10n * UNIT)
-    expect(await rewardPool.totalVaultBudgets()).to.equal(10n * UNIT)
-    expect(await rewardPool.totalLiability()).to.equal(10n * UNIT)
-    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsNotReady')
+    expect(await vault.rewardEligibleCount()).to.equal(0n)
+    await expect(vault.rewardRecipientAt(0)).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
+    await expect(vault.rewardTargetAt(0)).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
     await networkHelpers.time.increaseTo(maturity)
-    await vault.activateRewards()
-    expect(await rewardPool.totalVaultBudgets()).to.equal(0n)
-    expect(await rewardPool.totalClaimable()).to.equal(10n * UNIT)
-    await rewardPool.connect(saver).claim()
-    expect(await rewardPool.totalLiability()).to.equal(0n)
-
-    await token.mint(await outsider.getAddress(), UNIT)
-    await token.connect(outsider).approve(await rewardPool.getAddress(), UNIT)
-    await rewardPool.connect(outsider).receiveProtocolRevenue(UNIT)
-    expect(await rewardPool.protocolRevenue()).to.equal(UNIT)
-    expect(await rewardPool.totalLiability()).to.equal(UNIT)
-    await expect(rewardPool.connect(outsider).claim()).to.be.revertedWithCustomError(rewardPool, 'NothingToClaim')
-    expect(await rewardPool.isSolvent()).to.equal(true)
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
   })
 
   it('safely reverts funding after a provider revokes allowance', async function () {
@@ -212,20 +189,13 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await market.positionSold(await vault.getAddress(), 0)).to.equal(false)
   })
 
-  it('fuzzes fee rounding while preserving the complete 60/20/20 allocation', async function () {
+  it('fuzzes the 0.9% fee calculation while assigning the whole fee to maintenance', async function () {
     const values = [1n, 2n, 10n, 111n, 112n, 999n, UNIT, 17n * UNIT, 999_999n * UNIT]
     for (let discount = 450; discount <= 800; discount += 7) {
       for (const positionValue of values) {
         const receipt = await market.payoutFor(positionValue, discount)
         const fee = await market.feeFor(receipt)
-        const rewardShare = fee * 60n / 100n
-        const riskShare = fee * 20n / 100n
-        const maintenanceShare = fee - rewardShare - riskShare
-        expect(rewardShare + riskShare + maintenanceShare).to.equal(fee)
-        expect(maintenanceShare).to.be.gte(fee * 20n / 100n)
-        // Independent floor rounding of the 60% and 20% shares can leave at most
-        // two atomic units of dust, assigned deterministically to maintenance.
-        expect(maintenanceShare - fee * 20n / 100n).to.be.lte(2n)
+        expect(fee).to.equal(receipt * 90n / 10_000n)
       }
     }
   })
@@ -260,8 +230,6 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       expect(await market.positionSold(await vault.getAddress(), 0)).to.equal(true)
     }
 
-    expect(await token.balanceOf(await rewardPool.getAddress())).to.equal(await rewardPool.totalLiability())
-    expect(await rewardPool.isSolvent()).to.equal(true)
   })
 
   it('rejects wrong-decimal, fee-on-transfer and negatively rebasing accounting', async function () {
@@ -378,8 +346,8 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     await expect(
       deployFactory(ethers, [
         await token.getAddress(),
+        await riskReserve.getAddress(),
         ethers.ZeroAddress,
-        await maintenanceTreasury.getAddress(),
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
@@ -390,7 +358,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       deployFactory(ethers, [
         await token.getAddress(),
         await riskReserve.getAddress(),
-        await riskReserve.getAddress(),
+        await token.getAddress(),
         ethers.ZeroAddress,
         ethers.ZeroAddress,
         31_337,
@@ -408,10 +376,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await factory.asset()).to.equal(await token.getAddress())
     expect(await market.asset()).to.equal(await token.getAddress())
     expect(await market.factory()).to.equal(await factory.getAddress())
-    expect(await market.rewardPool()).to.equal(await rewardPool.getAddress())
-    expect(await market.riskReserve()).to.equal(await riskReserve.getAddress())
     expect(await market.maintenanceTreasury()).to.equal(await maintenanceTreasury.getAddress())
-    expect(await rewardPool.factory()).to.equal(await factory.getAddress())
 
     const vault = await personalVault()
     await fundAndApprove(saver, await vault.getAddress(), 100n * UNIT)

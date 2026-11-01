@@ -23,7 +23,6 @@ const actual = {
   deploymentId: await factory.deploymentId(),
   asset: await factory.asset(),
   market: await factory.earlyExitMarket(),
-  rewardPool: await factory.rewardPool(),
   safetyController: await factory.safetyController(),
   safetyFactory: await safety.factory(),
 };
@@ -33,7 +32,6 @@ const expected = {
   deploymentId: manifest.deploymentId,
   asset: manifest.contracts.mockUsdt.address,
   market: manifest.contracts.earlyExitMarket.address,
-  rewardPool: manifest.contracts.rewardPool.address,
   safetyController: manifest.contracts.safetyController.address,
   safetyFactory: manifest.contracts.vaultFactory.address,
 };

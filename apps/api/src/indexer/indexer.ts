@@ -49,7 +49,8 @@ export class BlockchainIndexer {
     })
     this.coreKinds.set(lower(config.manifest.contracts.vaultFactory.address), 'factory')
     this.coreKinds.set(lower(config.manifest.contracts.earlyExitMarket.address), 'market')
-    this.coreKinds.set(lower(config.manifest.contracts.rewardPool.address), 'reward')
+    const rewardPool = config.manifest.contracts.rewardPool
+    if (rewardPool) this.coreKinds.set(lower(rewardPool.address), 'reward')
     const safety = config.manifest.contracts.safetyController
     if (safety) this.coreKinds.set(lower(safety.address), 'safety')
   }
@@ -135,8 +136,16 @@ export class BlockchainIndexer {
   }
 
   async status(): Promise<IndexerStatus> {
-    const [cursor, latest] = await Promise.all([this.loadCursor(), this.provider.getBlockNumber()])
+    const [cursor, latest, failures] = await Promise.all([
+      this.loadCursor(),
+      this.provider.getBlockNumber(),
+      this.pool.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM indexer_errors WHERE chain_id = $1 AND deployment_id = $2',
+        [this.config.manifest.chainId, this.config.manifest.deploymentId],
+      ),
+    ])
     return {
+      rpcStatus: 'ok',
       chainId: this.config.manifest.chainId,
       deploymentId: this.config.manifest.deploymentId,
       protocolVersion: this.config.manifest.protocolVersion,
@@ -149,6 +158,7 @@ export class BlockchainIndexer {
       lag: Math.max(0, latest - this.config.confirmationDepth - cursor.blockNumber),
       lastError: cursor.lastError,
       lastErrorAt: cursor.lastErrorAt,
+      failedEventProcessingCount: Number(failures.rows[0]?.count ?? 0),
     }
   }
 
@@ -323,8 +333,10 @@ export class BlockchainIndexer {
       }
     }
     if (event.eventName === 'ProtocolGroupAllocated') {
+      const rewardPool = this.config.manifest.contracts.rewardPool
+      if (!rewardPool) return
       const reward = new Contract(
-        this.config.manifest.contracts.rewardPool.address,
+        rewardPool.address,
         rewardReadAbi,
         this.provider,
       )

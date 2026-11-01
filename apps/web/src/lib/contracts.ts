@@ -29,7 +29,6 @@ const factoryAbi = [
   "function isVault(address vault) view returns (bool)",
   "function groupName(address vault) view returns (string)",
   "function earlyExitMarket() view returns (address)",
-  "function rewardPool() view returns (address)",
   "function safetyController() view returns (address)",
   "event VaultCreated(address indexed vault,address indexed creator,bool indexed isGroup,uint8 mode,address yieldAdapter,uint64 maturity)",
 ] as const;
@@ -349,7 +348,6 @@ export interface DeploymentVerification {
   chainId: bigint;
   asset: string;
   market: string;
-  rewardPool: string;
   safetyController: string;
   paused: boolean;
 }
@@ -377,7 +375,6 @@ export function assertDeploymentMatches(
   mismatch("deployment ID", actual.deploymentId, expected.deploymentId);
   mismatch("asset", actual.asset, expected.asset);
   mismatch("market", actual.market, expected.market);
-  mismatch("reward pool", actual.rewardPool, expected.rewardPool);
   mismatch("safety controller", actual.safetyController, expected.safetyController);
 }
 
@@ -621,14 +618,13 @@ async function verifyDeploymentOnce(
   const network = await provider.getNetwork();
   // These calls use the direct read provider, not the wallet bridge. Parallel
   // reads keep mobile verification short while ethers batches compatible RPCs.
-  const [protocolVersion, deploymentId, chainId, asset, market, rewardPool, safetyController] =
+  const [protocolVersion, deploymentId, chainId, asset, market, safetyController] =
     await Promise.all([
       factory.getFunction("PROTOCOL_VERSION")(),
       factory.getFunction("deploymentId")(),
       factory.getFunction("deploymentChainId")(),
       factory.getFunction("asset")(),
       factory.getFunction("earlyExitMarket")(),
-      factory.getFunction("rewardPool")(),
       factory.getFunction("safetyController")(),
     ]);
   const expected = {
@@ -637,7 +633,6 @@ async function verifyDeploymentOnce(
     deploymentId: import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID,
     asset: import.meta.env.VITE_EXPECTED_ASSET_ADDRESS,
     market: import.meta.env.VITE_EXPECTED_MARKET_ADDRESS,
-    rewardPool: import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS,
     safetyController: import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS,
   };
   if (network.chainId !== BigInt(chainId))
@@ -649,7 +644,6 @@ async function verifyDeploymentOnce(
       chainId: network.chainId,
       asset: String(asset),
       market: String(market),
-      rewardPool: String(rewardPool),
       safetyController: String(safetyController),
     },
     {
@@ -658,11 +652,10 @@ async function verifyDeploymentOnce(
       deploymentId: expected.deploymentId,
       asset: expected.asset,
       market: expected.market,
-      rewardPool: expected.rewardPool,
       safetyController: expected.safetyController,
     }
   );
-  const linkedContracts = [["asset", asset], ["market", market], ["reward pool", rewardPool], ["safety controller", safetyController]] as const;
+  const linkedContracts = [["asset", asset], ["market", market], ["safety controller", safetyController]] as const;
   const linkedCode = await Promise.all(
     linkedContracts.map(([, address]) => provider.getCode(String(address)))
   );
@@ -677,7 +670,6 @@ async function verifyDeploymentOnce(
     chainId: BigInt(chainId),
     asset: getAddress(String(asset)),
     market: getAddress(String(market)),
-    rewardPool: getAddress(String(rewardPool)),
     safetyController: getAddress(String(safetyController)),
     paused: Boolean(await safety.getFunction("paused")()),
   };
@@ -877,16 +869,23 @@ export async function createVault(
   const maturity = BigInt(
     Math.floor(new Date(input.maturity).getTime() / 1_000)
   );
-  if (maturity <= BigInt(Math.floor(Date.now() / 1_000)))
-    throw new Error("Maturity must be in the future.");
+  const now = BigInt(Math.floor(Date.now() / 1_000));
+  const minimumMaturity = now + 7n * 24n * 60n * 60n;
+  const maximumMaturity = now + 5n * 365n * 24n * 60n * 60n;
+  if (maturity < minimumMaturity)
+    throw new Error("Maturity must be at least 7 days from now.");
+  if (maturity > maximumMaturity)
+    throw new Error("Maturity cannot be more than 5 years from now.");
+  if (input.yieldMode !== "safe")
+    throw new Error("Earn is not available in LockedIn Circle Safe-only V1.");
   const emergencyBps = input.emergencyPercent * 100;
-  const yieldMode = input.yieldMode === "earn" ? 1 : 0;
+  const yieldMode = 0;
   const memberCount = 1;
   // Nimiq Pay's custom-chain bridge intermittently fails `eth_estimateGas` on
   // Amoy. These limits use measured deployment costs plus
   // a 25% margin; unused gas is not charged. The per-member component keeps
   // large groups within a realistic bound without granting unlimited gas.
-  const measuredBaseGas = input.yieldMode === "earn" ? 4_850_000n : 4_200_000n;
+  const measuredBaseGas = 4_200_000n;
   const measuredMemberGas = 210_000n * BigInt(memberCount - 1);
   const gasLimit = ((measuredBaseGas + measuredMemberGas) * 125n) / 100n;
   const overrides = { ...(await transactionOverrides(signer)), gasLimit };
@@ -1469,7 +1468,8 @@ export async function depositToVault(
   signer: Signer,
   vaultAddress: string,
   positionId: bigint,
-  value: string
+  value: string,
+  onStage?: (stage: "approval" | "execution") => void,
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
   const readVault = new Contract(
@@ -1490,7 +1490,16 @@ export async function depositToVault(
     const readToken = new Contract(tokenAddress, tokenAbi, readProviderFor(signer));
     return readToken.getFunction("allowance")(owner, vaultAddressResolved);
   }));
-  if (allowance < parsed) {
+  if (allowance !== parsed) {
+    onStage?.("approval");
+    if (allowance !== 0n) {
+      const reset = await token.getFunction("approve")(
+        vaultAddressResolved,
+        0,
+        { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
+      );
+      await confirmTransaction(signer, reset.hash);
+    }
     const approval = await token.getFunction("approve")(
       vaultAddressResolved,
       parsed,
@@ -1498,6 +1507,7 @@ export async function depositToVault(
     );
     await confirmTransaction(signer, approval.hash);
   }
+  onStage?.("execution");
   const deposit = await vault.getFunction("deposit")(
     positionId,
     parsed,
@@ -1999,7 +2009,8 @@ export async function createExitListing(
 export async function fundExitListing(
   signer: Signer,
   listingId: bigint,
-  maximumTotalPayment?: bigint
+  maximumTotalPayment?: bigint,
+  onStage?: (stage: "approval" | "execution") => void,
 ): Promise<void> {
   const market = await marketFor(signer);
   const readProvider = readProviderFor(signer);
@@ -2039,10 +2050,19 @@ export async function fundExitListing(
   const allowance: bigint = await withAmoyReadRetry(() =>
     readToken.getFunction("allowance")(buyer, marketAddress)
   );
-  if (allowance < totalPayment) {
+  if (allowance !== totalPayment) {
+    onStage?.("approval");
     // Fixed limits avoid unreliable Amoy gas estimation in embedded wallets.
     // The ERC-20 approval remains exact and the market can only pull the
     // settlement amount calculated by the immutable contract.
+    if (allowance !== 0n) {
+      const reset = await token.getFunction("approve")(
+        marketAddress,
+        0,
+        { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
+      );
+      await confirmTransaction(signer, reset.hash);
+    }
     const approval = await token.getFunction("approve")(
       marketAddress,
       totalPayment,
@@ -2050,6 +2070,7 @@ export async function fundExitListing(
     );
     await confirmTransaction(signer, approval.hash);
   }
+  onStage?.("execution");
   const funding = await market.getFunction("fundListing")(
     listingId,
     { ...(await transactionOverrides(signer)), gasLimit: 650_000n }

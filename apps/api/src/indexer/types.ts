@@ -19,6 +19,7 @@ export interface StoredEvent extends CanonicalEvent {
 }
 
 export interface IndexerStatus {
+  rpcStatus: 'ok'
   chainId: number
   deploymentId: string
   protocolVersion: string
@@ -31,4 +32,5 @@ export interface IndexerStatus {
   lag: number
   lastError: string | null
   lastErrorAt: string | null
+  failedEventProcessingCount: number
 }

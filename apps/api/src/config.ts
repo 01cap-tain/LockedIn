@@ -10,7 +10,9 @@ const repositoryRoot = path.resolve(sourceDirectory, '../../..')
 
 const environmentSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  INDEXER_RPC_URL: z.string().url().default('http://127.0.0.1:8545'),
+  // There is deliberately no localhost fallback: an omitted production RPC
+  // must fail startup instead of silently indexing the wrong chain.
+  INDEXER_RPC_URL: z.string().url(),
   INDEXER_MANIFEST_PATH: z.string().min(1).default(
     'packages/contracts/deployments/local/latest.json',
   ),
@@ -34,9 +36,10 @@ export interface DeploymentManifest {
   contracts: {
     vaultFactory: { address: string; blockNumber: number }
     earlyExitMarket: { address: string; blockNumber: number }
-    rewardPool: { address: string; blockNumber: number }
+    rewardPool?: { address: string; blockNumber: number }
     safetyController?: { address: string; blockNumber: number }
-    mockUsdt: { address: string; blockNumber: number }
+    mockUsdt?: { address: string; blockNumber: number }
+    asset?: { address: string; blockNumber: number }
   }
 }
 
@@ -80,7 +83,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     .map((value) => resolveManifestPath(value.trim()))
   const deployments = manifestPaths.map((manifestPath, index) => {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as DeploymentManifest
-    const required = [manifest.contracts.vaultFactory, manifest.contracts.earlyExitMarket, manifest.contracts.rewardPool, manifest.contracts.mockUsdt]
+    const asset = manifest.contracts.asset ?? manifest.contracts.mockUsdt
+    if (!asset) throw new Error('Deployment manifest does not identify its asset contract.')
+    const required = [manifest.contracts.vaultFactory, manifest.contracts.earlyExitMarket, asset]
+    if (manifest.contracts.rewardPool) required.push(manifest.contracts.rewardPool)
     if (!Number.isSafeInteger(manifest.chainId) || manifest.chainId <= 0 || !manifest.deploymentId || !manifest.protocolVersion || !Number.isSafeInteger(manifest.deploymentBlock) || manifest.deploymentBlock < 0) {
       throw new Error('Deployment manifest has an invalid immutable identity.')
     }

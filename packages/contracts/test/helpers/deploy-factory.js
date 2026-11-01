@@ -1,8 +1,8 @@
 const UNIT = 10n ** 6n
 
 /**
- * Deploys the standalone safety and reward contracts first. Both bind their
- * immutable factory authority to the fourth CREATE address from the signer.
+ * Deploys the Safe-only V1 safety controller and vault deployer first. Both
+ * bind their immutable factory authority to the third CREATE address.
  */
 export async function deployFactory(
   ethers,
@@ -13,10 +13,6 @@ export async function deployFactory(
     maxPositionPrincipal = 1_000_000n * UNIT,
     maxVaultPrincipal = 10_000_000n * UNIT,
     maxProtocolPrincipal = 100_000_000n * UNIT,
-    epochDuration = 7 * 24 * 60 * 60,
-    registrationGrace = 24 * 60 * 60,
-    minimumRewardTarget = UNIT,
-    minimumSavingDuration = 24 * 60 * 60,
   } = {},
 ) {
   const [deployer] = await ethers.getSigners()
@@ -24,7 +20,7 @@ export async function deployFactory(
   const nonce = await ethers.provider.getTransactionCount(deployerAddress)
   const predictedFactory = ethers.getCreateAddress({
     from: deployerAddress,
-    nonce: nonce + 3,
+    nonce: nonce + 2,
   })
   const safetyController = await ethers.deployContract('SafetyController', [
     predictedFactory,
@@ -34,24 +30,19 @@ export async function deployFactory(
     maxVaultPrincipal,
     maxProtocolPrincipal,
   ])
-  const rewardPool = await ethers.deployContract('RewardPool', [
-    factoryArguments[0],
-    predictedFactory,
-    epochDuration,
-    registrationGrace,
-    minimumRewardTarget,
-    minimumSavingDuration,
-  ])
   const vaultDeployer = await ethers.deployContract('SavingsVaultDeployer', [
     predictedFactory,
   ])
+  // Existing tests pass the former graph arguments. V1 deliberately selects
+  // only asset, maintenance treasury and chain ID from that tuple.
   const factory = await ethers.deployContract('VaultFactory', [
-    ...factoryArguments,
+    factoryArguments[0],
+    factoryArguments[2],
+    factoryArguments[5],
     await vaultDeployer.getAddress(),
     await safetyController.getAddress(),
-    await rewardPool.getAddress(),
   ])
-  return { factory, safetyController, rewardPool, vaultDeployer }
+  return { factory, safetyController, vaultDeployer }
 }
 
 /**

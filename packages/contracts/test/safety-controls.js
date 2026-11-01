@@ -16,7 +16,6 @@ describe('Protocol safety controls and exposure caps', function () {
   let factory
   let safety
   let market
-  let rewardPool
   let maturity
 
   beforeEach(async function () {
@@ -44,7 +43,6 @@ describe('Protocol safety controls and exposure caps', function () {
       },
     ))
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
-    rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     maturity = BigInt(await networkHelpers.time.latest()) + 10n * DAY
   })
 
@@ -149,55 +147,19 @@ describe('Protocol safety controls and exposure caps', function () {
     expect(await vault.activeMemberCount()).to.equal(4n)
   })
 
-  it('keeps already allocated reward claims available while paused', async function () {
+  it('keeps V1 rewards disabled while paused', async function () {
     const vault = await personalVault()
     await fund(deployer, await vault.getAddress(), 100n * UNIT)
     await vault.deposit(0, 100n * UNIT)
-    await fund(accounts[3], await rewardPool.getAddress(), 10n * UNIT)
-    await rewardPool.connect(accounts[3]).fundVault(await vault.getAddress(), 10n * UNIT)
     await networkHelpers.time.increaseTo(maturity)
-    await vault.activateRewards()
     await safety.connect(safetyCouncil).pause()
-    await expect(rewardPool.claim()).to.emit(rewardPool, 'RewardClaimed')
+    expect(await vault.rewardsReady()).to.equal(false)
+    await expect(vault.activateRewards()).to.be.revertedWithCustomError(vault, 'RewardsDisabled')
   })
 
-  it('prevents a paused Earn vault from supplying new locked funds', async function () {
-    const adapterFactory = await ethers.deployContract('MockYieldAdapterFactory', [
-      await token.getAddress(),
-      31_337,
-      0,
-    ])
-    const { factory: earnFactory, safetyController: earnSafety } =
-      await deployFactory(
-        ethers,
-        [
-          await token.getAddress(),
-          await accounts[8].getAddress(),
-          await accounts[9].getAddress(),
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          31_337,
-          await adapterFactory.getAddress(),
-        ],
-        await safetyCouncil.getAddress(),
-      )
-    await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
-    const vault = await ethers.getContractAt(
-      'SavingsVault',
-      await earnFactory.vaultAt(0),
-    )
-    const adapter = await ethers.getContractAt(
-      'MockYieldAdapter',
-      await vault.yieldAdapter(),
-    )
-    await fund(deployer, await vault.getAddress(), 20n * UNIT)
-    await vault.deposit(0, 10n * UNIT)
-    const suppliedBeforePause = await adapter.totalAssets()
-
-    await earnSafety.connect(safetyCouncil).pause()
-    await expect(vault.deposit(0, 10n * UNIT))
-      .to.be.revertedWithCustomError(earnSafety, 'ProtocolIsPaused')
-    expect(await adapter.totalAssets()).to.equal(suppliedBeforePause)
+  it('rejects Earn creation explicitly in the Safe-only factory', async function () {
+    await expect(factory.createPersonalVault(100n * UNIT, maturity, 1_000, 1))
+      .to.be.revertedWithCustomError(factory, 'EarnDisabled')
   })
 
   it('accepts exposure updates only from factory-registered vaults', async function () {

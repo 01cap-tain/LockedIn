@@ -12,7 +12,6 @@ const actual = {
   chainId: 80_002n,
   asset: `0x${"22".repeat(20)}`,
   market: `0x${"33".repeat(20)}`,
-  rewardPool: `0x${"44".repeat(20)}`,
   safetyController: `0x${"55".repeat(20)}`,
 };
 
@@ -26,7 +25,6 @@ describe("deployment manifest verification", () => {
     ["deploymentId", `0x${"99".repeat(32)}`],
     ["asset", `0x${"88".repeat(20)}`],
     ["market", `0x${"77".repeat(20)}`],
-    ["rewardPool", `0x${"66".repeat(20)}`],
     ["safetyController", `0x${"aa".repeat(20)}`],
   ] as const)("blocks a mismatched %s", (field, value) => {
     expect(() =>

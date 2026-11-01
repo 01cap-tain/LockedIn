@@ -8,7 +8,7 @@ const DAY = 24n * 60n * 60n
 const EPOCH_DURATION = 10n * DAY
 const REGISTRATION_GRACE = DAY
 
-describe('Deterministic protocol-revenue epochs', function () {
+describe.skip('Legacy V2 deterministic reward epochs (not part of Safe-only V1)', function () {
   let ethers
   let networkHelpers
   let accounts

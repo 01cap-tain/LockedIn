@@ -3,7 +3,6 @@ import { network } from 'hardhat'
 import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js'
 
 const UNIT = 10n ** 6n
-const RAY = 10n ** 27n
 
 describe('EarlyExitMarket deterministic pricing', function () {
   let ethers
@@ -18,7 +17,6 @@ describe('EarlyExitMarket deterministic pricing', function () {
   let factory
   let vault
   let market
-  let rewardPool
   let maturity
 
   beforeEach(async function () {
@@ -38,7 +36,6 @@ describe('EarlyExitMarket deterministic pricing', function () {
     await factory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
     vault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(0))
     market = await ethers.getContractAt('EarlyExitMarket', await factory.earlyExitMarket())
-    rewardPool = await ethers.getContractAt('RewardPool', await factory.rewardPool())
     await token.mint(await saver.getAddress(), 100n * UNIT)
     await token.approve(await vault.getAddress(), 100n * UNIT)
     await vault.deposit(0, 100n * UNIT)
@@ -138,45 +135,36 @@ describe('EarlyExitMarket deterministic pricing', function () {
     expect(overdue.discountBps).to.be.greaterThan(450)
   })
 
-  it('maps the objective Aave liquidity-rate proxy into 0 through 75 basis points', async function () {
-    const aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
-    const pool = await ethers.deployContract('MockAavePool', [await token.getAddress(), await aToken.getAddress()])
-    await aToken.bindPool(await pool.getAddress())
-    const { factory: earnFactory } = await deployFactory(ethers, [
-      await token.getAddress(),
-      await riskReserve.getAddress(),
-      await maintenanceTreasury.getAddress(),
-      await pool.getAddress(),
-      await aToken.getAddress(),
-      31_337,
-      ethers.ZeroAddress,
-    ], await riskReserve.getAddress())
-    await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
-    const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
-    const earnMarket = await ethers.getContractAt('EarlyExitMarket', await earnFactory.earlyExitMarket())
-    await token.mint(await saver.getAddress(), 100n * UNIT)
-    await token.approve(await earnVault.getAddress(), 100n * UNIT)
-    await earnVault.deposit(0, 100n * UNIT)
-
-    expect((await earnMarket.referenceDiscount(await earnVault.getAddress(), 0)).liquidityRiskPenalty).to.equal(0)
-    await pool.setLiquidityRate(15n * RAY / 100n)
-    expect((await earnMarket.referenceDiscount(await earnVault.getAddress(), 0)).liquidityRiskPenalty).to.equal(75)
+  it('keeps V1 liquidity risk at zero and rejects Earn creation explicitly', async function () {
+    expect((await market.referenceDiscount(await vault.getAddress(), 0)).liquidityRiskPenalty).to.equal(0)
+    await expect(factory.createPersonalVault(100n * UNIT, maturity, 1_000, 1))
+      .to.be.revertedWithCustomError(factory, 'EarnDisabled')
   })
 
-  it('calculates and distributes the 0.9% provider fee as 60/20/20', async function () {
+  it('sends the complete 0.9% provider fee to maintenance and emits the settlement receipt', async function () {
     const quote = await createListing()
     await fundProvider(providerOne, quote.saverPayout, quote.providerFee)
-    const riskBefore = await token.balanceOf(await riskReserve.getAddress())
+    const providerBefore = await token.balanceOf(await providerOne.getAddress())
+    const saverBefore = await token.balanceOf(await saver.getAddress())
     const maintenanceBefore = await token.balanceOf(await maintenanceTreasury.getAddress())
 
-    await market.connect(providerOne).fundListing(0)
+    await expect(market.connect(providerOne).fundListing(0))
+      .to.emit(market, 'EarlyExitSettled')
+      .withArgs(
+        0,
+        await providerOne.getAddress(),
+        await maintenanceTreasury.getAddress(),
+        quote.saverPayout,
+        quote.providerFee,
+        quote.claimValue,
+      )
 
-    const rewardShare = quote.providerFee * 60n / 100n
-    const riskShare = quote.providerFee * 20n / 100n
-    expect(await rewardPool.protocolRevenue()).to.equal(rewardShare)
-    expect((await token.balanceOf(await riskReserve.getAddress())) - riskBefore).to.equal(riskShare)
+    expect(providerBefore - await token.balanceOf(await providerOne.getAddress()))
+      .to.equal(quote.saverPayout + quote.providerFee)
+    expect((await token.balanceOf(await saver.getAddress())) - saverBefore).to.equal(quote.saverPayout)
     expect((await token.balanceOf(await maintenanceTreasury.getAddress())) - maintenanceBefore)
-      .to.equal(quote.providerFee - rewardShare - riskShare)
+      .to.equal(quote.providerFee)
+    expect(await token.balanceOf(await market.getAddress())).to.equal(0n)
   })
 
   it('lets the first successful provider atomically fund and own the full claim', async function () {
@@ -201,29 +189,21 @@ describe('EarlyExitMarket deterministic pricing', function () {
   })
 
   it('recalculates settlement and protects the saver minimum payout', async function () {
-    const aToken = await ethers.deployContract('MockAToken', [await token.getAddress()])
-    const pool = await ethers.deployContract('MockAavePool', [await token.getAddress(), await aToken.getAddress()])
-    await aToken.bindPool(await pool.getAddress())
-    const { factory: earnFactory } = await deployFactory(ethers, [
-      await token.getAddress(), await riskReserve.getAddress(), await maintenanceTreasury.getAddress(),
-      await pool.getAddress(), await aToken.getAddress(), 31_337, ethers.ZeroAddress,
-    ], await riskReserve.getAddress())
-    await earnFactory.createPersonalVault(100n * UNIT, maturity, 1_000, 1)
-    const earnVault = await ethers.getContractAt('SavingsVault', await earnFactory.vaultAt(0))
-    const earnMarket = await ethers.getContractAt('EarlyExitMarket', await earnFactory.earlyExitMarket())
-    await token.mint(await saver.getAddress(), 100n * UNIT)
-    await token.approve(await earnVault.getAddress(), 100n * UNIT)
-    await earnVault.deposit(0, 100n * UNIT)
-    const initial = await currentQuote(earnMarket, earnVault)
-    await earnMarket.createListing(await earnVault.getAddress(), 0, maturity, initial.saverPayout)
+    await factory.createPersonalVault(100n * UNIT, maturity, 1_000, 0)
+    const partialVault = await ethers.getContractAt('SavingsVault', await factory.vaultAt(1))
+    await token.mint(await saver.getAddress(), 10n * UNIT)
+    await token.approve(await partialVault.getAddress(), 10n * UNIT)
+    await partialVault.deposit(0, 10n * UNIT)
+    const initial = await currentQuote(market, partialVault)
+    await market.createListing(await partialVault.getAddress(), 0, maturity, initial.saverPayout)
 
-    // Raising the live Aave rate increases the deterministic risk penalty at settlement.
-    await pool.setLiquidityRate(15n * RAY / 100n)
+    // Inactivity changes the objective commitment inputs after listing creation.
+    await networkHelpers.time.increase(120n * 24n * 60n * 60n)
     await token.mint(await providerOne.getAddress(), initial.claimValue)
-    await token.connect(providerOne).approve(await earnMarket.getAddress(), initial.claimValue)
-    await expect(earnMarket.connect(providerOne).fundListing(0))
-      .to.be.revertedWithCustomError(earnMarket, 'MinimumPayoutNotMet')
-    expect((await earnMarket.listings(0)).active).to.equal(true)
+    await token.connect(providerOne).approve(await market.getAddress(), initial.claimValue)
+    await expect(market.connect(providerOne).fundListing(0))
+      .to.be.revertedWithCustomError(market, 'MinimumPayoutNotMet')
+    expect((await market.listings(0)).active).to.equal(true)
   })
 
   it('keeps emergency funds with the saver and the locked claim with the buyer', async function () {

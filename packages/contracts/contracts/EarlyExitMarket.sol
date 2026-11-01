@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {RewardPool} from "./RewardPool.sol";
 import {SafetyController} from "./SafetyController.sol";
 
 interface IVaultFactoryView {
@@ -86,9 +85,7 @@ contract EarlyExitMarket is ReentrancyGuard {
     error TokenAccountingMismatch();
 
     IERC20 public immutable asset;
-    RewardPool public immutable rewardPool;
     address public immutable factory;
-    address public immutable riskReserve;
     address public immutable maintenanceTreasury;
     SafetyController public immutable safetyController;
 
@@ -121,28 +118,30 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 providerPotentialReturn,
         uint256 providerFee
     );
+    event EarlyExitSettled(
+        uint256 indexed listingId,
+        address indexed provider,
+        address indexed maintenanceTreasury,
+        uint256 saverPayout,
+        uint256 providerFee,
+        uint256 acquiredClaimValue
+    );
 
     constructor(
         IERC20 asset_,
-        RewardPool rewardPool_,
         address factory_,
-        address riskReserve_,
         address maintenanceTreasury_,
         SafetyController safetyController_
     ) {
         if (
-            address(asset_) == address(0) || address(rewardPool_) == address(0) || factory_ == address(0)
-                || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
-                || riskReserve_ == maintenanceTreasury_ || riskReserve_ == address(this)
-                || maintenanceTreasury_ == address(this) || riskReserve_ == address(asset_)
-                || maintenanceTreasury_ == address(asset_) || riskReserve_ == address(rewardPool_)
-                || maintenanceTreasury_ == address(rewardPool_) || riskReserve_ == factory_
+            address(asset_) == address(0) || factory_ == address(0)
+                || maintenanceTreasury_ == address(0)
+                || maintenanceTreasury_ == address(this)
+                || maintenanceTreasury_ == address(asset_)
                 || maintenanceTreasury_ == factory_ || address(safetyController_) == address(0)
         ) revert InvalidAddress();
         asset = asset_;
-        rewardPool = rewardPool_;
         factory = factory_;
-        riskReserve = riskReserve_;
         maintenanceTreasury = maintenanceTreasury_;
         safetyController = safetyController_;
     }
@@ -249,21 +248,13 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 saverPayout = payoutFor(currentClaimValue, pricing.discountBps);
         if (saverPayout < listing.minimumPayout) revert MinimumPayoutNotMet();
         uint256 providerFee = feeFor(saverPayout);
-        uint256 rewardShare = providerFee * 60 / 100;
-        uint256 riskShare = providerFee * 20 / 100;
-        uint256 maintenanceShare = providerFee - rewardShare - riskShare;
 
         // Effects precede token callbacks; any failed transfer reverts the full transition.
         positionSold[listing.vault][listing.positionId] = true;
         _closeListing(listing);
         _pullExact(msg.sender, saverPayout + providerFee);
         _transferOutExact(listing.seller, saverPayout);
-        if (rewardShare != 0) {
-            asset.forceApprove(address(rewardPool), rewardShare);
-            rewardPool.receiveProtocolRevenue(rewardShare);
-        }
-        _transferOutExact(riskReserve, riskShare);
-        _transferOutExact(maintenanceTreasury, maintenanceShare);
+        _transferOutExact(maintenanceTreasury, providerFee);
         vault.transferPosition(listing.positionId, listing.seller, msg.sender);
 
         emit ListingFunded(
@@ -274,6 +265,14 @@ contract EarlyExitMarket is ReentrancyGuard {
             saverPayout,
             currentClaimValue - saverPayout,
             providerFee
+        );
+        emit EarlyExitSettled(
+            listingId,
+            msg.sender,
+            maintenanceTreasury,
+            saverPayout,
+            providerFee,
+            currentClaimValue
         );
     }
 
