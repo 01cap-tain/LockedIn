@@ -4,6 +4,7 @@ import {
   assertDeploymentMatches,
   describeContractError,
   groupCreationUnsupportedReason,
+  supportsOpenEnrollmentProtocol,
 } from "./contracts";
 
 const actual = {
@@ -82,6 +83,11 @@ describe("contract error copy", () => {
 describe("group creation compatibility", () => {
   it("allows the creator-first group flow on protocol 0.7", () => {
     expect(groupCreationUnsupportedReason("lockedin-circle/0.8.0", "invite-only")).toBeNull();
+  });
+
+  it("allows creator-first circles on immutable Safe-only V1", () => {
+    expect(groupCreationUnsupportedReason("lockedin-circle/1.0.0-safe", "public")).toBeNull();
+    expect(supportsOpenEnrollmentProtocol("lockedin-circle/1.0.0-safe")).toBe(true);
   });
 
   it("explains the fixed-member limitation on the deployed 0.5 factory", () => {

@@ -1,4 +1,4 @@
-import { BadgeCheck, Gift, ShieldCheck, Sparkles, Trophy } from "lucide-react";
+import { BadgeCheck, Gift, LockKeyhole, ShieldCheck, Sparkles, Trophy } from "lucide-react";
 
 /** Explains deterministic epochs without implying an unfunded reward promise. */
 export function RewardsRoute() {
@@ -6,7 +6,7 @@ export function RewardsRoute() {
     <section className="route-page rewards-companion-page">
       <header className="rewards-hero">
         <span className="reward-hero-icon"><Trophy aria-hidden="true" size={25} /></span>
-        <div><span className="eyebrow">Progress deserves recognition</span><h2>Complete together. Celebrate together.</h2><p>Keep your group on track and reach every personal goal before maturity.</p></div>
+        <div><span className="eyebrow">Rewards · Coming soon</span><h2>Complete together. Celebrate together.</h2><p>Milestones remain visible, but V1 has no active reward campaign or claim transaction.</p></div>
       </header>
       <div className="reward-milestones" aria-label="Savings milestones">
         {[25, 50, 75, 100].map((value) => <div key={value}><span>{value}%</span><i /><small>{value === 100 ? "Goal complete" : "Savings milestone"}</small></div>)}
@@ -16,10 +16,11 @@ export function RewardsRoute() {
         <article className="reward-card"><Sparkles aria-hidden="true" /><div><strong>Help the whole circle finish</strong><span>Every active member completes independently. One saver cannot complete another saver’s goal.</span></div></article>
         <article className="reward-card"><ShieldCheck aria-hidden="true" /><div><strong>Keep your claim</strong><span>Selling a position removes that saver from reward eligibility.</span></div></article>
       </div>
-      <article className="reward-funding-note">
+      <article className="reward-funding-note coming-soon-reward" role="status">
         <Gift aria-hidden="true" size={19} />
-        <div><strong>Rewards are never promised in advance</strong><span>A reward becomes claimable only after protocol revenue funds and finalizes an eligible epoch. Emergency withdrawals do not remove eligibility.</span></div>
+        <div><strong>Reward campaigns are coming in a future version</strong><span>No V1 fee funds rewards, no reward balance is accumulating, and nothing can be claimed yet.</span></div>
       </article>
+      <button className="secondary reward-disabled-action" disabled type="button"><LockKeyhole aria-hidden="true" size={16} /> Claim rewards · Coming soon</button>
     </section>
   );
 }

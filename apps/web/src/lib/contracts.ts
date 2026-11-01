@@ -282,11 +282,17 @@ export function groupCreationUnsupportedReason(
   protocolVersion: string,
   visibility: "public" | "invite-only"
 ): string | null {
-  if (protocolVersion === "lockedin-circle/0.8.0") return null;
+  if (supportsOpenEnrollmentProtocol(protocolVersion)) return null;
   if (visibility === "public") {
     return `Public circles require protocol 0.8.0; the connected factory is ${protocolVersion}.`;
   }
   return `Invite-only creation is blocked on ${protocolVersion}: this factory requires at least four member addresses, targets and emergency allocations at creation. It cannot support invited members choosing their own savings terms later.`;
+}
+
+/** Protocol families that implement creator-first circles and later joins. */
+export function supportsOpenEnrollmentProtocol(protocolVersion: string): boolean {
+  return protocolVersion === "lockedin-circle/0.8.0" ||
+    protocolVersion === "lockedin-circle/1.0.0-safe";
 }
 
 export interface VaultSnapshot {
@@ -1004,7 +1010,7 @@ async function loadVaultOnce(
   const factory = new Contract(deployment.factoryAddress, factoryAbi, readProvider);
   const protocolVersion = deployment.protocolVersion;
   const supportsPublicJoining = protocolVersion !== "lockedin-circle/0.5.0";
-  const supportsEnrollment = protocolVersion === "lockedin-circle/0.8.0";
+  const supportsEnrollment = supportsOpenEnrollmentProtocol(protocolVersion);
   const memberCount: bigint = await vault.getFunction("memberCount")();
   let positionId = requestedPositionId;
   if (positionId === undefined) {
@@ -1347,7 +1353,7 @@ export async function loadPublicGroups(
     read(() => factory.getFunction("PROTOCOL_VERSION")()),
   ]);
   const count = BigInt(countValue);
-  const supportsPublicJoining = String(protocolVersion) === "lockedin-circle/0.8.0";
+  const supportsPublicJoining = supportsOpenEnrollmentProtocol(String(protocolVersion));
   // Factory address reads are independent. Resolve them concurrently so the
   // discovery screen does not wait on one RPC round trip per historic vault.
   const addresses = await Promise.all(

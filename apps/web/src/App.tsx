@@ -23,6 +23,7 @@ import {
   loadExitPosition,
   fundExitListing,
   groupCreationUnsupportedReason,
+  supportsOpenEnrollmentProtocol,
   loadExitMarket,
   loadGroupExitRequests,
   loadMockUsdtBalance,
@@ -193,6 +194,7 @@ const routes: Array<{ id: AppRoute; label: string }> = [
 ];
 
 const secondaryRoutes: Array<{ id: AppRoute; label: string }> = [
+  { id: "rewards", label: "Rewards · Coming soon" },
   { id: "activity", label: "Transaction history" },
   { id: "wallet", label: "Wallet & network" },
 ];
@@ -234,7 +236,7 @@ const SaverListingAnimation = lazy(() =>
 );
 function routeFromHash(): AppRoute {
   const value = window.location.hash.replace(/^#\/?/, "");
-  return routes.some((route) => route.id === value) || value === "wallet" || value === "explore-circles"
+  return routes.some((route) => route.id === value) || value === "wallet" || value === "rewards" || value === "explore-circles"
     ? (value as AppRoute)
     : "discover";
 }
@@ -480,6 +482,23 @@ function TrustSummary({ earn = false }: { earn?: boolean }) {
         </span>
       </div>
     </aside>
+  );
+}
+
+/** Keeps the V2 mode visible without exposing an executable Earn path in V1. */
+function VaultModePreview() {
+  return (
+    <fieldset className="mode-picker embedded vault-mode-preview">
+      <legend>How should locked savings be held?</legend>
+      <button aria-pressed="true" className="active" type="button">
+        <strong>Safe</strong>
+        <span>No yield. Locked savings remain in the vault.</span>
+      </button>
+      <button aria-disabled="true" className="coming-soon-mode" disabled type="button">
+        <strong>Earn <small>Coming soon</small></strong>
+        <span>A future V2 option. It cannot be selected or created today.</span>
+      </button>
+    </fieldset>
   );
 }
 
@@ -843,7 +862,7 @@ export function App() {
     !deploymentReady || deployment.status === "error";
   const publicGroupsSupported =
     deployment.status === "valid" &&
-    deployment.value.protocolVersion === "lockedin-circle/0.8.0";
+    supportsOpenEnrollmentProtocol(deployment.value.protocolVersion);
   const groupCreationBlockReason = deployment.status === "valid"
     ? groupCreationUnsupportedReason(
         deployment.value.protocolVersion,
@@ -1525,7 +1544,7 @@ export function App() {
       setExitState(null);
     }
     if (
-      nextRoute !== "discover" &&
+      nextRoute !== "discover" && nextRoute !== "rewards" &&
       !walletAccessReady
     ) {
       setPendingGroup(null);
@@ -2787,7 +2806,7 @@ export function App() {
                 </div>
               </fieldset>}
 
-              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><LockKeyhole aria-hidden="true" size={15} />Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p><p><strong>Safe-only:</strong> locked savings stay in the vault. V1 has no yield or reward campaign.</p></div></fieldset>}
+              {mode === "group" && creationStep === 1 && <fieldset className="creation-section full-width progressive-section"><legend><LockKeyhole aria-hidden="true" size={15} />Shared rules</legend><div className="shared-rule-copy"><p>Everyone chooses their own goal and emergency amount.</p><p>The circle starts after four people join. No one can join after it starts.</p></div><VaultModePreview /></fieldset>}
 
               {creationStep === (mode === "group" ? 2 : 1) && <fieldset className="creation-section full-width progressive-section">
                 <legend><CircleDollarSign aria-hidden="true" size={15} />{mode === "group" ? "Your savings goal" : "Contribution amount"}</legend>
@@ -2918,7 +2937,7 @@ export function App() {
 
               {creationStep === (mode === "group" ? 4 : 3) && <fieldset className="creation-section full-width progressive-section">
                 <legend>{mode === "group" ? <CircleCheckBig aria-hidden="true" size={15} /> : <LockKeyhole aria-hidden="true" size={15} />}{mode === "group" ? "Review and create" : "Vault protection"}</legend>
-                {mode === "personal" && <div className="mode-picker embedded"><div className="active"><strong>Safe-only V1</strong><span>Locked funds remain in the vault. No yield or reward campaign is active.</span></div></div>}
+                {mode === "personal" && <VaultModePreview />}
                 {mode === "personal" && <label className="range-field"><span>Emergency allocation <strong>{emergencyPercent}%</strong></span><input max="15" min="10" onChange={(event) => setEmergencyPercent(Number(event.target.value))} type="range" value={emergencyPercent} /><small>This portion remains available anytime. The remainder is locked until maturity or transferred through an early exit.</small></label>}
                 <TrustSummary />
                 {mode === "group" && <dl className="creation-review">

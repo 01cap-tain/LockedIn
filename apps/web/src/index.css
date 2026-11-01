@@ -1064,6 +1064,18 @@ footer {
   font-size: 12px;
   font-weight: 400;
 }
+.vault-mode-preview .coming-soon-mode {
+  opacity: .72;
+  cursor: not-allowed;
+  border-color: color-mix(in srgb, var(--color-information) 45%, var(--border-subtle));
+}
+.vault-mode-preview .coming-soon-mode small {
+  margin-left: 6px;
+  color: var(--color-information);
+  font: 700 .68rem/1 var(--font-interface);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
 .risk-ack {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -4861,6 +4873,8 @@ textarea::placeholder {
 .reward-card strong,
 .reward-funding-note strong { color: var(--text-primary); }
 .reward-funding-note { color: var(--accent); background: #302c20; }
+.coming-soon-reward { border-color: color-mix(in srgb, var(--color-information) 42%, var(--border-subtle)); }
+.reward-disabled-action { justify-self: start; opacity: .72; cursor: not-allowed; }
 
 /* Transaction history contrast ------------------------------------------ */
 .trade-history-list,
