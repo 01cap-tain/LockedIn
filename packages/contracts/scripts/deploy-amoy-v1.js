@@ -36,6 +36,23 @@ const [deployer] = await ethers.getSigners()
 const networkIdentity = await ethers.provider.getNetwork()
 if (Number(networkIdentity.chainId) !== CHAIN_ID) throw new Error('The configured RPC is not Polygon Amoy.')
 
+// Fail before the first broadcast if the whole immutable graph cannot be paid
+// for. This deliberately uses the explicit deployment ceilings, not optimistic
+// estimates from public RPC gateways.
+const feeData = await ethers.provider.getFeeData()
+const deploymentGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice
+if (!deploymentGasPrice) throw new Error('The Amoy RPC did not return a usable gas price.')
+const graphGasCeiling = 1_500_000n + 6_500_000n + 4_500_000n
+const requiredBalance = graphGasCeiling * deploymentGasPrice
+const deployerBalance = await ethers.provider.getBalance(await deployer.getAddress())
+if (deployerBalance < requiredBalance) {
+  throw new Error(
+    `The Amoy deployer is underfunded for the complete Safe-only V1 graph. ` +
+    `Current balance: ${ethers.formatEther(deployerBalance)} POL; ` +
+    `required ceiling at the current gas price: ${ethers.formatEther(requiredBalance)} POL.`
+  )
+}
+
 const maintenanceTreasury = requiredAddress(ethers, 'AMOY_MAINTENANCE_TREASURY_ADDRESS')
 const prerequisite = JSON.parse(await readFile(path.resolve(scriptDirectory, '../deployments/amoy-prerequisites.json'), 'utf8'))
 const tokenRecord = prerequisite.contracts.mockUsdt
