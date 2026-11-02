@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 6,
+  "profile": "safe-only-v1",
+  "network": "polygon-amoy",
+  "chainId": 80002,
+  "protocolVersion": "lockedin-circle/1.1.0-safe",
+  "deploymentId": "0xdb7daf75abc54cb5591e649a57586b347bdcee3bb716be37324eb65438d7b7d0",
+  "deploymentBlock": 51782868,
+  "explorer": "https://amoy.polygonscan.com",
+  "gitCommit": "dbbaf38e8c78bc9d5d361704d6e210d13d1ea622",
+  "deploymentTimestamp": "2026-11-02T07:44:08.258Z",
+  "tokenDecimals": 6,
+  "contracts": {
+    "mockUsdt": {
+      "address": "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
+      "transactionHash": "0x5553897611b25d408ddadc970a1ba6383d3a5457665e6e1bc5bb29e309c14f7b",
+      "blockNumber": 50538011
+    },
+    "safetyController": {
+      "address": "0x839Ce82e34Af60719a3194F57fD8b536D852ABcb",
+      "transactionHash": "0xff3d76a10c232a90423274268a5fe22f83cc402edb0766ec3f649d909971ccee",
+      "blockNumber": 51782853
+    },
+    "savingsVaultDeployer": {
+      "address": "0x621Da883669fcc880d0662029F9Fa7a2Aed61888",
+      "transactionHash": "0x2edcbe0c502ec5693a000140f70bef0ebb7c00ecb067bbee7b46af2e6a59f081",
+      "blockNumber": 51782859
+    },
+    "vaultFactory": {
+      "address": "0x5552F00F4288265beB0423Bff44b058B39BC8FF6",
+      "transactionHash": "0x749fd4a03ed20907399bbbd940dc03ff23dd32cf2ae9c6530c776683ac32c584",
+      "blockNumber": 51782868
+    },
+    "earlyExitMarket": {
+      "address": "0x0050333f274D4AdBC9d95e4521D5B5D86CD7b164",
+      "transactionHash": "0x749fd4a03ed20907399bbbd940dc03ff23dd32cf2ae9c6530c776683ac32c584",
+      "blockNumber": 51782868
+    }
+  },
+  "constructorArguments": {
+    "safety": [
+      "0x5552F00F4288265beB0423Bff44b058B39BC8FF6",
+      "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
+      86400,
+      "1000000000000",
+      "10000000000000",
+      "100000000000000"
+    ],
+    "vaultDeployer": [
+      "0x5552F00F4288265beB0423Bff44b058B39BC8FF6"
+    ],
+    "factory": [
+      "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
+      "0x7c5ba0eE0e5aE7E426CfeE5B09C4380Ee10216Ad",
+      80002,
+      "0x621Da883669fcc880d0662029F9Fa7a2Aed61888",
+      "0x839Ce82e34Af60719a3194F57fD8b536D852ABcb"
+    ]
+  },
+  "factoryConfiguration": {
+    "savingsVaultDeployment": "non-upgradeable-per-vault",
+    "vaultMode": "Safe-only",
+    "earnEnabled": false,
+    "rewardsEnabled": false,
+    "feeDistribution": {
+      "maintenanceTreasuryBps": 10000,
+      "rewardPoolBps": 0,
+      "riskReserveBps": 0
+    },
+    "maintenanceTreasury": "0x7c5ba0eE0e5aE7E426CfeE5B09C4380Ee10216Ad",
+    "safety": {
+      "authority": "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
+      "authorityType": "test-only-deployer",
+      "timelockSeconds": 86400,
+      "maxPositionPrincipal": "1000000000000",
+      "maxVaultPrincipal": "10000000000000",
+      "maxProtocolPrincipal": "100000000000000"
+    }
+  }
+}

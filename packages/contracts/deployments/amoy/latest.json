@@ -3,12 +3,12 @@
   "profile": "safe-only-v1",
   "network": "polygon-amoy",
   "chainId": 80002,
-  "protocolVersion": "lockedin-circle/1.0.0-safe",
-  "deploymentId": "0xd18aed090f4da9a30326437ef301d5814257bbfa0c83044abb786fb429accf64",
-  "deploymentBlock": 51738799,
+  "protocolVersion": "lockedin-circle/1.1.0-safe",
+  "deploymentId": "0xdb7daf75abc54cb5591e649a57586b347bdcee3bb716be37324eb65438d7b7d0",
+  "deploymentBlock": 51782868,
   "explorer": "https://amoy.polygonscan.com",
-  "gitCommit": "32be74a6e63c4947af0cff22c44601aa8ee1d488",
-  "deploymentTimestamp": "2026-11-01T19:29:38.580Z",
+  "gitCommit": "dbbaf38e8c78bc9d5d361704d6e210d13d1ea622",
+  "deploymentTimestamp": "2026-11-02T07:44:08.258Z",
   "tokenDecimals": 6,
   "contracts": {
     "mockUsdt": {
@@ -17,29 +17,29 @@
       "blockNumber": 50538011
     },
     "safetyController": {
-      "address": "0x37eeB2a83FdECAA33853F7494e67473b8Cb65FB2",
-      "transactionHash": "0xed1b9977e1527469177df3127b00317a6c0f3e5016778fbe177f0b8df739c172",
-      "blockNumber": 51738793
+      "address": "0x839Ce82e34Af60719a3194F57fD8b536D852ABcb",
+      "transactionHash": "0xff3d76a10c232a90423274268a5fe22f83cc402edb0766ec3f649d909971ccee",
+      "blockNumber": 51782853
     },
     "savingsVaultDeployer": {
-      "address": "0x6Cd9597A596c4dB4F97A62AAA24eB211D08018A4",
-      "transactionHash": "0x42a30f78a8b6ec0d4b05f26530f67a95b6c2527430b48c8d3811e0ce1aa20a41",
-      "blockNumber": 51738796
+      "address": "0x621Da883669fcc880d0662029F9Fa7a2Aed61888",
+      "transactionHash": "0x2edcbe0c502ec5693a000140f70bef0ebb7c00ecb067bbee7b46af2e6a59f081",
+      "blockNumber": 51782859
     },
     "vaultFactory": {
-      "address": "0x6810c7a352ca85d4a7BA3DDBCEDd9E425EfaDe1f",
-      "transactionHash": "0x2a8315cd63bd508ed41a69d8a485a72f0ae2c6d4fdd7990608baf4762db8f9be",
-      "blockNumber": 51738799
+      "address": "0x5552F00F4288265beB0423Bff44b058B39BC8FF6",
+      "transactionHash": "0x749fd4a03ed20907399bbbd940dc03ff23dd32cf2ae9c6530c776683ac32c584",
+      "blockNumber": 51782868
     },
     "earlyExitMarket": {
-      "address": "0x47527E4593f203108FB41f8Ca2dBd48Cf4c364cF",
-      "transactionHash": "0x2a8315cd63bd508ed41a69d8a485a72f0ae2c6d4fdd7990608baf4762db8f9be",
-      "blockNumber": 51738799
+      "address": "0x0050333f274D4AdBC9d95e4521D5B5D86CD7b164",
+      "transactionHash": "0x749fd4a03ed20907399bbbd940dc03ff23dd32cf2ae9c6530c776683ac32c584",
+      "blockNumber": 51782868
     }
   },
   "constructorArguments": {
     "safety": [
-      "0x6810c7a352ca85d4a7BA3DDBCEDd9E425EfaDe1f",
+      "0x5552F00F4288265beB0423Bff44b058B39BC8FF6",
       "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
       86400,
       "1000000000000",
@@ -47,14 +47,14 @@
       "100000000000000"
     ],
     "vaultDeployer": [
-      "0x6810c7a352ca85d4a7BA3DDBCEDd9E425EfaDe1f"
+      "0x5552F00F4288265beB0423Bff44b058B39BC8FF6"
     ],
     "factory": [
       "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
       "0x7c5ba0eE0e5aE7E426CfeE5B09C4380Ee10216Ad",
       80002,
-      "0x6Cd9597A596c4dB4F97A62AAA24eB211D08018A4",
-      "0x37eeB2a83FdECAA33853F7494e67473b8Cb65FB2"
+      "0x621Da883669fcc880d0662029F9Fa7a2Aed61888",
+      "0x839Ce82e34Af60719a3194F57fD8b536D852ABcb"
     ]
   },
   "factoryConfiguration": {
