@@ -10,7 +10,8 @@ import {
   projectEvent,
   rebuildProjections,
 } from './projector.js'
-import type { CanonicalEvent, IndexerStatus, StoredEvent } from './types.js'
+import type { CanonicalEvent, IndexedBatch, IndexerStatus, StoredEvent } from './types.js'
+import { redactSensitiveText } from '../redact.js'
 
 interface CursorRow {
   last_safe_block: string
@@ -43,6 +44,8 @@ export class BlockchainIndexer {
     private readonly config: ApiConfig,
     private readonly pool: DatabasePool,
     provider?: JsonRpcProvider,
+    private readonly onIndexed?: (batch: IndexedBatch) => void,
+    private readonly prioritizeCatchUp = false,
   ) {
     this.provider = provider ?? new JsonRpcProvider(config.rpcUrl, config.manifest.chainId, {
       staticNetwork: true,
@@ -58,15 +61,19 @@ export class BlockchainIndexer {
   async run(): Promise<void> {
     this.stopped = false
     while (!this.stopped) {
+      let processed = 0
       try {
-        await this.indexOnce()
+        processed = await this.indexOnce()
       } catch (error) {
         // A database outage can prevent recording its own error; the poller must
         // still remain alive and retry instead of terminating silently.
         await this.recordError(error).catch(() => undefined)
       }
       if (!this.stopped) {
-        await new Promise((resolve) => setTimeout(resolve, this.config.pollIntervalMs))
+        const delay = this.prioritizeCatchUp && processed >= this.config.logRange
+          ? Math.min(250, this.config.pollIntervalMs)
+          : this.config.pollIntervalMs
+        await new Promise((resolve) => setTimeout(resolve, delay))
       }
     }
   }
@@ -131,6 +138,19 @@ export class BlockchainIndexer {
            updated_at = now()`,
         [this.config.manifest.chainId, this.config.manifest.deploymentId, finalBlock.number, requiredHash(finalBlock.hash)],
       )
+    })
+    if (events.length > 0) this.onIndexed?.({
+      chainId: this.config.manifest.chainId,
+      deploymentId: this.config.manifest.deploymentId,
+      fromBlock,
+      toBlock,
+      events: events.map(({ blockNumber, transactionHash, contractAddress, eventName, payload }) => ({
+        blockNumber,
+        transactionHash,
+        contractAddress,
+        eventName,
+        payload,
+      })),
     })
     return toBlock - fromBlock + 1
   }
@@ -392,7 +412,7 @@ export class BlockchainIndexer {
   }
 
   private async recordError(error: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = redactSensitiveText(error instanceof Error ? error.message : String(error))
     const blockNumber = Math.max(0, this.config.deploymentBlock - 1)
     const block = await this.provider.getBlock(blockNumber).catch(() => null)
     await this.pool.query(

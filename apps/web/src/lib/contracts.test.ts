@@ -57,7 +57,7 @@ describe("contract error copy", () => {
     const message = describeContractError(
       new Error('could not coalesce error (error={ "code": -32603 }, payload={ "method": "eth_sendTransaction" })')
     );
-    expect(message).toMatch(/Polygon Amoy is taking longer/i);
+    expect(message).toMatch(/wallet.*Polygon RPC could not submit/i);
     expect(message).not.toMatch(/-32603|payload|eth_sendTransaction/i);
   });
 
@@ -78,6 +78,33 @@ describe("contract error copy", () => {
       /no longer available/i
     );
   });
+
+  it("decodes a nested wallet-provider listing rejection into an actionable reason", () => {
+    const message = describeContractError({
+      code: -32603,
+      error: { data: "0x8c02a5a1", message: "execution reverted: PositionListed()" },
+    });
+    expect(message).toMatch(/already listed.*cancel the listing/i);
+    expect(message).not.toMatch(/32603|8c02/i);
+  });
+
+  it("explains insufficient token balance", () => {
+    expect(describeContractError({
+      cause: { message: "ERC20InsufficientBalance" },
+    })).toMatch(/enough USDT/i);
+  });
+
+  it("explains invalid group creation settings", () => {
+    expect(describeContractError({
+      error: { message: "execution reverted", errorName: "InvalidConfiguration" },
+    })).toMatch(/goal.*emergency.*member limit.*join deadline.*maturity/i);
+  });
+
+  it("does not fall back to the old reasonless error copy", () => {
+    const message = describeContractError({ unexpected: true });
+    expect(message).toMatch(/wallet did not provide a reason/i);
+    expect(message).not.toMatch(/action could not be completed/i);
+  });
 });
 
 describe("group creation compatibility", () => {
@@ -88,6 +115,8 @@ describe("group creation compatibility", () => {
   it("allows creator-first circles on immutable Safe-only V1", () => {
     expect(groupCreationUnsupportedReason("lockedin-circle/1.0.0-safe", "public")).toBeNull();
     expect(supportsOpenEnrollmentProtocol("lockedin-circle/1.0.0-safe")).toBe(true);
+    expect(groupCreationUnsupportedReason("lockedin-circle/1.1.0-safe", "public")).toBeNull();
+    expect(supportsOpenEnrollmentProtocol("lockedin-circle/1.1.0-safe")).toBe(true);
   });
 
   it("explains the fixed-member limitation on the deployed 0.5 factory", () => {

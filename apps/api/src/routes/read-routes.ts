@@ -20,16 +20,32 @@ export async function registerReadRoutes(
   app.get('/api/vaults', async (request) => {
     const query = pageSchema.extend({
       type: z.enum(['personal', 'group']).optional(),
+      wallet: z.string().optional(),
+      role: z.enum(['all', 'member']).default('all'),
     }).parse(request.query)
+    const wallet = query.wallet ? address(query.wallet) : null
     const result = await pool.query(
       `SELECT * FROM vaults
        WHERE ($1::boolean IS NULL OR is_group = $1)
          AND ($2::bigint IS NULL OR creation_block_number < $2)
+         AND ($3::text IS NULL OR creator = $3
+           OR EXISTS (SELECT 1 FROM group_invitations i
+                      WHERE i.vault_address = vaults.address AND i.member_address = $3)
+           OR EXISTS (SELECT 1 FROM group_member_statuses s
+                      WHERE s.vault_address = vaults.address AND s.member_address = $3)
+           OR EXISTS (SELECT 1 FROM chain_events e
+                      WHERE e.contract_address = vaults.address
+                        AND e.event_name IN ('PublicGroupJoined', 'Deposited')
+                        AND lower(e.payload ->> 'member') = $3)
+           OR ($4::boolean AND EXISTS (SELECT 1 FROM completed_trades t
+                      WHERE t.vault_address = vaults.address AND (t.seller = $3 OR t.provider = $3))))
        ORDER BY creation_block_number DESC, address
-       LIMIT $3`,
+       LIMIT $5`,
       [
         query.type ? query.type === 'group' : null,
         query.beforeBlock ?? null,
+        wallet,
+        query.role === 'all',
         query.limit,
       ],
     )
@@ -66,8 +82,9 @@ export async function registerReadRoutes(
     }).parse(request.query)
     const wallet = query.wallet ? address(query.wallet) : null
     const result = await pool.query(
-      `SELECT t.*, v.is_group
+      `SELECT t.*, v.is_group, e.recorded_at
        FROM completed_trades t JOIN vaults v ON v.address = t.vault_address
+       JOIN chain_events e ON e.id = t.source_event_id
        WHERE ($1::boolean IS NULL OR v.is_group = $1)
          AND ($2::text IS NULL OR t.seller = $2 OR t.provider = $2)
          AND ($3::bigint IS NULL OR t.block_number < $3)
@@ -89,7 +106,7 @@ export async function registerReadRoutes(
     const wallet = address(parameters.wallet)
     const result = await pool.query(
       `SELECT id, block_number, transaction_hash, log_index, contract_address,
-              event_name, payload
+              event_name, payload, recorded_at
        FROM chain_events
        WHERE payload::text ILIKE $1
          AND ($2::bigint IS NULL OR block_number < $2)

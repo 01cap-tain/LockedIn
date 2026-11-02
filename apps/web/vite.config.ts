@@ -107,6 +107,14 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: true,
     port: 5173,
+    // Keep the API bound to localhost during LAN/mobile development. Browsers
+    // use this same-origin proxy, including the long-lived SSE connection.
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: false,
+      },
+    },
   },
   build: {
     rollupOptions: {

@@ -4,12 +4,14 @@ import { createDatabasePool } from './db.js'
 import { MultiDeploymentIndexer } from './indexer/multi-indexer.js'
 import { runMigrations } from './migrations.js'
 import { runNotificationSweep } from './notifications/sweep.js'
+import { IndexerEventStream } from './realtime/event-stream.js'
 
 const config = loadConfig()
 const pool = createDatabasePool(config.databaseUrl)
 await runMigrations(pool)
-const indexer = new MultiDeploymentIndexer(config, pool)
-const app = await buildApp(config, pool, indexer)
+const stream = new IndexerEventStream()
+const indexer = new MultiDeploymentIndexer(config, pool, (batch) => stream.publish(batch))
+const app = await buildApp(config, pool, indexer, stream)
 const indexerTask = indexer.run()
 
 const sweepTimer = setInterval(() => {

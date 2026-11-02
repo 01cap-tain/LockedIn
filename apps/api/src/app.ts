@@ -8,11 +8,14 @@ import type { DatabasePool } from './db.js'
 import type { MultiDeploymentIndexer } from './indexer/multi-indexer.js'
 import { registerAuthRoutes } from './routes/auth-routes.js'
 import { registerReadRoutes } from './routes/read-routes.js'
+import { registerStreamRoutes } from './routes/stream-routes.js'
+import type { IndexerEventStream } from './realtime/event-stream.js'
 
 export async function buildApp(
   config: ApiConfig,
   pool: DatabasePool,
   indexer: MultiDeploymentIndexer,
+  stream: IndexerEventStream,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: true })
   const auth = new WalletAuthService(
@@ -20,6 +23,14 @@ export async function buildApp(
     config.nonceMinutes,
     config.sessionMinutes,
   )
+
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin
+    if (origin && config.corsOrigins.includes(origin)) {
+      reply.header('Access-Control-Allow-Origin', origin)
+      reply.header('Vary', 'Origin')
+    }
+  })
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) {
@@ -74,6 +85,7 @@ export async function buildApp(
   })
 
   await registerReadRoutes(app, pool)
+  await registerStreamRoutes(app, stream)
   await registerAuthRoutes(app, pool, auth)
   return app
 }

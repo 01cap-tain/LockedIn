@@ -5,7 +5,7 @@ import { createActivatedGroup, deployFactory } from './helpers/deploy-factory.js
 
 const UNIT = 10n ** 6n
 const DAY = 24n * 60n * 60n
-const MIN_DURATION = 7n * DAY
+const MIN_DURATION = DAY
 const MAX_DURATION = 5n * 365n * DAY
 
 describe('Immutable Safe-only V1 production boundaries', function () {
@@ -48,7 +48,7 @@ describe('Immutable Safe-only V1 production boundaries', function () {
       .to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
   })
 
-  it('enforces the exact seven-day minimum boundary', async function () {
+  it('enforces the exact 24-hour minimum boundary', async function () {
     await expect(createAt(MIN_DURATION - 1n))
       .to.be.revertedWithCustomError(factory, 'InvalidConfiguration')
     await expect(createAt(MIN_DURATION)).to.emit(factory, 'VaultCreated')

@@ -201,6 +201,19 @@ describe('Cooperative group exits', function () {
       .to.be.revertedWithCustomError(vault, 'PositionListed')
   })
 
+  it('allows only one unresolved cooperative request per group', async function () {
+    const vault = await createGroup()
+    await completeGoals(vault)
+    await vault.connect(members[0]).requestGroupExit()
+    await expect(vault.connect(members[1]).requestGroupExit())
+      .to.be.revertedWithCustomError(vault, 'GroupExitUnresolved')
+
+    await vault.connect(members[0]).cancelGroupExit(0)
+    await expect(vault.connect(members[1]).requestGroupExit())
+      .to.emit(vault, 'GroupExitRequested')
+    expect(await vault.activeGroupExitRequestIdPlusOne()).to.equal(2n)
+  })
+
   it('expires after 24 hours and permits the market fallback', async function () {
     const vault = await createGroup()
     await completeGoals(vault)
@@ -322,7 +335,7 @@ describe('Cooperative group exits', function () {
       .to.emit(vault, 'GroupExitRequested')
   })
 
-  it('requires all active goals before an authorized cooperative payout', async function () {
+  it('allows an authorized cooperative payout before every active goal is complete', async function () {
     const vault = await createGroup()
     await deposit(vault, members[0], 0)
     for (let index = 1; index < members.length; index += 1) {
@@ -330,14 +343,9 @@ describe('Cooperative group exits', function () {
     }
     await vault.connect(members[0]).requestGroupExit()
     await authorize(vault)
-    await expect(vault.connect(members[0]).completeGroupExit(0))
-      .to.be.revertedWithCustomError(vault, 'GroupGoalsIncomplete')
-
-    for (let index = 1; index < members.length; index += 1) {
-      await deposit(vault, members[index], index, 50n * UNIT)
-    }
     await vault.connect(members[0]).completeGroupExit(0)
     expect(await vault.memberStatus(0)).to.equal(1n)
+    expect(await vault.activeMemberCount()).to.equal(4n)
   })
 
   it('never gives a market buyer membership, voting power, or reward eligibility', async function () {
@@ -364,24 +372,47 @@ describe('Cooperative group exits', function () {
       .to.be.revertedWithCustomError(vault, 'MemberOnly')
   })
 
-  it('rejects a four-to-three cooperative exit and permits market fallback after authorization expiry', async function () {
+  it('lets a group-position buyer claim the locked position at maturity', async function () {
+    const vault = await createGroup()
+    await completeGoals(vault)
+    const payout = await listingQuote(vault)
+    await market.connect(members[0]).createListing(await vault.getAddress(), 0, maturity, payout)
+    const fee = await market.feeFor(payout)
+    await token.mint(await provider.getAddress(), payout + fee)
+    await token.connect(provider).approve(await market.getAddress(), payout + fee)
+    await market.connect(provider).fundListing(0)
+
+    const providerBefore = await token.balanceOf(await provider.getAddress())
+    const claim = await vault.positionValue(0)
+    await networkHelpers.time.increaseTo(maturity)
+    await expect(vault.connect(members[0]).withdrawLocked(0))
+      .to.be.revertedWithCustomError(vault, 'PositionOwnerOnly')
+    await expect(vault.connect(provider).withdrawLocked(0))
+      .to.emit(vault, 'LockedWithdrawn')
+      .withArgs(0, await provider.getAddress(), claim)
+    expect(await token.balanceOf(await provider.getAddress())).to.equal(providerBefore + claim)
+    expect((await vault.position(0)).emergencyBalance).to.equal(10n * UNIT)
+  })
+
+  it('allows exits from four to three and three to two, then enforces the two-member floor', async function () {
     const vault = await createGroup(4)
     await completeGoals(vault, 4)
     await vault.connect(members[0]).requestGroupExit()
     await authorize(vault, 0n, 4)
-    await expect(vault.connect(members[0]).completeGroupExit(0))
-      .to.be.revertedWithCustomError(vault, 'GroupEarlyUnlockDisabled')
-    expect(await vault.activeMemberCount()).to.equal(4n)
+    await vault.connect(members[0]).completeGroupExit(0)
+    expect(await vault.activeMemberCount()).to.equal(3n)
 
-    const request = await vault.groupExitRequests(0)
-    await networkHelpers.time.increaseTo(request.authorizationExpiresAt)
-    const payout = await listingQuote(vault)
-    await expect(
-      market.connect(members[0]).createListing(await vault.getAddress(), 0, maturity, payout),
-    ).to.emit(vault, 'GroupExitAuthorizationExpired')
+    await vault.connect(members[1]).requestGroupExit()
+    await vault.connect(members[2]).approveGroupExit(1)
+    await vault.connect(members[3]).approveGroupExit(1)
+    await vault.connect(members[1]).completeGroupExit(1)
+    expect(await vault.activeMemberCount()).to.equal(2n)
+
+    await expect(vault.connect(members[2]).requestGroupExit())
+      .to.be.revertedWithCustomError(vault, 'GroupEarlyUnlockDisabled')
   })
 
-  it('allows a five-to-four cooperative exit but rejects the next exit', async function () {
+  it('allows sequential cooperative exits while two active members remain', async function () {
     const vault = await createGroup(5)
     await completeGoals(vault, 5)
     await vault.connect(members[0]).requestGroupExit()
@@ -393,11 +424,11 @@ describe('Cooperative group exits', function () {
     for (let index = 2; index < 5; index += 1) {
       await vault.connect(members[index]).approveGroupExit(1)
     }
-    await expect(vault.connect(members[1]).completeGroupExit(1))
-      .to.be.revertedWithCustomError(vault, 'GroupEarlyUnlockDisabled')
+    await vault.connect(members[1]).completeGroupExit(1)
+    expect(await vault.activeMemberCount()).to.equal(3n)
   })
 
-  it('allows two cooperative exits from a six-member group, leaving four', async function () {
+  it('allows four cooperative exits from a six-member group, leaving two', async function () {
     const sixth = outsider
     members.push(sixth)
     const vault = await createGroup(6)
@@ -410,7 +441,14 @@ describe('Cooperative group exits', function () {
       await vault.connect(members[index]).approveGroupExit(1)
     }
     await vault.connect(members[1]).completeGroupExit(1)
-    expect(await vault.activeMemberCount()).to.equal(4n)
+    for (let requester = 2; requester < 4; requester += 1) {
+      await vault.connect(members[requester]).requestGroupExit()
+      for (let approver = requester + 1; approver < 6; approver += 1) {
+        await vault.connect(members[approver]).approveGroupExit(BigInt(requester))
+      }
+      await vault.connect(members[requester]).completeGroupExit(BigInt(requester))
+    }
+    expect(await vault.activeMemberCount()).to.equal(2n)
   })
 
   it('allows maturity withdrawals without approval and leaves personal vault behavior unchanged', async function () {

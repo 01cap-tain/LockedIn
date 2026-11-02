@@ -8,7 +8,7 @@ import { network } from 'hardhat'
 const UNIT = 10n ** 6n
 const directory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../deployments/amoy')
 const manifest = JSON.parse(await readFile(path.join(directory, 'latest.json'), 'utf8'))
-assert.equal(manifest.protocolVersion, 'lockedin-circle/1.0.0-safe')
+assert.equal(manifest.protocolVersion, 'lockedin-circle/1.1.0-safe')
 assert.equal(manifest.profile, 'safe-only-v1')
 
 const { ethers } = await network.create('amoy')

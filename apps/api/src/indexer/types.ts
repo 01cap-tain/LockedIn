@@ -18,6 +18,15 @@ export interface StoredEvent extends CanonicalEvent {
   id: string
 }
 
+export interface IndexedBatch {
+  chainId: number
+  deploymentId: string
+  fromBlock: number
+  toBlock: number
+  events: Array<Pick<CanonicalEvent,
+    'blockNumber' | 'transactionHash' | 'contractAddress' | 'eventName' | 'payload'>>
+}
+
 export interface IndexerStatus {
   rpcStatus: 'ok'
   chainId: number

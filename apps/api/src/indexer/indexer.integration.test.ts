@@ -111,6 +111,7 @@ const config: ApiConfig = {
   nonceMinutes: 5,
   host: '127.0.0.1',
   port: 3_001,
+  corsOrigins: ['http://localhost:5173'],
 }
 config.deployments = [{
   manifestPath: config.manifestPath,

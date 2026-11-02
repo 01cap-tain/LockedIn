@@ -4,7 +4,7 @@ LockedIn Circle is a Nimiq Pay Mini App prototype for personal and group savings
 
 The Nimiq and EVM addresses are separate identities and are displayed independently. Only the connected EVM address owns vault positions and signs contract transactions.
 
-Group vaults retain one isolated position per member. They are not Nimiq multisig or shared-custody wallets. At least four proposed members must accept the immutable terms within 72 hours before deposits are enabled. Before maturity, a member can request a fee-free cooperative exit; every other required active Polygon EVM member must independently retain at least 25% of their target in active principal and approve on-chain within 24 hours. Authorization then has a separate 24-hour execution window and cannot leave fewer than four active savers. Cancellation or expiry enables the deterministic Early-Exit Market fallback.
+Group vaults retain one isolated position per member. They are not Nimiq multisig or shared-custody wallets. At least four members must join before deposits are enabled. Before maturity, a member can request a fee-free cooperative exit; every other required active Polygon EVM member must independently retain at least 25% of their target in active principal and approve on-chain within 24 hours. Authorization then has a separate 24-hour execution window and cannot leave fewer than two active savers. Only one cooperative request may remain unresolved per circle. Cancellation or expiry enables the deterministic Early-Exit Market fallback.
 
 ## Requirements
 
@@ -96,7 +96,7 @@ broadcasts a transaction.
 - Amoy uses MockUSDT and MockYieldAdapter; it does not claim real Aave integration.
 - Production Aave behavior is tested locally and optionally against a Polygon-mainnet fork.
 - Early exits are full-position, pre-maturity sales only.
-- Cooperative group exits use a 24-hour window and require unanimous N-1 approval from active members who have each saved at least 25% of their target. Completion still requires completed active-member goals and at least four active members; market exits retain the system discount and fee.
+- Cooperative group exits use a 24-hour window and require unanimous N-1 approval from active members who have each saved at least 25% of their target. Goal completion is not required, but completion must leave at least two active members; market exits retain the system discount and fee.
 - Nimiq Pay Amoy support is not officially documented and requires a real-device probe.
 - No guardian recovery, borrowing or mainnet deployment exists. The PostgreSQL service is a read-only event projection and never has financial authority.
 - Contracts remain unaudited.

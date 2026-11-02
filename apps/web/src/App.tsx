@@ -47,6 +47,7 @@ import {
   type GroupExitRequestSnapshot,
   type VaultSnapshot,
   type VaultSummary,
+  type IndexedVaultReference,
   type PublicGroupSummary,
   type DeploymentVerification,
 } from "./lib/contracts";
@@ -89,6 +90,14 @@ import {
   walletDisplayName,
   walletFallbackName,
 } from "./lib/user-profile";
+import {
+  indexedApiAvailable,
+  loadIndexedActiveListingIds,
+  loadIndexedActivity,
+  loadIndexedMemberVaults,
+  loadIndexedTrades,
+  subscribeToIndexedBatches,
+} from "./lib/indexed-api";
 import {
   ArrowRight,
   ArrowLeft,
@@ -734,6 +743,9 @@ export function App() {
   const [minimumPayout, setMinimumPayout] = useState("0");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [completedTrades, setCompletedTrades] = useState<CompletedTrade[]>([]);
+  // Confirmed purchases remain visible immediately while the durable indexer
+  // waits for its configured confirmation depth and catches up.
+  const pendingCompletedTrades = useRef<CompletedTrade[]>([]);
   const [publicTradesError, setPublicTradesError] = useState<string | null>(null);
   const [historyView, setHistoryView] = useState<HistoryView>("trades");
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
@@ -908,12 +920,12 @@ export function App() {
   );
   const hasContributionPlan = Number(planContribution) > 0;
   const maturityTime = new Date(maturity).getTime();
-  const minimumMaturityTime = Date.now() + 7 * 86_400_000;
+  const minimumMaturityTime = Date.now() + 86_400_000;
   const maximumMaturityTime = Date.now() + 5 * 365 * 86_400_000;
   const maturityValidationError = !Number.isFinite(maturityTime)
     ? "Choose a valid maturity date."
     : maturityTime < minimumMaturityTime
-      ? "The plan must run for at least 7 days."
+      ? "The plan must run for at least 24 hours."
       : maturityTime > maximumMaturityTime
         ? "The plan cannot run for more than 5 years."
         : null;
@@ -1287,6 +1299,86 @@ export function App() {
   }, [deploymentReady, evmSession?.address]);
 
   useEffect(() => {
+    if (!deploymentReady || !indexedApiAvailable()) return;
+    let refreshTimer: number | undefined;
+    const unsubscribe = subscribeToIndexedBatches((batch) => {
+      if (batch.events.length === 0) return;
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      // Several logs can belong to one transaction. Coalesce them into one
+      // projection refresh and leave current balances to direct chain reads.
+      refreshTimer = window.setTimeout(() => {
+        void refreshPublicTradeHistory();
+        if (evmSession && deployment.status === "valid") {
+          void refreshPortfolio(evmSession, false).catch((error) =>
+            console.warn("Live portfolio refresh deferred", error)
+          );
+        }
+        if (batch.events.some((event) =>
+          event.eventName.startsWith("Group") ||
+          event.eventName === "PublicGroupJoined" ||
+          event.eventName === "VaultCreated"
+        )) void refreshPublicGroups(false);
+      }, 500);
+    });
+    return () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, [deploymentReady, evmSession?.address, deployment.status]);
+
+  useEffect(() => {
+    if (!evmSession || deployment.status !== "valid" || route !== "market") return;
+    const refresh = async () => {
+      try {
+        const indexed = indexedApiAvailable()
+          ? await loadIndexedActiveListingIds()
+          : undefined;
+        setListings(await loadAllExitListings(evmSession.signer, indexed));
+      } catch (error) {
+        console.warn("Live exit-market refresh deferred", error);
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [route, evmSession?.address, deployment.status]);
+
+  useEffect(() => {
+    if (!snapshot || !evmSession || deployment.status !== "valid") return;
+    const address = snapshot.address;
+    const positionId = snapshot.positionId;
+    const refresh = async () => {
+      try {
+        const [nextSnapshot, liveExit] = await Promise.all([
+          loadVault(evmSession.signer, address, positionId),
+          loadExitMarket(evmSession.signer, { address, positionId }),
+        ]);
+        setSnapshot((current) =>
+          current?.address.toLowerCase() === address.toLowerCase() &&
+          current.positionId === positionId
+            ? nextSnapshot
+            : current
+        );
+        vaultSnapshotCache.current.set(`${address.toLowerCase()}:${positionId.toString()}`, nextSnapshot);
+        setExitState(liveExit);
+        setListings((current) => {
+          const remaining = current.filter((entry) =>
+            entry.listing?.vault.toLowerCase() !== address.toLowerCase() ||
+            entry.listing.positionId !== positionId
+          );
+          return liveExit.listing ? [liveExit, ...remaining] : remaining;
+        });
+        if (snapshot.ownsLockedPosition && !nextSnapshot.ownsLockedPosition) {
+          void refreshPortfolio(evmSession, false);
+        }
+      } catch (error) {
+        console.warn("Open vault live refresh deferred", error);
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 12_000);
+    return () => window.clearInterval(timer);
+  }, [snapshot?.address, snapshot?.positionId.toString(), snapshot?.ownsLockedPosition, evmSession?.address, deployment.status]);
+
+  useEffect(() => {
     // Account and network changes invalidate every address-scoped query. Clear
     // the previous portfolio before reconnecting so one wallet never sees
     // another wallet's cached positions in the interface.
@@ -1412,13 +1504,51 @@ export function App() {
     session = requireSession(),
     reopenCurrentVault = true
   ): Promise<void> {
-    // The chain remains authoritative. This MVP reconstructs the portfolio and
-    // activity feed from contract views and events rather than trusting a DB.
+    // Indexed projections provide discovery and history. Current ownership,
+    // balances and position values are still read from the contracts below.
     setPortfolioLoading(true);
     try {
+      // History is an indexed projection and must render independently from
+      // slower authoritative contract reads used by vault cards and actions.
+      const activityPromise = indexedApiAvailable()
+        ? loadIndexedActivity(session.address)
+            .catch((error) => {
+              console.warn("Indexed activity unavailable; scanning wallet contracts", error);
+              return loadActivity(
+                session.signer,
+                vaults.map((vault) => vault.address)
+              );
+            })
+            .then((items) => {
+              setActivity(items);
+              return items;
+            })
+        : null;
+      let projectedTrades = [...pendingCompletedTrades.current, ...completedTrades];
+      let indexedMemberVaults: IndexedVaultReference[] | undefined;
+      if (indexedApiAvailable()) {
+        try {
+          const [indexedTrades, indexedVaults] = await Promise.all([
+            loadIndexedTrades(),
+            loadIndexedMemberVaults(session.address),
+          ]);
+          pendingCompletedTrades.current = pendingCompletedTrades.current.filter(
+            (pending) => !indexedTrades.some(
+              (indexed) => indexed.transactionHash.toLowerCase() === pending.transactionHash.toLowerCase()
+            )
+          );
+          projectedTrades = [...pendingCompletedTrades.current, ...indexedTrades];
+          indexedMemberVaults = indexedVaults;
+          setCompletedTrades(projectedTrades);
+          setPublicTradesError(null);
+        } catch (error) {
+          console.warn("Indexed trade discovery unavailable; using cached projection", error);
+        }
+      }
       const nextVaults = await loadVaultsForSigner(
         session.signer,
-        completedTrades
+        projectedTrades,
+        indexedMemberVaults
       );
       setVaults(nextVaults);
 
@@ -1427,23 +1557,29 @@ export function App() {
     // look reverted or prevent the newly created vault from opening.
       const [listingsResult, activityResult, balanceResult, nativeBalanceResult] =
         await Promise.allSettled([
-          loadAllExitListings(session.signer),
-          loadActivity(
-            session.signer,
-            nextVaults.map((vault) => vault.address)
-          ),
+          indexedApiAvailable()
+            ? loadIndexedActiveListingIds()
+                .then((ids) => loadAllExitListings(session.signer, ids))
+                .catch((error) => {
+                  console.warn("Indexed listing discovery unavailable; scanning the market", error);
+                  return loadAllExitListings(session.signer);
+                })
+            : loadAllExitListings(session.signer),
+          activityPromise ?? loadActivity(
+                session.signer,
+                nextVaults.map((vault) => vault.address)
+              ),
           loadUsdtBalance(session.signer),
           session.signer.provider?.getBalance(session.address) ?? Promise.reject(new Error("Wallet provider unavailable.")),
         ]);
       if (listingsResult.status === "fulfilled")
         setListings(listingsResult.value);
-      if (activityResult.status === "fulfilled")
+      if (!activityPromise && activityResult.status === "fulfilled")
         setActivity(activityResult.value);
       if (balanceResult.status === "fulfilled")
         setMockTokenBalance(balanceResult.value);
       if (nativeBalanceResult.status === "fulfilled")
         setNativeTokenBalance(formatAssetAmount(nativeBalanceResult.value, 18));
-      void refreshPublicTradeHistory();
       if (
         reopenCurrentVault &&
         snapshot &&
@@ -1466,19 +1602,45 @@ export function App() {
 
   async function refreshPublicTradeHistory(): Promise<void> {
     try {
-      const trades = await loadPublicCompletedTrades();
-      setCompletedTrades(trades);
+      let trades: CompletedTrade[];
+      if (indexedApiAvailable()) {
+        try {
+          trades = await loadIndexedTrades();
+        } catch (error) {
+          console.warn("Indexed trade history unavailable; scanning market events", error);
+          trades = await loadPublicCompletedTrades();
+        }
+      } else {
+        trades = await loadPublicCompletedTrades();
+      }
+      pendingCompletedTrades.current = pendingCompletedTrades.current.filter(
+        (pending) => !trades.some(
+          (indexed) => indexed.transactionHash.toLowerCase() === pending.transactionHash.toLowerCase()
+        )
+      );
+      setCompletedTrades([...pendingCompletedTrades.current, ...trades]);
       setPublicTradesError(null);
-      // Public settlement history also discovers positions bought from savers.
-      // Refresh only the compact vault index; do not rescan every activity log.
-      if (evmSession && deployment.status === "valid")
-        setVaults(await loadVaultsForSigner(evmSession.signer, trades));
     } catch (error) {
       console.error("Public trade history failed", error);
       setPublicTradesError(
         "Trade history is temporarily unavailable. Check the selected network and try again."
       );
     }
+  }
+
+  function recordConfirmedPurchase(trade: CompletedTrade): void {
+    pendingCompletedTrades.current = [
+      trade,
+      ...pendingCompletedTrades.current.filter(
+        (candidate) => candidate.transactionHash.toLowerCase() !== trade.transactionHash.toLowerCase()
+      ),
+    ];
+    setCompletedTrades((current) => [
+      trade,
+      ...current.filter(
+        (candidate) => candidate.transactionHash.toLowerCase() !== trade.transactionHash.toLowerCase()
+      ),
+    ]);
   }
 
   async function refreshPublicGroups(showLoading = true): Promise<void> {
@@ -1864,6 +2026,17 @@ export function App() {
     // because a public Amoy endpoint was slow immediately afterwards.
     try {
       await refreshPortfolio(requireSession(), !closesVaultAction);
+      if (exitComposerPosition) {
+        const liveExit = await loadExitMarket(requireSession().signer, exitComposerPosition);
+        setExitState(liveExit);
+        setListings((current) => {
+          const withoutPosition = current.filter((entry) =>
+            entry.listing?.vault.toLowerCase() !== exitComposerPosition.address.toLowerCase() ||
+            entry.listing.positionId !== exitComposerPosition.positionId
+          );
+          return liveExit.listing ? [liveExit, ...withoutPosition] : withoutPosition;
+        });
+      }
       if (!snapshot && selectedListing)
         setExitState(
           await loadExitListing(requireSession().signer, selectedListing.id)
@@ -1904,7 +2077,7 @@ export function App() {
       await assertWalletCanAffordTransaction(session);
       setTransaction({
         status: "pending",
-        message: "Open your wallet to confirm the vault transaction.",
+        message: "Checking the vault settings and exact network feeâ€¦",
       });
       const input: CreateVaultInput = {
         groupMode: mode,
@@ -1918,7 +2091,16 @@ export function App() {
         groupVisibility: mode === "group" ? groupVisibility : undefined,
         enrollmentDeadline: mode === "group" ? enrollmentDeadline : undefined,
       };
-      const created = await createVault(session.signer, input);
+      const created = await createVault(session.signer, input, (stage) =>
+        setTransaction({
+          status: "pending",
+          message: stage === "preflight"
+            ? "Checking the vault settings and exact network feeâ€¦"
+            : stage === "signature"
+              ? "Open your wallet to confirm the vault transaction."
+              : "Transaction submitted. Waiting for Polygon confirmationâ€¦",
+        })
+      );
       const preferences: VaultPlanPreferences = {
         version: 1,
         owner: session.address,
@@ -2401,6 +2583,7 @@ export function App() {
                       >
                         <span>
                           <b>{vaultType(vault.isGroup)} claim #{vault.positionId.toString()}</b>
+                          <em className="tag purchased">Purchased position</em>
                           {vault.legacy && <em className="tag legacy">Legacy vault</em>}
                           <em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em>
                         </span>
@@ -2904,7 +3087,7 @@ export function App() {
               <p className="frequency-explainer full-width">
                 {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
               </p>
-              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Allowed range: 7 days to 5 years.`}</small></div></div>
+              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Allowed range: 24 hours to 5 years.`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -3060,8 +3243,8 @@ export function App() {
                     className={
                       snapshot?.address === vault.address &&
                       snapshot.positionId === vault.positionId
-                        ? `vault-row selected ${vault.isGroup ? "group-vault" : "personal-vault"}`
-                        : `vault-row ${vault.isGroup ? "group-vault" : "personal-vault"}`
+                        ? `vault-row selected ${vault.isGroup ? "group-vault" : "personal-vault"}${!vault.isOriginalMember ? " purchased-vault" : ""}`
+                        : `vault-row ${vault.isGroup ? "group-vault" : "personal-vault"}${!vault.isOriginalMember ? " purchased-vault" : ""}`
                     }
                     key={`${vault.address}-${vault.positionId.toString()}`}
                     onClick={() => {
@@ -3093,6 +3276,7 @@ export function App() {
                     <span className="vault-collection-copy">
                       <span className="vault-collection-title">
                         <strong>{plan?.vaultName || (vault.isGroup ? "Group circle" : "Personal goal")}</strong>
+                        {!vault.isOriginalMember && <em className="tag purchased">Purchased position</em>}
                         {vault.legacy && <em className="tag legacy">Legacy vault</em>}
                         <em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em>
                       </span>
@@ -3151,6 +3335,9 @@ export function App() {
                           : "Earn · Aave V3"
                         : "Safe · no yield"}
                     </span>
+                    {!snapshot.isOriginalMember && snapshot.ownsLockedPosition && (
+                      <span className="tag purchased">Purchased position</span>
+                    )}
                     <h2>
                       {snapshot.isGroup ? snapshot.groupName || "Group savings" : selectedPlan?.vaultName || "Personal savings"}
                     </h2>
@@ -3526,8 +3713,18 @@ export function App() {
                 )}
                 </div>
                 <div className="action-grid">
+                  {ownActiveListing && (
+                    <div className="inline-state listing-deposit-lock" role="status">
+                      <LockKeyhole aria-hidden="true" size={18} />
+                      <div>
+                        <strong>Contributions paused while this exit is listed</strong>
+                        <span>Cancel the active listing before adding more savings to this position.</span>
+                      </div>
+                    </div>
+                  )}
                   {snapshot.ownsLockedPosition &&
                     snapshot.isOriginalMember &&
+                    !ownActiveListing &&
                     (!snapshot.isGroup || vaultDetailTab === "overview") &&
                     (!snapshot.isGroup || snapshot.groupLifecycle === "active") && (
                       <div className="funding-action">
@@ -4328,8 +4525,8 @@ export function App() {
                   if (!window.confirm("Fund this exit at the live contract price? The locked savings claim transfers permanently after settlement; the saver keeps their emergency funds.")) return;
                   void transactAndRefresh(
                     "Funding listing at the live system price…",
-                    () =>
-                      fundExitListing(
+                    async () => {
+                      const trade = await fundExitListing(
                         requireSession().signer,
                         selectedListing.id,
                         undefined,
@@ -4339,7 +4536,9 @@ export function App() {
                             ? "Approve the exact exit payment in your wallet."
                             : "Approval confirmed. Now confirm the irreversible claim purchase.",
                         })
-                      ),
+                      );
+                      recordConfirmedPurchase(trade);
+                    },
                     "Listing funded and locked claim transferred."
                   );
                 }}
@@ -4369,11 +4568,12 @@ export function App() {
                       selectedListing.currentTotalProviderPaid,
                       6
                     );
-                    await fundExitListing(
+                    const trade = await fundExitListing(
                       requireSession().signer,
                       selectedListing.id,
                       maximum
                     );
+                    recordConfirmedPurchase(trade);
                     await refreshPortfolio();
                   }}
                   contractActionLabel="Refresh listing and purchase claim"
@@ -5133,9 +5333,8 @@ function GroupExitPanel({
   onComplete: (requestId: bigint) => void;
   onMarket: () => void;
 }) {
-  const ownUnresolved = requests.some(
+  const unresolvedRequest = requests.some(
     (request) =>
-      request.requester.toLowerCase() === connectedAddress &&
       (request.status === "pending" || request.status === "authorized")
   );
   const requestUnavailableReason = !ownsLockedPosition
@@ -5146,10 +5345,10 @@ function GroupExitPanel({
         ? "The vault has matured; use maturity withdrawal instead."
         : connectedMemberStatus !== "active"
           ? "Only active group members can request a cooperative exit."
-          : ownUnresolved
-            ? "Another request from this position is already pending."
-            : activeMemberCount <= 4
-              ? "The group would fall below four active members."
+          : unresolvedRequest
+            ? "Another group-exit request is already pending."
+            : activeMemberCount <= 2
+              ? "At least two active members must remain in the circle."
               : disabled
                 ? "Finish the current wallet transaction before requesting an exit."
                 : null;
@@ -5182,7 +5381,7 @@ function GroupExitPanel({
           <li>Every other active member must approve within 24 hours.</li>
           <li>Each approver needs active principal equal to at least 25% of their own target.</li>
           <li>After authorization, the requester has 24 hours to complete the exit.</li>
-          <li>At least four active members must remain in the circle.</li>
+          <li>At least two active members must remain in the circle.</li>
           <li>The exiting saver loses group reward eligibility.</li>
           <li>Emergency funds remain with the original saver.</li>
         </ul>

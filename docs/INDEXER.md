@@ -45,6 +45,35 @@ The service creates in-app notifications for invitations, responses, activation,
 
 Copy the safe variable names from `.env.example` into the ignored `.env` and provide a dedicated PostgreSQL role/database. `INDEXER_RPC_URL` must be a read-only RPC; no account key is used.
 
+For a hosted web/API split, also configure:
+
+```text
+# API service
+API_CORS_ORIGINS=https://your-lockedin-web.example
+API_HOST=0.0.0.0
+
+# Frontend build-time variable
+VITE_INDEXER_API_URL=https://your-lockedin-api.example
+```
+
+`API_CORS_ORIGINS` accepts a comma-separated allow-list. Do not place database
+credentials or the indexer RPC URL in a `VITE_` variable.
+Hosted services may supply `PORT` automatically; an explicit `API_PORT` takes
+precedence when both are present.
+
+## Browser data flow
+
+The web application uses PostgreSQL projections for vault discovery, market
+discovery and historical activity. It continues to read ownership, balances,
+current claim values and settlement prices from the contracts. If the API is
+temporarily unavailable, read-only history falls back to bounded chain scans.
+
+`GET /api/events` is a Server-Sent Events stream. It announces finalized
+indexer batches so connected browsers can invalidate their projections without
+a manual refresh. The stream is only a wake-up signal: PostgreSQL provides the
+durable replay, and the chain remains the financial authority. Native
+`EventSource` reconnect behavior handles short mobile-network interruptions.
+
 ```powershell
 npm run contracts:deploy
 npm run api:migrate

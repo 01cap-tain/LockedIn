@@ -1,7 +1,7 @@
 import type { ApiConfig } from '../config.js'
 import type { DatabasePool } from '../db.js'
 import { BlockchainIndexer } from './indexer.js'
-import type { IndexerStatus } from './types.js'
+import type { IndexedBatch, IndexerStatus } from './types.js'
 
 export interface MultiIndexerStatus {
   chainId: number
@@ -14,13 +14,22 @@ export interface MultiIndexerStatus {
 export class MultiDeploymentIndexer {
   private readonly indexers: BlockchainIndexer[]
 
-  constructor(config: ApiConfig, pool: DatabasePool) {
+  constructor(
+    config: ApiConfig,
+    pool: DatabasePool,
+    onIndexed?: (batch: IndexedBatch) => void,
+  ) {
     this.indexers = config.deployments.map((deployment) => new BlockchainIndexer({
       ...config,
       manifestPath: deployment.manifestPath,
       manifest: deployment.manifest,
       deploymentBlock: deployment.deploymentBlock,
-    }, pool))
+      // Historic deployments remain readable from existing projections but
+      // must not consume the free-RPC budget needed for live Safe V1 updates.
+      pollIntervalMs: deployment.active
+        ? config.pollIntervalMs
+        : Math.max(config.pollIntervalMs, 30_000),
+    }, pool, undefined, onIndexed, deployment.active))
   }
 
   async run(): Promise<void> {

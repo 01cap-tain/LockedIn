@@ -23,7 +23,11 @@ const environmentSchema = z.object({
   AUTH_SESSION_MINUTES: z.coerce.number().int().min(1).max(1_440).default(30),
   AUTH_NONCE_MINUTES: z.coerce.number().int().min(1).max(30).default(5),
   API_HOST: z.string().default('127.0.0.1'),
-  API_PORT: z.coerce.number().int().min(1).max(65_535).default(3_001),
+  API_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
+  // Render and similar platforms inject PORT. API_PORT retains explicit
+  // precedence for local development and other hosts.
+  PORT: z.coerce.number().int().min(1).max(65_535).optional(),
+  API_CORS_ORIGINS: z.string().default('http://localhost:5173'),
 })
 
 export interface DeploymentManifest {
@@ -62,6 +66,7 @@ export interface ApiConfig {
   nonceMinutes: number
   host: string
   port: number
+  corsOrigins: string[]
 }
 
 function resolveManifestPath(value: string): string {
@@ -114,7 +119,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     sessionMinutes: parsed.AUTH_SESSION_MINUTES,
     nonceMinutes: parsed.AUTH_NONCE_MINUTES,
     host: parsed.API_HOST,
-    port: parsed.API_PORT,
+    port: parsed.API_PORT ?? parsed.PORT ?? 3_001,
+    corsOrigins: parsed.API_CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
   }
 }
 
