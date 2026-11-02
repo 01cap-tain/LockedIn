@@ -2074,7 +2074,6 @@ export function App() {
     setTransaction({ status: "pending", message: "Checking wallet balance…" });
     try {
       const session = requireSession();
-      await assertWalletCanAffordTransaction(session);
       setTransaction({
         status: "pending",
         message: "Checking the vault settings and exact network feeâ€¦",
@@ -2162,7 +2161,6 @@ export function App() {
           : "Withdrawing locked funds…",
     });
     try {
-      await assertWalletCanAffordTransaction();
       await withdrawLocked(
         requireSession().signer,
         snapshot.address,
@@ -2194,7 +2192,6 @@ export function App() {
     if (!snapshot)
       throw new Error("Open a vault position before withdrawing.");
     const session = requireSession();
-    await assertWalletCanAffordTransaction(session);
     const before = await loadUsdtBalanceUnits(session.signer);
     await withdrawLocked(session.signer, snapshot.address, snapshot.positionId);
     const after = await loadUsdtBalanceUnits(session.signer);

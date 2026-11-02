@@ -988,7 +988,10 @@ export async function createVault(
     undefined,
     { attempts: 2, timeoutMs: 20_000 }
   ));
-  const gasLimit = (estimatedGas * 130n) / 100n;
+  // The RPC estimate simulates the complete CREATE path. A 15% margin covers
+  // small execution variance without reserving an unnecessarily large maximum
+  // fee that can make a sufficiently funded wallet look underfunded.
+  const gasLimit = (estimatedGas * 115n) / 100n;
   if (gasLimit > 10_000_000n)
     throw new Error("This vault needs more gas than the application safety limit allows.");
   const feeOverrides = await transactionOverrides(signer);
@@ -997,7 +1000,7 @@ export async function createVault(
   const maximumNetworkCost = gasLimit * maximumFeePerGas;
   if (balance < maximumNetworkCost) {
     throw new Error(
-      `Insufficient POL for this vault creation. Keep up to ${Number(formatUnits(maximumNetworkCost, 18)).toFixed(4)} POL available for the network fee; unused gas is not charged.`
+      `The connected Amoy account ${creator} has ${Number(formatUnits(balance, 18)).toFixed(4)} POL, but this vault can reserve up to ${Number(formatUnits(maximumNetworkCost, 18)).toFixed(4)} POL for gas. Confirm the account shown in your wallet matches this address.`
     );
   }
   onStage?.("signature");
@@ -1733,15 +1736,16 @@ export async function withdrawLocked(
     undefined,
     { attempts: 2, timeoutMs: 15_000 }
   ));
-  const gasLimit = (estimatedGas * 130n) / 100n;
+  const gasLimit = (estimatedGas * 115n) / 100n;
   if (gasLimit > 1_500_000n)
     throw new Error("This maturity withdrawal exceeds the application gas safety limit.");
   const feeOverrides = await transactionOverrides(signer);
   const maximumFeePerGas = feeOverrides.maxFeePerGas ?? AMOY_MIN_PRIORITY_FEE;
   const maximumNetworkCost = gasLimit * maximumFeePerGas;
-  if (await provider.getBalance(caller) < maximumNetworkCost) {
+  const balance = await provider.getBalance(caller);
+  if (balance < maximumNetworkCost) {
     throw new Error(
-      `Insufficient POL for this withdrawal. Keep up to ${Number(formatUnits(maximumNetworkCost, 18)).toFixed(4)} POL available for the network fee; unused gas is not charged.`
+      `The connected Amoy account ${caller} has ${Number(formatUnits(balance, 18)).toFixed(4)} POL, but this withdrawal can reserve up to ${Number(formatUnits(maximumNetworkCost, 18)).toFixed(4)} POL for gas. Confirm the account shown in your wallet matches this address.`
     );
   }
   const vault = new Contract(address, vaultAbi, signer);
