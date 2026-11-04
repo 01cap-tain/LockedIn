@@ -159,6 +159,18 @@ contract ReentrantMarketSeller is ITokenReceiver {
         vault_.joinPublicGroup(target, emergencyBps);
     }
 
+    function joinInviteOnlyGroup(
+        SavingsVault vault_,
+        address invitee,
+        bytes32 secret,
+        uint64 expiry,
+        uint256 nonce,
+        uint256 target,
+        uint16 emergencyBps
+    ) external {
+        vault_.joinInviteOnlyGroup(invitee, secret, expiry, nonce, target, emergencyBps);
+    }
+
     function deposit(uint256 positionId, uint256 amount) external {
         token.approve(address(vault), amount);
         vault.deposit(positionId, amount);
@@ -198,6 +210,18 @@ contract ReentrantMember is ITokenReceiver {
 
     function joinGroup(SavingsVault vault_, uint256 target, uint16 emergencyBps) external {
         vault_.joinPublicGroup(target, emergencyBps);
+    }
+
+    function joinInviteOnlyGroup(
+        SavingsVault vault_,
+        address invitee,
+        bytes32 secret,
+        uint64 expiry,
+        uint256 nonce,
+        uint256 target,
+        uint16 emergencyBps
+    ) external {
+        vault_.joinInviteOnlyGroup(invitee, secret, expiry, nonce, target, emergencyBps);
     }
 
     function deposit(uint256 amount) external {

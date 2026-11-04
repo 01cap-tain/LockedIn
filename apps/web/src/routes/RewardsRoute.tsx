@@ -1,26 +1,17 @@
-import { BadgeCheck, Gift, LockKeyhole, ShieldCheck, Sparkles, Trophy } from "lucide-react";
-
-/** Explains deterministic epochs without implying an unfunded reward promise. */
+/** Rewards remain intentionally unavailable in Safe-only V1. */
 export function RewardsRoute() {
   return (
-    <section className="route-page rewards-companion-page">
-      <header className="rewards-hero">
-        <span className="reward-hero-icon"><Trophy aria-hidden="true" size={25} /></span>
-        <div><span className="eyebrow">Rewards · Coming soon</span><h2>Complete together. Celebrate together.</h2><p>Milestones remain visible, but V1 has no active reward campaign or claim transaction.</p></div>
-      </header>
-      <div className="reward-milestones" aria-label="Savings milestones">
-        {[25, 50, 75, 100].map((value) => <div key={value}><span>{value}%</span><i /><small>{value === 100 ? "Goal complete" : "Savings milestone"}</small></div>)}
+    <section className="route-page rewards-minimal-page">
+      <div className="reward-coming-soon" role="status" aria-label="Rewards coming soon">
+        <button className="reward-btn reward-btn-large" disabled type="button" aria-label="Rewards unavailable">
+          <span className="reward-icon-container" aria-hidden="true">
+            <svg className="reward-box-top" viewBox="0 0 60 20"><path d="M2 18H58" /><circle cx="20.5" cy="9.5" r="7" /><circle cx="38.5" cy="9.5" r="7" /></svg>
+            <svg className="reward-box-body" viewBox="0 0 58 44"><rect x="4" y="4" width="50" height="36" rx="3" /><path d="M1 29H57M45 20L36 3M21 3L13 20" /></svg>
+            <span className="reward-coin" />
+          </span>
+        </button>
+        <span>Coming soon</span>
       </div>
-      <div className="reward-card-grid">
-        <article className="reward-card"><BadgeCheck aria-hidden="true" /><div><strong>Finish your personal goal</strong><span>Your own target must be completed before maturity.</span></div></article>
-        <article className="reward-card"><Sparkles aria-hidden="true" /><div><strong>Help the whole circle finish</strong><span>Every active member completes independently. One saver cannot complete another saver’s goal.</span></div></article>
-        <article className="reward-card"><ShieldCheck aria-hidden="true" /><div><strong>Keep your claim</strong><span>Selling a position removes that saver from reward eligibility.</span></div></article>
-      </div>
-      <article className="reward-funding-note coming-soon-reward" role="status">
-        <Gift aria-hidden="true" size={19} />
-        <div><strong>Reward campaigns are coming in a future version</strong><span>No V1 fee funds rewards, no reward balance is accumulating, and nothing can be claimed yet.</span></div>
-      </article>
-      <button className="secondary reward-disabled-action" disabled type="button"><LockKeyhole aria-hidden="true" size={16} /> Claim rewards · Coming soon</button>
     </section>
   );
 }

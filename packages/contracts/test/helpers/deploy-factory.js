@@ -1,5 +1,24 @@
 const UNIT = 10n ** 6n
 
+export async function createSecureGroupInvitation(
+  ethers,
+  vault,
+  creator,
+  invitee,
+  expiry,
+  nonce,
+  secret = ethers.hexlify(ethers.randomBytes(32)),
+) {
+  const inviteeAddress = typeof invitee === 'string' ? invitee : await invitee.getAddress()
+  const { chainId } = await ethers.provider.getNetwork()
+  const commitment = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ['address', 'address', 'bytes32', 'uint64', 'uint256', 'uint256'],
+    [await vault.getAddress(), inviteeAddress, secret, expiry, nonce, chainId],
+  ))
+  await vault.connect(creator).createGroupInvitation(inviteeAddress, commitment, expiry, nonce)
+  return { commitment, invitee: inviteeAddress, secret, expiry, nonce }
+}
+
 /**
  * Deploys the Safe-only V1 safety controller and vault deployer first. Both
  * bind their immutable factory authority to the third CREATE address.
@@ -79,11 +98,38 @@ export async function createActivatedGroup(
     await factory.vaultAt((await factory.vaultCount()) - 1n),
   )
   for (let index = 1; index < signers.length; index += 1) {
+    let invitation
     if (!publicJoining) {
-      await vault.connect(creator).inviteGroupMember(await signers[index].getAddress())
+      invitation = await createSecureGroupInvitation(
+        ethers,
+        vault,
+        creator,
+        signers[index],
+        enrollmentDeadline,
+        BigInt(index),
+      )
     }
-    if (typeof signers[index].joinGroup === 'function') {
+    if (!publicJoining && typeof signers[index].joinInviteOnlyGroup === 'function') {
+      await signers[index].joinInviteOnlyGroup(
+        vault,
+        invitation.invitee,
+        invitation.secret,
+        invitation.expiry,
+        invitation.nonce,
+        targets[index],
+        emergencyBps[index],
+      )
+    } else if (publicJoining && typeof signers[index].joinGroup === 'function') {
       await signers[index].joinGroup(vault, targets[index], emergencyBps[index])
+    } else if (!publicJoining) {
+      await vault.connect(signers[index]).joinInviteOnlyGroup(
+        invitation.invitee,
+        invitation.secret,
+        invitation.expiry,
+        invitation.nonce,
+        targets[index],
+        emergencyBps[index],
+      )
     } else {
       await vault.connect(signers[index]).joinPublicGroup(targets[index], emergencyBps[index])
     }

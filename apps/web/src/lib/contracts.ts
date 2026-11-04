@@ -1,11 +1,15 @@
 import {
+  AbiCoder,
   BrowserProvider,
   Contract,
   Interface,
   JsonRpcProvider,
   formatUnits,
   getAddress,
+  hexlify,
+  keccak256,
   parseUnits,
+  randomBytes,
   type Filter,
   type Log,
   type Provider,
@@ -56,6 +60,14 @@ const vaultAbi = [
   "error PositionOwnerOnly()",
   "error PositionListed()",
   "error GroupNotActive()",
+  "error InvitationUnavailable()",
+  "error InvitationInvalid()",
+  "error InvitationWrongWallet()",
+  "error InvitationExpired()",
+  "error InvitationRevoked()",
+  "error InvitationAlreadyUsed()",
+  "error InvitationAlreadyAvailable()",
+  "error CircleFull()",
   "error GroupExitUnresolved()",
   "error NotMatured()",
   "error NothingToWithdraw()",
@@ -75,6 +87,11 @@ const vaultAbi = [
   "function maxMemberCount() view returns (uint32)",
   "function enrollmentDeadline() view returns (uint64)",
   "function joinPublicGroup(uint256 target,uint16 emergencyBps)",
+  "function createGroupInvitation(address invitee,bytes32 commitment,uint64 expiry,uint256 nonce)",
+  "function revokeGroupInvitation(bytes32 commitment)",
+  "function joinInviteOnlyGroup(address invitee,bytes32 secret,uint64 expiry,uint256 nonce,uint256 target,uint16 emergencyBps)",
+  "function invitationStatus(bytes32 commitment) view returns (uint8)",
+  "function groupInvitations(bytes32 commitment) view returns (address invitee,uint64 expiry,uint64 generation,uint256 nonce,bool consumed,bool revoked)",
   "function activateGroup()",
   "function memberAt(uint256 positionId) view returns (address)",
   "function positionOwner(uint256 positionId) view returns (address)",
@@ -119,9 +136,9 @@ const vaultAbi = [
   "event GroupExitAuthorizationExpired(uint256 indexed requestId)",
   "event GroupExitCompleted(uint256 indexed requestId,uint256 indexed positionId,address indexed requester,uint256 amount)",
   "event GroupMemberStatusChanged(uint256 indexed positionId,address indexed member,uint8 previousStatus,uint8 newStatus)",
-  "event GroupInvitationCreated(address indexed member,uint64 expiresAt)",
-  "event GroupInvitationAccepted(address indexed member,uint32 acceptedCount,uint32 requiredCount)",
-  "event GroupInvitationDeclined(address indexed member)",
+  "event GroupInvitationCreated(bytes32 indexed commitment,address indexed invitee,uint64 expiry,uint256 nonce,uint64 generation)",
+  "event GroupInvitationRevoked(bytes32 indexed commitment,address indexed invitee)",
+  "event GroupInvitationConsumed(bytes32 indexed commitment,address indexed invitee,uint256 indexed positionId)",
   "event GroupActivated(uint64 activatedAt)",
   "event GroupInvitationExpired(uint64 expiredAt)",
   "event PublicGroupJoined(address indexed member,uint256 indexed positionId,uint32 memberCount)",
@@ -311,6 +328,9 @@ export function groupCreationUnsupportedReason(
   protocolVersion: string,
   visibility: "public" | "invite-only"
 ): string | null {
+  if (visibility === "invite-only" && !supportsSecureInvitations(protocolVersion)) {
+    return `Secure invite-only circles require protocol 1.2.0; the connected factory is ${protocolVersion}.`;
+  }
   if (supportsOpenEnrollmentProtocol(protocolVersion)) return null;
   if (visibility === "public") {
     return `Public circles require protocol 0.8.0; the connected factory is ${protocolVersion}.`;
@@ -322,7 +342,12 @@ export function groupCreationUnsupportedReason(
 export function supportsOpenEnrollmentProtocol(protocolVersion: string): boolean {
   return protocolVersion === "lockedin-circle/0.8.0" ||
     protocolVersion === "lockedin-circle/1.0.0-safe" ||
-    protocolVersion === "lockedin-circle/1.1.0-safe";
+    protocolVersion === "lockedin-circle/1.1.0-safe" ||
+    protocolVersion === "lockedin-circle/1.2.0-safe";
+}
+
+export function supportsSecureInvitations(protocolVersion: string): boolean {
+  return protocolVersion === "lockedin-circle/1.2.0-safe";
 }
 
 export interface VaultSnapshot {
@@ -504,6 +529,80 @@ export interface PublicGroupSummary {
     positionId: bigint;
     progressPercent: number;
   }>;
+}
+
+export type GroupInvitationStatus = "available" | "accepted" | "revoked" | "expired" | "unavailable";
+
+export interface SecureGroupInvitation {
+  vault: string;
+  invitee: string;
+  secret: string;
+  expiry: bigint;
+  nonce: bigint;
+  chainId: bigint;
+  commitment: string;
+}
+
+export interface GroupInvitationRecord {
+  commitment: string;
+  invitee: string;
+  expiry: Date;
+  nonce: bigint;
+  status: GroupInvitationStatus;
+}
+
+const invitationStatusNames: readonly GroupInvitationStatus[] = [
+  "unavailable",
+  "available",
+  "accepted",
+  "revoked",
+  "expired",
+];
+
+export function groupInvitationCommitment(
+  invitation: Omit<SecureGroupInvitation, "commitment">
+): string {
+  return keccak256(AbiCoder.defaultAbiCoder().encode(
+    ["address", "address", "bytes32", "uint64", "uint256", "uint256"],
+    [
+      getAddress(invitation.vault),
+      getAddress(invitation.invitee),
+      invitation.secret,
+      invitation.expiry,
+      invitation.nonce,
+      invitation.chainId,
+    ]
+  ));
+}
+
+/** The dot-grouped code is intended for a private channel or fragment URL. */
+export function encodeGroupInvitation(invitation: SecureGroupInvitation): string {
+  return [
+    "LIC1",
+    invitation.vault.slice(2),
+    invitation.invitee.slice(2),
+    invitation.secret.slice(2),
+    invitation.expiry.toString(36),
+    invitation.nonce.toString(16),
+    invitation.chainId.toString(36),
+  ].join(".");
+}
+
+export function decodeGroupInvitation(code: string): SecureGroupInvitation {
+  const [version, vaultHex, inviteeHex, secretHex, expiryText, nonceText, chainText] = code.trim().split(".");
+  if (
+    version !== "LIC1" || !vaultHex || !inviteeHex || !secretHex ||
+    !expiryText || !nonceText || !chainText || !/^[0-9a-fA-F]{64}$/.test(secretHex)
+  ) throw new Error("Invalid invitation code.");
+  const unsigned = {
+    vault: getAddress(`0x${vaultHex}`),
+    invitee: getAddress(`0x${inviteeHex}`),
+    secret: `0x${secretHex}`,
+    expiry: BigInt(parseInt(expiryText, 36)),
+    nonce: BigInt(`0x${nonceText}`),
+    chainId: BigInt(parseInt(chainText, 36)),
+  };
+  return { ...unsigned, commitment: groupInvitationCommitment(unsigned) };
 }
 
 export interface ReferenceDiscountSnapshot {
@@ -913,10 +1012,10 @@ export async function createVault(
     throw new Error("Choose a valid maturity date.");
   const maturity = BigInt(Math.floor(maturityMilliseconds / 1_000));
   const now = BigInt(Math.floor(Date.now() / 1_000));
-  const minimumMaturity = now + 24n * 60n * 60n;
+  const minimumMaturity = now + 60n * 60n;
   const maximumMaturity = now + 5n * 365n * 24n * 60n * 60n;
   if (maturity < minimumMaturity)
-    throw new Error("Maturity must be at least 24 hours from now.");
+    throw new Error("Maturity must be at least 1 hour from now.");
   if (maturity > maximumMaturity)
     throw new Error("Maturity cannot be more than 5 years from now.");
   if (input.yieldMode !== "safe")
@@ -1042,6 +1141,101 @@ export async function joinPublicGroup(
     if (event?.name === "PublicGroupJoined") return BigInt(event.args.positionId);
   }
   throw new Error("The join transaction confirmed, but the new position could not be identified.");
+}
+
+export async function createSecureGroupInvitation(
+  signer: Signer,
+  vaultAddress: string,
+  inviteeAddress: string,
+  expiryDate: Date
+): Promise<SecureGroupInvitation> {
+  const provider = signer.provider;
+  if (!provider) throw new Error("Wrong network.");
+  const vault = getAddress(vaultAddress);
+  const invitee = getAddress(inviteeAddress);
+  const expiry = BigInt(Math.floor(expiryDate.getTime() / 1_000));
+  const { chainId } = await provider.getNetwork();
+  const unsigned = {
+    vault,
+    invitee,
+    secret: hexlify(randomBytes(32)),
+    expiry,
+    nonce: BigInt(hexlify(randomBytes(32))),
+    chainId,
+  };
+  const invitation = { ...unsigned, commitment: groupInvitationCommitment(unsigned) };
+  const contract = new Contract(vault, vaultAbi, signer);
+  const transaction = await contract.getFunction("createGroupInvitation")(
+    invitee,
+    invitation.commitment,
+    expiry,
+    invitation.nonce,
+    { ...(await transactionOverrides(signer)), gasLimit: 350_000n }
+  );
+  await confirmTransaction(signer, transaction.hash);
+  return invitation;
+}
+
+export async function revokeSecureGroupInvitation(
+  signer: Signer,
+  vaultAddress: string,
+  commitment: string
+): Promise<void> {
+  const contract = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const transaction = await contract.getFunction("revokeGroupInvitation")(
+    commitment,
+    { ...(await transactionOverrides(signer)), gasLimit: 220_000n }
+  );
+  await confirmTransaction(signer, transaction.hash);
+}
+
+export async function loadSecureGroupInvitation(
+  signer: Signer,
+  vaultAddress: string,
+  commitment: string
+): Promise<GroupInvitationRecord> {
+  const contract = new Contract(getAddress(vaultAddress), vaultAbi, readProviderFor(signer));
+  const [record, status] = await Promise.all([
+    contract.getFunction("groupInvitations")(commitment),
+    contract.getFunction("invitationStatus")(commitment),
+  ]);
+  return {
+    commitment,
+    invitee: getAddress(record.invitee),
+    expiry: new Date(Number(record.expiry) * 1_000),
+    nonce: BigInt(record.nonce),
+    status: invitationStatusNames[Number(status)] ?? "unavailable",
+  };
+}
+
+export async function joinInviteOnlyGroup(
+  signer: Signer,
+  invitation: SecureGroupInvitation,
+  targetValue: string,
+  emergencyPercent: number
+): Promise<bigint> {
+  const connected = getAddress(await signer.getAddress());
+  if (connected !== getAddress(invitation.invitee)) throw new Error("InvitationWrongWallet");
+  const provider = signer.provider;
+  if (!provider) throw new Error("Wrong network.");
+  const { chainId } = await provider.getNetwork();
+  if (chainId !== invitation.chainId) throw new Error("Wrong network.");
+  const contract = new Contract(getAddress(invitation.vault), vaultAbi, signer);
+  const transaction = await contract.getFunction("joinInviteOnlyGroup")(
+    invitation.invitee,
+    invitation.secret,
+    invitation.expiry,
+    invitation.nonce,
+    amount(targetValue),
+    emergencyPercent * 100,
+    { ...(await transactionOverrides(signer)), gasLimit: 600_000n }
+  );
+  const receipt = await confirmTransaction(signer, transaction.hash);
+  for (const log of receipt.logs) {
+    const event = parsedEvent(log, vaultAbi);
+    if (event?.name === "GroupInvitationConsumed") return BigInt(event.args.positionId);
+  }
+  throw new Error("The invitation was accepted, but the new position could not be identified.");
 }
 
 export async function activateGroup(
@@ -2798,6 +2992,20 @@ export function describeContractError(error: unknown): string {
     return "Resolve or wait for the current group-exit request before continuing.";
   if (/groupnotactive/i.test(raw))
     return "This savings circle is not active yet.";
+  if (/invitationwrongwallet/i.test(raw))
+    return "This invitation belongs to a different wallet. Connect the invited Polygon address.";
+  if (/invitationexpired/i.test(raw))
+    return "This invitation has expired or the circle has finalized its membership.";
+  if (/invitationrevoked/i.test(raw))
+    return "This invitation was revoked by the circle creator.";
+  if (/invitationalreadyused/i.test(raw))
+    return "This one-time invitation has already been used.";
+  if (/invitationalreadyavailable/i.test(raw))
+    return "This wallet already has an available invitation for the circle.";
+  if (/circlefull/i.test(raw))
+    return "This savings circle is already full.";
+  if (/invitationinvalid|invitationunavailable|invalid invitation code/i.test(raw))
+    return "This invitation is invalid or no longer available.";
   if (/tokenaccountingmismatch/i.test(raw))
     return "The token transfer did not match the expected amount, so the contract safely cancelled the action.";
   if (/invalidconfiguration/i.test(raw))

@@ -111,17 +111,28 @@ export async function projectEvent(
       break
     }
     case 'GroupInvitationCreated': {
-      const member = text(event, 'member').toLowerCase()
+      const secureInvitation = typeof event.payload.commitment === 'string'
+      const member = text(event, secureInvitation ? 'invitee' : 'member').toLowerCase()
       await client.query(
         `INSERT INTO group_invitations
-           (vault_address, member_address, status, expires_at, updated_block_number, source_event_id)
-         VALUES ($1, $2, 'PENDING', $3, $4, $5)
+           (vault_address, member_address, status, expires_at, commitment,
+            updated_block_number, source_event_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (vault_address, member_address) DO UPDATE SET
            status = EXCLUDED.status,
            expires_at = EXCLUDED.expires_at,
+           commitment = EXCLUDED.commitment,
            updated_block_number = EXCLUDED.updated_block_number,
            source_event_id = EXCLUDED.source_event_id`,
-        [event.contractAddress, member, text(event, 'expiresAt'), event.blockNumber, event.id],
+        [
+          event.contractAddress,
+          member,
+          secureInvitation ? 'AVAILABLE' : 'PENDING',
+          text(event, secureInvitation ? 'expiry' : 'expiresAt'),
+          secureInvitation ? text(event, 'commitment').toLowerCase() : null,
+          event.blockNumber,
+          event.id,
+        ],
       )
       await notify(
         client,
@@ -130,6 +141,32 @@ export async function projectEvent(
         'GROUP_INVITATION_RECEIVED',
         'Group invitation received',
         'Review the complete vault terms before accepting or declining.',
+      )
+      break
+    }
+    case 'GroupInvitationRevoked':
+    case 'GroupInvitationConsumed': {
+      const member = text(event, 'invitee').toLowerCase()
+      const status = event.eventName === 'GroupInvitationConsumed' ? 'ACCEPTED' : 'REVOKED'
+      await client.query(
+        `UPDATE group_invitations
+         SET status = $3, updated_block_number = $4, source_event_id = $5
+         WHERE vault_address = $1 AND member_address = $2 AND commitment = $6`,
+        [
+          event.contractAddress,
+          member,
+          status,
+          event.blockNumber,
+          event.id,
+          text(event, 'commitment').toLowerCase(),
+        ],
+      )
+      await notifyCreator(
+        client,
+        event,
+        `GROUP_INVITATION_${status}`,
+        `Invitation ${status.toLowerCase()}`,
+        `${member} invitation was ${status.toLowerCase()}.`,
       )
       break
     }
@@ -161,6 +198,12 @@ export async function projectEvent(
         `UPDATE vaults SET lifecycle = 'ACTIVE' WHERE address = $1`,
         [event.contractAddress],
       )
+      await client.query(
+        `UPDATE group_invitations SET status = 'EXPIRED', updated_block_number = $2,
+           source_event_id = $3
+         WHERE vault_address = $1 AND status = 'AVAILABLE'`,
+        [event.contractAddress, event.blockNumber, event.id],
+      )
       const members = await client.query<{ member_address: string }>(
         'SELECT member_address FROM group_invitations WHERE vault_address = $1',
         [event.contractAddress],
@@ -175,6 +218,15 @@ export async function projectEvent(
           'Every invited member accepted. Deposits are now enabled.',
         )
       }
+      break
+    }
+    case 'PublicGroupJoiningClosed': {
+      await client.query(
+        `UPDATE group_invitations SET status = 'EXPIRED', updated_block_number = $2,
+           source_event_id = $3
+         WHERE vault_address = $1 AND status = 'AVAILABLE'`,
+        [event.contractAddress, event.blockNumber, event.id],
+      )
       break
     }
     case 'GroupInvitationExpired':

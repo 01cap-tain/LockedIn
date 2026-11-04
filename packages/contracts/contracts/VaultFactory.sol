@@ -12,7 +12,7 @@ import {SafetyController} from "./SafetyController.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/1.1.0-safe";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/1.2.0-safe";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
 

@@ -108,8 +108,14 @@ describe("contract error copy", () => {
 });
 
 describe("group creation compatibility", () => {
-  it("allows the creator-first group flow on protocol 0.7", () => {
-    expect(groupCreationUnsupportedReason("lockedin-circle/0.8.0", "invite-only")).toBeNull();
+  it("blocks insecure invite-only creation on pre-1.2 protocols", () => {
+    expect(groupCreationUnsupportedReason("lockedin-circle/0.8.0", "invite-only")).toMatch(
+      /secure invite-only circles require protocol 1\.2\.0/i
+    );
+    expect(groupCreationUnsupportedReason("lockedin-circle/1.1.0-safe", "invite-only")).toMatch(
+      /secure invite-only circles require protocol 1\.2\.0/i
+    );
+    expect(groupCreationUnsupportedReason("lockedin-circle/1.2.0-safe", "invite-only")).toBeNull();
   });
 
   it("allows creator-first circles on immutable Safe-only V1", () => {
@@ -121,7 +127,7 @@ describe("group creation compatibility", () => {
 
   it("explains the fixed-member limitation on the deployed 0.5 factory", () => {
     expect(groupCreationUnsupportedReason("lockedin-circle/0.5.0", "invite-only")).toMatch(
-      /at least four member addresses, targets and emergency allocations/i
+      /secure invite-only circles require protocol 1\.2\.0/i
     );
   });
 

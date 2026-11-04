@@ -50,9 +50,15 @@ const definitions: Record<ContractKind, readonly string[]> = {
     'event GroupExitAuthorizationExpired(uint256 indexed requestId)',
     'event GroupExitCompleted(uint256 indexed requestId,uint256 indexed positionId,address indexed requester,uint256 amount)',
     'event GroupMemberStatusChanged(uint256 indexed positionId,address indexed member,uint8 previousStatus,uint8 newStatus)',
+    // Keep the legacy signature for historical deployments while indexing the
+    // commitment-based invitation lifecycle introduced in protocol 1.2.
     'event GroupInvitationCreated(address indexed member,uint64 expiresAt)',
     'event GroupInvitationAccepted(address indexed member,uint32 acceptedCount,uint32 requiredCount)',
     'event GroupInvitationDeclined(address indexed member)',
+    'event GroupInvitationCreated(bytes32 indexed commitment,address indexed invitee,uint64 expiry,uint256 nonce,uint64 generation)',
+    'event GroupInvitationRevoked(bytes32 indexed commitment,address indexed invitee)',
+    'event GroupInvitationConsumed(bytes32 indexed commitment,address indexed invitee,uint256 indexed positionId)',
+    'event PublicGroupJoiningClosed(uint32 acceptedCount)',
     'event GroupActivated(uint64 activatedAt)',
     'event GroupInvitationExpired(uint64 expiredAt)',
     'event UnactivatedGroupCancelled(address indexed creator)',

@@ -34,9 +34,19 @@ const vault = await ethers.getContractAt(
   'SavingsVault',
   await factory.vaultAt((await factory.vaultCount()) - 1n)
 )
-for (const member of members.slice(1)) {
-  await (await vault.inviteGroupMember(await member.getAddress())).wait()
-  await (await vault.connect(member).joinPublicGroup(100n * UNIT, 1_000)).wait()
+const { chainId } = await ethers.provider.getNetwork()
+for (const [index, member] of members.slice(1).entries()) {
+  const invitee = await member.getAddress()
+  const secret = ethers.hexlify(ethers.randomBytes(32))
+  const nonce = BigInt(index + 1)
+  const commitment = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ['address', 'address', 'bytes32', 'uint64', 'uint256', 'uint256'],
+    [await vault.getAddress(), invitee, secret, enrollmentDeadline, nonce, chainId],
+  ))
+  await (await vault.createGroupInvitation(invitee, commitment, enrollmentDeadline, nonce)).wait()
+  await (await vault.connect(member).joinInviteOnlyGroup(
+    invitee, secret, enrollmentDeadline, nonce, 100n * UNIT, 1_000,
+  )).wait()
 }
 await (await vault.activateGroup()).wait()
 for (const [index, member] of members.entries()) {

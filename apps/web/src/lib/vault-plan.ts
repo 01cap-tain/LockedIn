@@ -1,11 +1,24 @@
 export type ContributionFrequency = "daily" | "weekly" | "monthly" | "custom";
 export type SavingsPaceStatus = "ahead" | "on-track" | "behind" | "completed";
+export type VaultGoalIcon =
+  | "target"
+  | "wallet"
+  | "laptop"
+  | "travel"
+  | "car"
+  | "home"
+  | "education"
+  | "work"
+  | "gift"
+  | "circle";
 
 export interface VaultPlanPreferences {
   version: 1;
   owner: string;
   vaultName: string;
   purpose: string;
+  /** Device-only visual preference; never authoritative financial state. */
+  icon?: VaultGoalIcon;
   contributionAmount: number | null;
   frequency: ContributionFrequency;
   preferredDays: number[];

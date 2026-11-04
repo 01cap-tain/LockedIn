@@ -10,20 +10,26 @@ import {
   cancelUnactivatedGroup,
   completeGroupExit,
   createExitListing,
+  createSecureGroupInvitation,
   createVault,
+  decodeGroupInvitation,
   depositToVault,
   declineGroupInvitation,
   describeContractError,
+  encodeGroupInvitation,
   loadActivity,
   loadAllExitListings,
   loadPublicCompletedTrades,
   loadPublicGroups,
+  loadSecureGroupInvitation,
+  joinInviteOnlyGroup,
   joinPublicGroup,
   loadExitListing,
   loadExitPosition,
   fundExitListing,
   groupCreationUnsupportedReason,
   supportsOpenEnrollmentProtocol,
+  supportsSecureInvitations,
   loadExitMarket,
   loadGroupExitRequests,
   loadMockUsdtBalance,
@@ -34,6 +40,7 @@ import {
   loadVaultsForSigner,
   requestMockUsdt,
   requestGroupExit,
+  revokeSecureGroupInvitation,
   revokeGroupExitApproval,
   withdrawEmergency,
   withdrawLocked,
@@ -45,6 +52,8 @@ import {
   type ExitListingSnapshot,
   type ExitPositionSnapshot,
   type GroupExitRequestSnapshot,
+  type GroupInvitationRecord,
+  type SecureGroupInvitation,
   type VaultSnapshot,
   type VaultSummary,
   type IndexedVaultReference,
@@ -81,12 +90,12 @@ import {
   vaultPlanKey,
   type ContributionFrequency,
   type SavingsPaceStatus,
+  type VaultGoalIcon,
   type VaultPlanPreferences,
 } from "./lib/vault-plan";
 import {
   loadLocalUsername,
   saveLocalUsername,
-  walletAvatarLabel,
   walletDisplayName,
   walletFallbackName,
 } from "./lib/user-profile";
@@ -101,28 +110,38 @@ import {
 import {
   ArrowRight,
   ArrowLeft,
+  ArrowUpRight,
+  ArrowUpDown,
   AlertTriangle,
   BadgeCheck,
+  Briefcase,
   CalendarDays,
+  Car,
   Check,
   ChevronDown,
   CircleCheckBig,
+  CirclePlus,
   CircleDollarSign,
   ClockAlert,
   Compass,
   Copy,
   Gift,
+  GraduationCap,
   HandCoins,
   History,
-  Home,
+  House,
   Landmark,
+  Laptop,
+  ListFilter,
   LockKeyhole,
   LogOut,
+  LoaderCircle,
   Menu,
+  Minus,
   MoveLeft,
   MoveRight,
-  PiggyBank,
   Plus,
+  Plane,
   RefreshCw,
   Target,
   TrendingUp,
@@ -131,6 +150,7 @@ import {
   UsersRound,
   Vault,
   WalletCards,
+  Wallet,
   X,
 } from "lucide-react";
 
@@ -161,10 +181,13 @@ type MarketView = "fund" | "mine" | "recent";
 type HistoryView = "trades" | "events";
 type VaultView = "active" | "completed" | "sold";
 type QuickVaultAction = "save" | "withdraw";
+type MaturityFilter = "under-30" | "one-to-three" | "three-to-six" | "over-six";
+type PositionValueFilter = "under-50" | "50-to-100" | "100-to-250" | "over-250";
+type DiscountFilter = "4.5-to-5" | "over-5-to-6" | "over-6-to-7" | "over-7-to-8";
 type CelebrationState = {
   title: string;
   message: string;
-  kind?: "deposit" | "withdrawal" | "default";
+  kind?: "deposit" | "withdrawal" | "emergency" | "default";
 };
 type CachedPublicGroup = Omit<PublicGroupSummary, "maturity" | "enrollmentDeadline" | "members"> & {
   maturity: string;
@@ -186,12 +209,42 @@ const WEEK_DAYS = [
   { value: 6, label: "Sat" },
   { value: 0, label: "Sun" },
 ] as const;
+const VAULT_GOAL_ICONS: Array<{ value: VaultGoalIcon; label: string }> = [
+  { value: "target", label: "General goal" },
+  { value: "wallet", label: "Savings" },
+  { value: "laptop", label: "Technology" },
+  { value: "travel", label: "Travel" },
+  { value: "car", label: "Vehicle" },
+  { value: "home", label: "Home" },
+  { value: "education", label: "Education" },
+  { value: "work", label: "Business" },
+  { value: "gift", label: "Celebration" },
+  { value: "circle", label: "Group circle" },
+];
 const PROFILE_VAULT_TABS = ["personal", "group", "purchased", "listed"] as const;
 const MARKET_TABS = ["fund", "mine", "recent"] as const;
 const HISTORY_TABS = ["trades", "events"] as const;
 const VAULT_DETAIL_TABS = ["overview", "circle", "withdraw", "activity"] as const;
 const VAULT_VIEW_TABS = ["active", "completed", "sold"] as const;
 const LISTING_FILTER_TABS = ["all", "personal", "group"] as const;
+const MATURITY_FILTERS: ReadonlyArray<{ value: MaturityFilter; label: string }> = [
+  { value: "under-30", label: "Under 30 days" },
+  { value: "one-to-three", label: "1–3 months" },
+  { value: "three-to-six", label: "3–6 months" },
+  { value: "over-six", label: "Over 6 months" },
+];
+const POSITION_VALUE_FILTERS: ReadonlyArray<{ value: PositionValueFilter; label: string }> = [
+  { value: "under-50", label: "Under 50 USDT" },
+  { value: "50-to-100", label: "50–100 USDT" },
+  { value: "100-to-250", label: "100–250 USDT" },
+  { value: "over-250", label: "Over 250 USDT" },
+];
+const DISCOUNT_FILTERS: ReadonlyArray<{ value: DiscountFilter; label: string }> = [
+  { value: "4.5-to-5", label: "4.5–5%" },
+  { value: "over-5-to-6", label: "Above 5–6%" },
+  { value: "over-6-to-7", label: "Above 6–7%" },
+  { value: "over-7-to-8", label: "Above 7–8%" },
+];
 
 const routes: Array<{ id: AppRoute; label: string }> = [
   { id: "discover", label: "Discover circles" },
@@ -238,16 +291,16 @@ const TradeCompletionAnimation = lazy(() =>
     default: module.TradeCompletionAnimation,
   }))
 );
-const SaverListingAnimation = lazy(() =>
-  import("./components/SaverListingAnimation").then((module) => ({
-    default: module.SaverListingAnimation,
-  }))
-);
 function routeFromHash(): AppRoute {
-  const value = window.location.hash.replace(/^#\/?/, "");
+  const value = window.location.hash.replace(/^#\/?/, "").split("?")[0];
   return routes.some((route) => route.id === value) || value === "wallet" || value === "rewards" || value === "explore-circles"
     ? (value as AppRoute)
     : "discover";
+}
+
+function invitationCodeFromHash(): string {
+  const query = window.location.hash.split("?")[1];
+  return query ? new URLSearchParams(query).get("invite") ?? "" : "";
 }
 
 function futureInput(days: number): string {
@@ -331,6 +384,28 @@ function contributionPlanText(
 
 function daysUntil(date: Date, now = Date.now()): number {
   return Math.max(0, Math.ceil((date.getTime() - now) / 86_400_000));
+}
+
+function matchesMaturityFilter(milliseconds: number, filter: MaturityFilter): boolean {
+  const days = milliseconds / 86_400_000;
+  if (filter === "under-30") return days < 30;
+  if (filter === "one-to-three") return days >= 30 && days < 90;
+  if (filter === "three-to-six") return days >= 90 && days < 180;
+  return days >= 180;
+}
+
+function matchesPositionValueFilter(value: number, filter: PositionValueFilter): boolean {
+  if (filter === "under-50") return value < 50;
+  if (filter === "50-to-100") return value >= 50 && value < 100;
+  if (filter === "100-to-250") return value >= 100 && value < 250;
+  return value >= 250;
+}
+
+function matchesDiscountFilter(discount: number, filter: DiscountFilter): boolean {
+  if (filter === "4.5-to-5") return discount >= 4.5 && discount <= 5;
+  if (filter === "over-5-to-6") return discount > 5 && discount <= 6;
+  if (filter === "over-6-to-7") return discount > 6 && discount <= 7;
+  return discount > 7 && discount <= 8;
 }
 
 function PaceIcon({ status, size = 15 }: { status: SavingsPaceStatus; size?: number }) {
@@ -672,7 +747,48 @@ function DelayedFunctionLoader({
   );
 }
 
+type EntryStage = "locked" | "locking" | "brand" | "ready";
+
+function FirstLoadGate({ stage, onUnlock }: { stage: EntryStage; onUnlock: () => void }) {
+  if (stage === "brand") {
+    return (
+      <main className="first-load-gate brand-stage" aria-live="polite">
+        <div className="entry-brand-loader" aria-label="LockedIn LockedNim">
+          <div className="entry-brand-words" aria-hidden="true">
+            <span><b>Locked</b><em>In</em></span>
+            <span><b>Locked</b><em>Nim</em></span>
+            <span><b>Locked</b><em>In</em></span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const checked = stage === "locking";
+  return (
+    <main className="first-load-gate lock-stage">
+      <input
+        aria-label="Unlock LockedIn Circle"
+        checked={checked}
+        className="entry-lock-input"
+        disabled={checked}
+        id="lockedin-entry-lock"
+        onChange={onUnlock}
+        type="checkbox"
+      />
+      <label className="entry-lock-button" htmlFor="lockedin-entry-lock">
+        <svg aria-hidden="true" width="36" height="40" viewBox="0 0 36 40">
+          <path className="entry-lock-body" d="M27 27C27 34.1797 21.1797 40 14 40C6.8203 40 1 34.1797 1 27C1 19.8203 6.8203 14 14 14C21.1797 14 27 19.8203 27 27ZM15.6298 26.5191C16.4544 25.9845 17 25.056 17 24C17 22.3431 15.6569 21 14 21C12.3431 21 11 22.3431 11 24C11 25.056 11.5456 25.9845 12.3702 26.5191L11 32H17L15.6298 26.5191Z" />
+          <path className="entry-lock-shackle" d="M6 21V10C6 5.58172 9.58172 2 14 2C18.4183 2 22 5.58172 22 10V21" />
+          <path className="entry-lock-bling" d="M29 20L31 22M31.5 15H34.5M29 10L31 8" />
+        </svg>
+      </label>
+    </main>
+  );
+}
+
 export function App() {
+  const [entryStage, setEntryStage] = useState<EntryStage>("locked");
   const networkName = import.meta.env.VITE_NETWORK_NAME ?? "Local Hardhat";
   const explorerBaseUrl = import.meta.env.VITE_BLOCK_EXPLORER_URL?.replace(
     /\/$/,
@@ -695,6 +811,7 @@ export function App() {
   // identifies the Mini App user, while only the EVM signer can own or move
   // an on-chain savings position.
   const [route, setRoute] = useState<AppRoute>(routeFromHash);
+  const [summaryCurrency, setSummaryCurrency] = useState<"usdt" | "nim">("usdt");
   const [nimiq, setNimiq] = useState<NimiqState>({ status: "idle" });
   const [evm, setEvm] = useState<EvmState>({ status: "idle" });
   const [transaction, setTransaction] = useState<TransactionState>({
@@ -713,6 +830,7 @@ export function App() {
   const [maturity, setMaturity] = useState(() => futureInput(30));
   const [vaultName, setVaultName] = useState("");
   const [vaultPurpose, setVaultPurpose] = useState("");
+  const [vaultIcon, setVaultIcon] = useState<VaultGoalIcon>("target");
   const [planContribution, setPlanContribution] = useState("");
   const [planFrequency, setPlanFrequency] = useState<ContributionFrequency>("monthly");
   const [preferredDays, setPreferredDays] = useState<number[]>([]);
@@ -728,6 +846,13 @@ export function App() {
   const [joinPreferredDays, setJoinPreferredDays] = useState<number[]>([]);
   const [joinEmergencyPercent, setJoinEmergencyPercent] = useState(10);
   const [joinPurpose, setJoinPurpose] = useState("");
+  const [inviteCode, setInviteCode] = useState(invitationCodeFromHash);
+  const [secureInvitation, setSecureInvitation] = useState<SecureGroupInvitation | null>(null);
+  const [inviteRulesConfirmed, setInviteRulesConfirmed] = useState(false);
+  const [inviteeAddress, setInviteeAddress] = useState("");
+  const [inviteExpiry, setInviteExpiry] = useState(() => futureInput(2));
+  const [createdInvitation, setCreatedInvitation] = useState<SecureGroupInvitation | null>(null);
+  const [managedInvitations, setManagedInvitations] = useState<GroupInvitationRecord[]>([]);
   const [vaults, setVaults] = useState<VaultSummary[]>([]);
   const [snapshot, setSnapshot] = useState<VaultSnapshot | null>(null);
   // Cached snapshots make repeat vault opens instant. Every open still starts a
@@ -738,11 +863,16 @@ export function App() {
   const [listings, setListings] = useState<ExitListingSnapshot[]>([]);
   const [exitState, setExitState] = useState<ExitListingSnapshot | null>(null);
   const [listingFilter, setListingFilter] = useState<ListingFilter>("all");
+  const [marketFiltersOpen, setMarketFiltersOpen] = useState(false);
+  const [maturityFilters, setMaturityFilters] = useState<MaturityFilter[]>([]);
+  const [positionValueFilters, setPositionValueFilters] = useState<PositionValueFilter[]>([]);
+  const [discountFilters, setDiscountFilters] = useState<DiscountFilter[]>([]);
   const [marketView, setMarketView] = useState<MarketView>("fund");
   const [exitExpiration, setExitExpiration] = useState(() => futureInput(7));
   const [minimumPayout, setMinimumPayout] = useState("0");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [completedTrades, setCompletedTrades] = useState<CompletedTrade[]>([]);
+  const [purchaseReceipt, setPurchaseReceipt] = useState<CompletedTrade | null>(null);
   // Confirmed purchases remain visible immediately while the durable indexer
   // waits for its configured confirmation depth and catches up.
   const pendingCompletedTrades = useRef<CompletedTrade[]>([]);
@@ -804,7 +934,16 @@ export function App() {
   const historyTabSwipe = useSwipeTabs(HISTORY_TABS, historyView, setHistoryView);
   const vaultDetailSwipe = useSwipeTabs(VAULT_DETAIL_TABS, vaultDetailTab, setVaultDetailTab);
   const vaultViewSwipe = useSwipeTabs(VAULT_VIEW_TABS, vaultView, setVaultView);
-  const listingFilterSwipe = useSwipeTabs(LISTING_FILTER_TABS, listingFilter, setListingFilter);
+
+  useEffect(() => {
+    if (entryStage !== "locking" && entryStage !== "brand") return;
+    const delay = entryStage === "locking" ? 430 : 680;
+    const timer = window.setTimeout(
+      () => setEntryStage(entryStage === "locking" ? "brand" : "ready"),
+      delay,
+    );
+    return () => window.clearTimeout(timer);
+  }, [entryStage]);
 
   const evmSession = evm.status === "connected" ? evm.session : null;
   const nimiqWallet = nimiq.status === "connected" ? nimiq.wallet : null;
@@ -815,6 +954,12 @@ export function App() {
     deployment.status === "valid" &&
     (!nimiqConnectionRequired || nimiqWallet)
   );
+
+  useEffect(() => {
+    if (entryStage === "ready" && !walletAccessReady) {
+      setConnectionSheetOpen(true);
+    }
+  }, [entryStage, walletAccessReady]);
   const polygonSwapNetwork = evmSession?.chainId === "0x13882"
     ? "polygon-amoy" as const
     : evmSession?.chainId === "0x7a69"
@@ -895,7 +1040,9 @@ export function App() {
     if (!estimatedMaturity) return;
     const nextMaturity = localDateTimeInput(estimatedMaturity);
     setMaturity(nextMaturity);
-    const latestEnrollment = new Date(estimatedMaturity.getTime() - 86_400_000);
+    const timeUntilMaturity = Math.max(0, estimatedMaturity.getTime() - Date.now());
+    const enrollmentLeadTime = Math.min(86_400_000, Math.max(15 * 60_000, Math.floor(timeUntilMaturity / 4)));
+    const latestEnrollment = new Date(estimatedMaturity.getTime() - enrollmentLeadTime);
     if (new Date(enrollmentDeadline).getTime() >= estimatedMaturity.getTime()) {
       setEnrollmentDeadline(localDateTimeInput(latestEnrollment));
     }
@@ -920,12 +1067,12 @@ export function App() {
   );
   const hasContributionPlan = Number(planContribution) > 0;
   const maturityTime = new Date(maturity).getTime();
-  const minimumMaturityTime = Date.now() + 86_400_000;
+  const minimumMaturityTime = Date.now() + 3_600_000;
   const maximumMaturityTime = Date.now() + 5 * 365 * 86_400_000;
   const maturityValidationError = !Number.isFinite(maturityTime)
     ? "Choose a valid maturity date."
     : maturityTime < minimumMaturityTime
-      ? "The plan must run for at least 24 hours."
+      ? "The plan must run for at least 1 hour."
       : maturityTime > maximumMaturityTime
         ? "The plan cannot run for more than 5 years."
         : null;
@@ -1072,7 +1219,7 @@ export function App() {
           selectedListing.vault === exitComposerPosition.address &&
           selectedListing.positionId === exitComposerPosition.positionId))
   );
-  const filteredListings = useMemo(
+  const typeFilteredListings = useMemo(
     () =>
       listings.filter((entry) => {
         const listing = entry.listing;
@@ -1083,12 +1230,35 @@ export function App() {
           return listing.seller.toLowerCase() === connectedAddress;
         if (marketView === "fund" && listing.seller.toLowerCase() === connectedAddress)
           return false;
-        if (listingFilter === "personal") return !listing.isGroup;
-        if (listingFilter === "group") return listing.isGroup;
+        if (marketView === "fund" && listingFilter === "personal") return !listing.isGroup;
+        if (marketView === "fund" && listingFilter === "group") return listing.isGroup;
         return true;
       }),
     [listings, listingFilter, connectedAddress, marketView]
   );
+  const activeMarketFilterCount =
+    (listingFilter === "all" ? 0 : 1) +
+    maturityFilters.length + positionValueFilters.length + discountFilters.length;
+  const filteredListings = useMemo(() => {
+    if (marketView !== "fund") return typeFilteredListings;
+    return typeFilteredListings.filter((entry) => {
+      const listing = entry.listing;
+      if (!listing) return false;
+      const timeRemaining = listing.maturity.getTime() - clock;
+      const claimValue = Number(listing.currentClaimValue);
+      const discount = entry.reference.discountPercent;
+      const matchesMaturity =
+        maturityFilters.length === 0 ||
+        maturityFilters.some((filter) => matchesMaturityFilter(timeRemaining, filter));
+      const matchesValue =
+        positionValueFilters.length === 0 ||
+        positionValueFilters.some((filter) => matchesPositionValueFilter(claimValue, filter));
+      const matchesDiscount =
+        discountFilters.length === 0 ||
+        discountFilters.some((filter) => matchesDiscountFilter(discount, filter));
+      return matchesMaturity && matchesValue && matchesDiscount;
+    });
+  }, [clock, discountFilters, marketView, maturityFilters, positionValueFilters, typeFilteredListings]);
   const myActiveListings = useMemo(
     () =>
       listings.filter(
@@ -1163,6 +1333,13 @@ export function App() {
   const dashboardVaults = vaults.filter(
     (vault) => vault.isOriginalMember && vault.access === "owner"
   );
+  const configuredNimPerUsdt = Number(import.meta.env.VITE_NIM_PER_USDT ?? "");
+  const nimPerUsdt = Number.isFinite(configuredNimPerUsdt) && configuredNimPerUsdt > 0
+    ? configuredNimPerUsdt
+    : mockTokenFaucetEnabled
+      ? 10
+      : null;
+  const portfolioTotalNim = nimPerUsdt === null ? null : portfolioTotalSaved * nimPerUsdt;
   const dashboardPersonalGoals = dashboardVaults.filter((vault) => !vault.isGroup);
   const dashboardCircles = dashboardVaults.filter((vault) => vault.isGroup);
   const portfolioProgress = portfolioTotalTarget > 0
@@ -1200,6 +1377,21 @@ export function App() {
     window.addEventListener("hashchange", updateRoute);
     return () => window.removeEventListener("hashchange", updateRoute);
   }, []);
+
+  useEffect(() => {
+    if (!inviteCode || pendingGroup || publicGroups.length === 0) return;
+    try {
+      const invitation = decodeGroupInvitation(inviteCode);
+      const group = publicGroups.find(
+        (candidate) => candidate.address.toLowerCase() === invitation.vault.toLowerCase()
+      );
+      if (!group || group.publicJoining) throw new Error("InvitationInvalid");
+      setPendingGroup(group);
+      setConnectionSheetOpen(true);
+    } catch (error) {
+      setTransaction({ status: "error", message: describeContractError(error) });
+    }
+  }, [inviteCode, pendingGroup, publicGroups]);
 
   useEffect(() => {
     const username = loadLocalUsername(profileWalletAddress);
@@ -1641,6 +1833,7 @@ export function App() {
         (candidate) => candidate.transactionHash.toLowerCase() !== trade.transactionHash.toLowerCase()
       ),
     ]);
+    setPurchaseReceipt(trade);
   }
 
   async function refreshPublicGroups(showLoading = true): Promise<void> {
@@ -1719,6 +1912,7 @@ export function App() {
   function startVaultCreation(nextMode: "personal" | "group"): void {
     setMode(nextMode);
     if (nextMode === "group") setMaxParticipants(4);
+    setVaultIcon(nextMode === "group" ? "circle" : "target");
     setCreationStep(0);
     setCreatedVaultReceipt(null);
     setCreateMenuOpen(false);
@@ -1772,13 +1966,6 @@ export function App() {
   }, [snapshot, pendingVaultAction, vaultDetailTab]);
 
   function requestGroupJoin(group: PublicGroupSummary): void {
-    if (!group.publicJoining) {
-      setTransaction({
-        status: "error",
-        message: "This is an invite-only circle. Only wallet addresses invited by the circle creator can join.",
-      });
-      return;
-    }
     if (!group.joiningOpen) {
       setTransaction({
         status: "error",
@@ -1795,32 +1982,132 @@ export function App() {
     setJoinPreferredDays([]);
     setJoinEmergencyPercent(10);
     setJoinPurpose("");
+    setInviteRulesConfirmed(false);
+    if (secureInvitation?.vault.toLowerCase() !== group.address.toLowerCase()) {
+      setSecureInvitation(null);
+      if (!invitationCodeFromHash()) setInviteCode("");
+    }
     setConnectionSheetOpen(true);
+  }
+
+  async function verifyPrivateInvitation(): Promise<void> {
+    if (!pendingGroup || !evmSession) return;
+    if (deployment.status !== "valid") {
+      setTransaction({ status: "error", message: "The current deployment has not been verified." });
+      return;
+    }
+    if (!supportsSecureInvitations(deployment.value.protocolVersion)) {
+      setTransaction({ status: "error", message: "This deployment does not support secure one-time invitations." });
+      return;
+    }
+    try {
+      const invitation = decodeGroupInvitation(inviteCode);
+      if (invitation.vault.toLowerCase() !== pendingGroup.address.toLowerCase()) {
+        throw new Error("InvitationInvalid");
+      }
+      if (invitation.invitee.toLowerCase() !== evmSession.address.toLowerCase()) {
+        throw new Error("InvitationWrongWallet");
+      }
+      if (invitation.chainId !== BigInt(evmSession.chainId)) throw new Error("Wrong network.");
+      const record = await loadSecureGroupInvitation(
+        evmSession.signer,
+        pendingGroup.address,
+        invitation.commitment
+      );
+      if (record.status !== "available") throw new Error(`Invitation${record.status}`);
+      setSecureInvitation(invitation);
+      setInviteRulesConfirmed(false);
+      setTransaction({ status: "idle" });
+    } catch (error) {
+      setSecureInvitation(null);
+      setTransaction({ status: "error", message: describeContractError(error) });
+    }
+  }
+
+  async function createPrivateInvitation(): Promise<void> {
+    if (!snapshot || !evmSession) return;
+    await runTransaction(
+      "Creating one-time invitation…",
+      async () => {
+        const invitation = await createSecureGroupInvitation(
+          evmSession.signer,
+          snapshot.address,
+          inviteeAddress,
+          new Date(inviteExpiry)
+        );
+        const record = await loadSecureGroupInvitation(
+          evmSession.signer,
+          snapshot.address,
+          invitation.commitment
+        );
+        setCreatedInvitation(invitation);
+        setInviteeAddress("");
+        setManagedInvitations((current) => [record, ...current.filter((item) => item.commitment !== record.commitment)]);
+      },
+      "One-time invitation created. Share it through a private channel."
+    );
+  }
+
+  async function revokePrivateInvitation(record: GroupInvitationRecord): Promise<void> {
+    if (!snapshot || !evmSession) return;
+    const succeeded = await runTransaction(
+      "Revoking invitation…",
+      () => revokeSecureGroupInvitation(evmSession.signer, snapshot.address, record.commitment),
+      "Invitation revoked."
+    );
+    if (!succeeded) return;
+    const refreshed = await loadSecureGroupInvitation(evmSession.signer, snapshot.address, record.commitment);
+    setManagedInvitations((current) => current.map((item) => item.commitment === refreshed.commitment ? refreshed : item));
+    if (createdInvitation?.commitment === record.commitment) setCreatedInvitation(null);
+  }
+
+  async function refreshPrivateInvitations(): Promise<void> {
+    if (!snapshot || !evmSession || managedInvitations.length === 0) return;
+    try {
+      const refreshed = await Promise.all(managedInvitations.map((record) =>
+        loadSecureGroupInvitation(evmSession.signer, snapshot.address, record.commitment)
+      ));
+      setManagedInvitations(refreshed);
+    } catch (error) {
+      setTransaction({ status: "error", message: describeContractError(error) });
+    }
   }
 
   function continueToInvitedGroup(): void {
     if (!pendingGroup || !evmSession) return;
+    if (!pendingGroup.publicJoining && secureInvitation && !inviteRulesConfirmed) {
+      setTransaction({ status: "error", message: "Review and confirm the circle rules before joining." });
+      return;
+    }
     const member = pendingGroup.members.find(
       (item) => item.address.toLowerCase() === evmSession.address.toLowerCase()
     );
     if (!member) {
-      if (pendingGroup.publicJoining && pendingGroup.joiningOpen) {
+      if ((pendingGroup.publicJoining || secureInvitation) && pendingGroup.joiningOpen) {
         const group = pendingGroup;
         setConnectionSheetOpen(false);
         void runTransaction(
-          "Joining public savings circle…",
+          group.publicJoining ? "Joining public savings circle…" : "Accepting one-time invitation…",
           async () => {
-            const positionId = await joinPublicGroup(
-              evmSession.signer,
-              group.address,
-              joinTarget,
-              joinEmergencyPercent
-            );
+            const positionId = group.publicJoining
+              ? await joinPublicGroup(
+                  evmSession.signer,
+                  group.address,
+                  joinTarget,
+                  joinEmergencyPercent
+                )
+              : await joinInviteOnlyGroup(
+                  evmSession.signer,
+                  secureInvitation!,
+                  joinTarget,
+                  joinEmergencyPercent
+                );
             const preferences: VaultPlanPreferences = {
               version: 1,
               owner: evmSession.address,
               vaultName: group.groupName,
               purpose: joinPurpose.trim(),
+              icon: "circle",
               contributionAmount: joinContribution ? Number(joinContribution) : null,
               frequency: joinFrequency,
               preferredDays: joinPreferredDays,
@@ -1840,7 +2127,7 @@ export function App() {
             navigate("groups");
             await openVault(group.address, positionId, evmSession);
           },
-          "You joined the savings circle."
+          group.publicJoining ? "You joined the savings circle." : "Invitation accepted. You joined the private circle."
         );
         return;
       }
@@ -1848,7 +2135,7 @@ export function App() {
         status: "error",
         message: pendingGroup.publicJoining
           ? "This circle is full, active, or its enrollment deadline has passed."
-          : "This circle has fixed on-chain invitations. The connected EVM address was not invited by its creator.",
+          : "Enter and verify the one-time invitation shared with this wallet.",
       });
       setConnectionSheetOpen(false);
       return;
@@ -2048,7 +2335,7 @@ export function App() {
 
   function dismissCelebration(): void {
     const closesVaultAction =
-      celebration?.kind === "deposit" || celebration?.kind === "withdrawal";
+      celebration?.kind === "deposit" || celebration?.kind === "withdrawal" || celebration?.kind === "emergency";
     setCelebration(null);
     if (closesVaultAction) {
       setSnapshot(null);
@@ -2105,6 +2392,7 @@ export function App() {
         owner: session.address,
         vaultName: vaultName.trim(),
         purpose: vaultPurpose.trim(),
+        icon: vaultIcon,
         contributionAmount: planContribution ? Number(planContribution) : null,
         frequency: planFrequency,
         preferredDays,
@@ -2242,6 +2530,10 @@ export function App() {
           : publicGroupsStatus === "loading"
               ? "Loading savings circles…"
               : "Checking the deployment…";
+
+  if (entryStage !== "ready") {
+    return <FirstLoadGate stage={entryStage} onUnlock={() => setEntryStage("locking")} />;
+  }
 
   return (
     <main className="page-shell">
@@ -2434,7 +2726,7 @@ export function App() {
           <button aria-label="Close navigation" className="overlay-backdrop" onClick={() => setMenuOpen(false)} type="button" />
           <aside className="side-drawer" aria-label="Primary navigation">
             <div className="drawer-heading">
-              <div><span className="eyebrow">LockedIn Circle</span><h2>Navigate</h2></div>
+              <img className="drawer-brand-mark" src="/lockedin-mark.png" alt="LockedIn Circle" />
               <button aria-label="Close navigation" className="icon-button" onClick={() => setMenuOpen(false)} type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             <nav className="drawer-nav">
@@ -2597,7 +2889,7 @@ export function App() {
                   const next = Math.min(remaining, plan?.contributionAmount ?? remaining);
                   return (
                     <button className={`mini-vault-card companion-vault-card ${vault.isGroup ? "group-vault" : "personal-vault"}`} key={`${vault.address}-${vault.positionId}`} onClick={() => { setProfileOpen(false); navigate(vault.isGroup ? "groups" : "position"); void openVault(vault.address, vault.positionId); }} type="button">
-                      <span><b><Target aria-hidden="true" size={15} />{plan?.vaultName || (vault.isGroup ? "Group savings goal" : "Personal savings goal")}</b>{vault.legacy && <em className="tag legacy">Legacy vault</em>}<em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace.replace("-", " ")}</em></span>
+                      <span><b><VaultGoalIconView icon={plan?.icon ?? (vault.isGroup ? "circle" : "target")} size={16} />{plan?.vaultName || (vault.isGroup ? "Group savings goal" : "Personal savings goal")}</b>{vault.legacy && <em className="tag legacy">Legacy vault</em>}<em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace.replace("-", " ")}</em></span>
                       <strong>{vault.deposited} of {vault.target} USDT</strong>
                       <i><span style={{ width: `${vault.progressPercent}%` }} /></i>
                       <div className="milestone-row" aria-label={`${vault.progressPercent.toFixed(0)} percent complete`}>{[25, 50, 75, 100].map((milestone) => <span className={vault.progressPercent >= milestone ? "reached" : ""} key={milestone}>{milestone}%</span>)}</div>
@@ -2634,11 +2926,20 @@ export function App() {
                 Use local test account
               </button>
             )}
-            {pendingGroup?.publicJoining && pendingGroup.joiningOpen && (
+            {pendingGroup && !pendingGroup.publicJoining && !secureInvitation && (
+              <section className="private-invite-entry">
+                <strong>Enter invite code</strong>
+                <p>This is a private circle. Enter the one-time code shared with you to continue.</p>
+                <label><span>One-time invite code</span><textarea autoCapitalize="none" autoCorrect="off" onChange={(event) => setInviteCode(event.target.value.trim())} placeholder="LIC1.…" rows={3} spellCheck={false} value={inviteCode} /></label>
+                <button className="secondary full-width" disabled={!evmSession || !inviteCode} onClick={() => void verifyPrivateInvitation()} type="button">Verify invitation</button>
+              </section>
+            )}
+            {pendingGroup?.joiningOpen && (pendingGroup.publicJoining || secureInvitation) && (
               <section className="join-position-review">
                 <div className="join-shared-rules">
-                  <strong>{pendingGroup.groupName}</strong>
-                  <span>{pendingGroup.vaultMode === "earn" ? "Earn" : "Safe"} · matures {pendingGroup.maturity.toLocaleDateString()}</span>
+                  <strong>{pendingGroup.publicJoining ? pendingGroup.groupName : `You’ve been invited to ${pendingGroup.groupName}`}</strong>
+                  <span>Created by {short(pendingGroup.creator)}</span>
+                  <span>{pendingGroup.vaultMode === "earn" ? "Earn" : "Safe"} · matures {pendingGroup.maturity.toLocaleDateString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</span>
                   <span>{pendingGroup.memberCount}/{pendingGroup.maxMemberCount} members · enrollment closes {pendingGroup.enrollmentDeadline.toLocaleDateString()}</span>
                 </div>
                 <p>You are joining this circle under its shared maturity and exit rules, but your savings target and balances remain independent.</p>
@@ -2652,16 +2953,25 @@ export function App() {
                   <label className="full-width"><span>Personal purpose <small>Optional</small></span><input maxLength={100} onChange={(event) => setJoinPurpose(event.target.value)} placeholder="What are you saving for?" value={joinPurpose} /></label>
                 </div>
                 <div className={`join-plan-result ${joinPlanProjection.sufficient ? "sufficient" : "insufficient"}`}><strong>{joinPlanProjection.sufficient ? "Your plan can reach the target" : "This plan needs adjustment"}</strong><span>Required per period: {amountLabel(joinPlanProjection.requiredPerPeriod)} mUSDT · expected {joinPlanProjection.estimatedCompletionDate?.toLocaleDateString() ?? "after maturity"}</span></div>
+                {!pendingGroup.publicJoining && (
+                  <div className="private-circle-rules">
+                    <span><strong>Cooperative exit</strong>Other eligible members must approve under the circle’s on-chain rules.</span>
+                    <span><strong>Early exit</strong>Selling transfers only your locked claim. Your emergency funds remain yours.</span>
+                    <label><input checked={inviteRulesConfirmed} onChange={(event) => setInviteRulesConfirmed(event.target.checked)} type="checkbox" />I reviewed and accept these circle rules.</label>
+                  </div>
+                )}
               </section>
             )}
-            <button className="primary full-width" disabled={!walletAccessReady || Boolean(pendingGroup?.publicJoining && (!pendingGroup.joiningOpen || Number(joinTarget) <= 0))} onClick={() => pendingGroup ? continueToInvitedGroup() : setConnectionSheetOpen(false)} type="button">
+            <button className="primary full-width" disabled={!walletAccessReady || Boolean(pendingGroup && (!pendingGroup.joiningOpen || Number(joinTarget) <= 0 || (!pendingGroup.publicJoining && (!secureInvitation || !inviteRulesConfirmed))))} onClick={() => pendingGroup ? continueToInvitedGroup() : setConnectionSheetOpen(false)} type="button">
               {pendingGroup?.publicJoining && pendingGroup.joiningOpen
                 ? "Join public circle"
-                : pendingGroup
-                  ? "Continue to invitation"
-                  : "Continue"}
+                : pendingGroup && secureInvitation
+                  ? "Accept invitation and join"
+                  : pendingGroup
+                    ? "Verify invitation to continue"
+                    : "Continue"}
             </button>
-            {pendingGroup && !pendingGroup.publicJoining && <small className="connection-note">This is an invite-only circle. The contract will verify that this EVM address was invited.</small>}
+            {pendingGroup && !pendingGroup.publicJoining && <small className="connection-note">The contract verifies the circle, invited wallet, expiry and one-time code before admitting membership.</small>}
           </section>
         </div>
       )}
@@ -2750,18 +3060,39 @@ export function App() {
         </div>
       )}
 
-      {/* The discover route is intentionally usable without either wallet. */}
+      {/* The disconnected home stays clear while the connection sheet is active. */}
       {(route === "discover" || route === "explore-circles") && (
         <section className={`route-page discover-page ${route === "explore-circles" ? "available-circles-page" : ""}`}>
-          {walletAccessReady && route === "discover" ? (
+          {!walletAccessReady && route === "discover" ? (
+            <div className="wallet-entry-blank" aria-hidden="true" />
+          ) : walletAccessReady && route === "discover" ? (
             <div className="savings-home">
               <section className="home-summary" aria-labelledby="savings-summary-title">
                 <div className="home-section-heading">
-                  <div><span className="eyebrow">Your savings</span><h1 id="savings-summary-title">Build your goals steadily.</h1></div>
+                  <div><span className="eyebrow">Your savings</span><h1 id="savings-summary-title">Let’s keep building</h1></div>
                 </div>
-                <div className="home-summary-amount"><strong>{amountLabel(portfolioTotalSaved)} USDT</strong><span>saved toward {amountLabel(portfolioTotalTarget)} USDT</span></div>
+                <div className="summary-balance-row">
+                  <span className="summary-vault-logo"><Wallet aria-hidden="true" size={24} strokeWidth={1.6} /></span>
+                  <div className="home-summary-amount">
+                    <span className="summary-label">Total saved</span>
+                    <strong>{summaryCurrency === "usdt" ? amountLabel(portfolioTotalSaved) : portfolioTotalNim === null ? "—" : amountLabel(portfolioTotalNim)} {summaryCurrency.toUpperCase()}</strong>
+                    <small>{summaryCurrency === "usdt"
+                      ? portfolioTotalNim === null ? "NIM estimate unavailable" : `≈ ${amountLabel(portfolioTotalNim)} NIM on Amoy`
+                      : `≈ ${amountLabel(portfolioTotalSaved)} USDT`}</small>
+                  </div>
+                  <button
+                    aria-label={`Show total saved in ${summaryCurrency === "usdt" ? "NIM" : "USDT"}`}
+                    className="summary-currency-switch"
+                    onClick={() => setSummaryCurrency((currency) => currency === "usdt" ? "nim" : "usdt")}
+                    type="button"
+                  >
+                    <ArrowUpDown aria-hidden="true" size={18} strokeWidth={1.5} />
+                  </button>
+                </div>
+                <p className="summary-vault-count">Across {dashboardVaults.length} {dashboardVaults.length === 1 ? "vault" : "vaults"}</p>
                 <div className="home-progress" aria-label={`${portfolioProgressLabel}% of combined savings goals reached`}><i><span style={{ width: `${portfolioProgress}%` }} /></i><b>{portfolioProgressLabel}%</b></div>
-                <div className="home-summary-meta"><span><Target aria-hidden="true" size={15} />{dashboardVaults.length} active {dashboardVaults.length === 1 ? "goal" : "goals"}</span><span><CalendarDays aria-hidden="true" size={15} />{nearestMaturity ? `Next goal ${nearestMaturity.toLocaleDateString()}` : "No maturity scheduled"}</span></div>
+                <div className="home-summary-meta"><span><Target aria-hidden="true" size={15} />Goal {amountLabel(portfolioTotalTarget)} USDT</span><span><CalendarDays aria-hidden="true" size={15} />{nearestMaturity ? `Next goal ${nearestMaturity.toLocaleDateString()}` : "No maturity scheduled"}</span></div>
+                <button className="home-add-savings" onClick={() => startQuickVaultAction("save")} type="button"><CirclePlus aria-hidden="true" size={18} strokeWidth={1.6} />Add savings</button>
               </section>
 
               <section className="home-quick-actions" aria-label="Savings shortcuts">
@@ -2785,7 +3116,7 @@ export function App() {
                 <div className="home-section-heading"><div><span className="eyebrow">Personal savings</span><h2>My goals</h2></div><button className="text-action" onClick={() => navigate("position")} type="button">View all</button></div>
                 {dashboardPersonalGoals.length === 0 ? <div className="home-empty"><Target aria-hidden="true" /><div><strong>No personal goals yet</strong><span>Create a goal when you are ready to start saving.</span></div></div> : <div className="home-card-list">{dashboardPersonalGoals.slice(0, 3).map((vault) => {
                   const plan = evmSession ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)] : undefined;
-                  return <button className="home-goal-card personal-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("position"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><Target aria-hidden="true" /></span><span className="home-card-copy"><strong>{plan?.vaultName || "Personal savings goal"}</strong><small>{vault.deposited} of {vault.target} USDT · {plan ? contributionPlanText(plan.contributionAmount, plan.frequency, plan.preferredDays) : "Flexible contributions"}</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>Due {vault.maturity.toLocaleDateString()}</small></span><em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace === "behind" ? "Behind" : "Completed"}</em></button>;
+                  return <button className="home-goal-card personal-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("position"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><VaultGoalIconView icon={plan?.icon} /></span><span className="home-card-copy"><strong>{plan?.vaultName || "Personal savings goal"}</strong><small>{vault.deposited} of {vault.target} USDT · {plan ? contributionPlanText(plan.contributionAmount, plan.frequency, plan.preferredDays) : "Flexible contributions"}</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>Due {vault.maturity.toLocaleDateString()}</small></span><em className={`pace ${vault.pace}`}>{vault.pace === "on-track" ? "On track" : vault.pace === "behind" ? "Behind" : "Completed"}</em></button>;
                 })}</div>}
               </section>
 
@@ -2794,13 +3125,25 @@ export function App() {
                 {dashboardCircles.length === 0 ? <div className="home-empty group-empty"><UsersRound aria-hidden="true" /><div><strong>You have not joined a circle</strong><span>Explore a public circle or create one with people you trust.</span></div></div> : <div className="home-card-list">{dashboardCircles.slice(0, 3).map((vault) => {
                   const plan = evmSession ? vaultPlans[vaultPlanKey(evmSession.chainId, vault.address, vault.positionId)] : undefined;
                   const group = publicGroups.find((entry) => entry.address.toLowerCase() === vault.address.toLowerCase());
-                  return <button className="home-goal-card group-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("groups"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><UsersRound aria-hidden="true" /></span><span className="home-card-copy"><span className="home-card-title"><strong>{plan?.vaultName || group?.groupName || "Savings circle"}</strong><em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em></span><small>Your progress: {vault.deposited} of {vault.target} USDT</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>{group ? `${group.memberCount}/${group.maxMemberCount} savers · Circle ${group.progressPercent.toFixed(1)}% complete` : `${vault.memberCount} savers`} · Due {vault.maturity.toLocaleDateString()}</small></span><ArrowRight aria-hidden="true" /></button>;
+                  return <button className="home-goal-card group-vault" key={`${vault.address}-${vault.positionId}`} onClick={() => { navigate("groups"); void openVault(vault.address, vault.positionId); }} type="button"><span className="home-card-icon"><VaultGoalIconView icon={plan?.icon ?? "circle"} /></span><span className="home-card-copy"><span className="home-card-title"><strong>{plan?.vaultName || group?.groupName || "Savings circle"}</strong><em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em></span><small>Your progress: {vault.deposited} of {vault.target} USDT</small><i><span style={{ width: `${vault.progressPercent}%` }} /></i><small>{group ? `${group.memberCount}/${group.maxMemberCount} savers · Circle ${group.progressPercent.toFixed(1)}% complete` : `${vault.memberCount} savers`} · Due {vault.maturity.toLocaleDateString()}</small></span><ArrowRight aria-hidden="true" /></button>;
                 })}</div>}
               </section>
 
               <section className="home-section">
                 <div className="home-section-heading"><div><span className="eyebrow">Latest updates</span><h2>Recent activity</h2></div><button className="text-action" onClick={() => navigate("activity")} type="button">View history</button></div>
-                {activity.length === 0 ? <div className="home-empty"><History aria-hidden="true" /><div><strong>No savings activity yet</strong><span>Your deposits, withdrawals and goal updates will appear here.</span></div></div> : <div className="home-activity-list">{activity.slice(0, 5).map((item, index) => <article key={`${item.transactionHash ?? item.title}-${index}`}><span><CircleCheckBig aria-hidden="true" /></span><div><strong>{item.title}</strong><small>{item.timestamp.toLocaleString()}</small></div>{item.amount && <b>{item.amount} USDT</b>}</article>)}</div>}
+                {activity.length === 0 ? <div className="home-empty"><History aria-hidden="true" /><div><strong>No savings activity yet</strong><span>Your deposits, withdrawals and goal updates will appear here.</span></div></div> : <div className="home-activity-list">{activity.slice(0, 5).map((item, index) => {
+                  const isOutgoing = /withdraw|exit|sold|payout/i.test(item.title);
+                  return (
+                    <article className={isOutgoing ? "outgoing" : "incoming"} key={`${item.transactionHash ?? item.title}-${index}`}>
+                      <span className="activity-kind-icon">{isOutgoing ? <Minus aria-hidden="true" strokeWidth={1.8} /> : <CirclePlus aria-hidden="true" strokeWidth={1.8} />}</span>
+                      <div className="activity-copy">
+                        <strong>{item.title}</strong>
+                        <time dateTime={item.timestamp.toISOString()}>{item.timestamp.toLocaleString()}</time>
+                      </div>
+                      {item.amount && <span className="activity-amount"><b>{item.amount}</b><small>USDT</small></span>}
+                    </article>
+                  );
+                })}</div>}
               </section>
             </div>
           ) : <>
@@ -2835,10 +3178,14 @@ export function App() {
             <article className="empty-circle"><UsersRound aria-hidden="true" className="empty-icon" size={26} /><h3>No group circles yet</h3><p>Create the first invitation-based group on this deployment.</p><button className="primary icon-action" onClick={() => startVaultCreation("group")} type="button"><Plus aria-hidden="true" size={17} />Create group vault</button></article>
           ) : (
             <div className="circle-stack">
-              {publicGroups.map((group, index) => (
-                <article className="circle-card group-vault" key={group.address}>
+              {publicGroups.map((group, index) => {
+                const joinedMember = connectedAddress
+                  ? group.members.find((member) => member.address.toLowerCase() === connectedAddress)
+                  : undefined;
+                return (
+                <article className={`circle-card group-vault${joinedMember ? " joined-circle" : ""}`} key={group.address}>
                   <div className="circle-card-top">
-                    <div><span className={`tag ${group.vaultMode}`}>{group.vaultMode}</span><span className={`circle-state ${group.lifecycle}`}>{group.lifecycle}</span></div>
+                    <div><span className={`tag ${group.vaultMode}`}>{group.vaultMode}</span><span className={`circle-state ${group.lifecycle}`}>{group.lifecycle}</span><span className={`tag circle-visibility ${group.publicJoining ? "public" : "invite-only"}`}>{group.publicJoining ? "Public" : "Invite only"}</span></div>
                     <small>Circle {String(index + 1).padStart(2, "0")}</small>
                   </div>
                   <h3>{group.groupName || `Savings Circle ${index + 1}`}</h3>
@@ -2851,7 +3198,19 @@ export function App() {
                     <div><b>{group.progressPercent.toFixed(0)}% saved</b><small>{group.totalDeposited} / {group.totalTarget} mUSDT</small></div>
                   </div>
                   <div className="circle-meta"><span><UsersRound aria-hidden="true" size={13} />{group.memberCount}/{group.maxMemberCount} participants</span><span><CircleDollarSign aria-hidden="true" size={13} />Independent targets</span><span><CalendarDays aria-hidden="true" size={13} />Due {group.maturity.toLocaleDateString()}</span></div>
-                  {group.publicJoining ? (
+                  {joinedMember ? (
+                    <button
+                      className="join-circle-button circle-joined-action"
+                      onClick={() => {
+                        navigate("groups");
+                        void openVault(group.address, joinedMember.positionId);
+                      }}
+                      type="button"
+                    >
+                      <span><Check aria-hidden="true" size={16} />Joined circle</span>
+                      <span>Open circle <ArrowRight aria-hidden="true" size={16} /></span>
+                    </button>
+                  ) : group.publicJoining ? (
                     group.joiningOpen ? (
                       <SwipeReviewInvitation label="Slide to join circle" onReview={() => requestGroupJoin(group)} />
                     ) : (
@@ -2864,7 +3223,8 @@ export function App() {
                     <SwipeReviewInvitation label="Slide to review invite" onReview={() => requestGroupJoin(group)} />
                   )}
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
           <p className="invitation-disclaimer">Public circles accept members until activation, capacity or their enrollment deadline. Deposits begin only after activation.</p>
@@ -2952,7 +3312,7 @@ export function App() {
                 <h2>{creationStepTitles[creationStep]}</h2>
               </div>
               <div className="wizard-progress" aria-label={`Step ${creationStep + 1} of ${creationStepTitles.length}`}>
-                {creationStepTitles.map((title, index) => <i className={index <= creationStep ? "active" : ""} key={title} />)}
+                {creationStepTitles.map((title, index) => <i className={index === creationStep ? "active" : ""} key={title} />)}
               </div>
             </div>
             <form className="form-grid creation-step-frame" key={`${mode}-${creationStep}`} onSubmit={createVaultSubmit}>
@@ -2978,6 +3338,26 @@ export function App() {
                       value={vaultPurpose}
                     />
                   </label>
+                  <fieldset className="vault-icon-picker full-width">
+                    <legend>Choose a goal icon <small>Optional</small></legend>
+                    <div role="radiogroup" aria-label="Vault icon">
+                      {VAULT_GOAL_ICONS.map((option) => (
+                        <button
+                          aria-checked={vaultIcon === option.value}
+                          aria-label={option.label}
+                          className={vaultIcon === option.value ? "active" : ""}
+                          key={option.value}
+                          onClick={() => setVaultIcon(option.value)}
+                          role="radio"
+                          title={option.label}
+                          type="button"
+                        >
+                          <VaultGoalIconView icon={option.value} />
+                        </button>
+                      ))}
+                    </div>
+                    <small>This visual preference is stored on this device.</small>
+                  </fieldset>
                   {mode === "group" && <label><span>Who can join?</span><select onChange={(event) => setGroupVisibility(event.target.value as "public" | "invite-only")} value={groupVisibility}><option value="public">Anyone</option><option value="invite-only">Invited wallets only</option></select></label>}
                   {mode === "group" && <label><span>Maximum savers</span><input max="50" min="4" onChange={(event) => setMaxParticipants(Number(event.target.value))} placeholder="Example: 6" required type="number" value={maxParticipants} /><small>At least four people are needed.</small></label>}
                   {mode === "group" && <label className="full-width"><span>Join by</span><WheelDatePicker includeTime label="Group joining deadline" onChange={setEnrollmentDeadline} value={enrollmentDeadline} /><small>People must join before this time.</small></label>}
@@ -3084,7 +3464,7 @@ export function App() {
               <p className="frequency-explainer full-width">
                 {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
               </p>
-              <div className="estimated-date full-width"><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Allowed range: 24 hours to 5 years.`}</small></div></div>
+              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Testnet range: 1 hour to 5 years.`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -3257,13 +3637,7 @@ export function App() {
                         <span>{vaultType(vault.isGroup)}</span>
                         <code>{vault.progressPercent.toFixed(0)}%</code>
                       </span>
-                      <span className="vault-art-mark">
-                        {vault.isGroup ? (
-                          <UsersRound aria-hidden="true" size={29} />
-                        ) : (
-                          <Vault aria-hidden="true" size={29} />
-                        )}
-                      </span>
+                      <span className="vault-art-mark"><VaultGoalIconView icon={plan?.icon ?? (vault.isGroup ? "circle" : "target")} size={28} /></span>
                       <span className="vault-art-value">
                         <small>Saved</small>
                         <strong>{vault.deposited}</strong>
@@ -3277,19 +3651,19 @@ export function App() {
                         {vault.legacy && <em className="tag legacy">Legacy vault</em>}
                         <em className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</em>
                       </span>
-                      <small>{short(vault.address)}</small>
+                      <small className="vault-address">{short(vault.address)}</small>
                       <span className="vault-card-progress"><i style={{ width: `${vault.progressPercent}%` }} /></span>
                       <span className="vault-card-footer">
                         <b>{vault.progressPercent.toFixed(0)}% of {vault.target} USDT</b>
                         <em className={`pace ${pace.status}`}><PaceIcon status={pace.status} size={11} />{pace.status.replace("-", " ")}</em>
                       </span>
                       <span className="vault-collection-meta">
-                        <span><small><Target aria-hidden="true" size={10} /> Goal</small><b>{vault.target} USDT</b></span>
-                        <span><small><CalendarDays aria-hidden="true" size={10} /> Due</small><b>{vault.maturity.toLocaleDateString()}</b></span>
+                        <span className="vault-goal-meta"><small><Target aria-hidden="true" size={20} strokeWidth={1.5} /> Goal</small><b>{vault.target} USDT</b></span>
+                        <span className="vault-maturity-meta"><small><CalendarDays aria-hidden="true" size={20} strokeWidth={1.5} /> Maturity</small><b>{vault.maturity.toLocaleDateString()}</b></span>
                       </span>
-                      <span className="vault-plan-line"><CalendarDays aria-hidden="true" size={12} />{planLabel}</span>
-                      <span className="vault-plan-line"><BadgeCheck aria-hidden="true" size={12} />Save next: {amountLabel(pace.nextSuggestedContribution)} USDT</span>
-                      <span className="vault-card-action">View savings details <ArrowRight aria-hidden="true" size={15} /></span>
+                      <span className="vault-plan-line vault-plan-summary"><CalendarDays aria-hidden="true" size={20} strokeWidth={1.5} />{planLabel}</span>
+                      <span className="vault-plan-line vault-next-contribution"><BadgeCheck aria-hidden="true" size={20} strokeWidth={1.5} />Save next: {amountLabel(pace.nextSuggestedContribution)} USDT</span>
+                      <span className="vault-card-action">View savings details <ArrowRight aria-hidden="true" size={20} strokeWidth={1.5} /></span>
                     </span>
                   </button>
                   );
@@ -3426,6 +3800,40 @@ export function App() {
                   <section className="group-activation-card">
                     <div><strong>{snapshot.circleState === "ready" ? "Circle ready to activate" : "Membership is open"}</strong><span>{snapshot.members.length}/{snapshot.maxMemberCount} members joined. At least four are required before deposits can begin.</span></div>
                     {snapshot.circleState === "ready" && <button className="primary" disabled={riskActionsDisabled} onClick={() => void transactAndRefresh("Activating circle…", () => activateGroup(requireSession().signer, snapshot.address), "Circle activated. Membership is now permanently fixed.")} type="button">Activate and freeze membership</button>}
+                  </section>
+                )}
+                {snapshot.isGroup && snapshot.openEnrollment && !snapshot.publicJoining && vaultDetailTab === "circle" && snapshot.groupLifecycle === "pending" && evmSession?.address.toLowerCase() === snapshot.groupCreator.toLowerCase() && deployment.status === "valid" && supportsSecureInvitations(deployment.value.protocolVersion) && (
+                  <section className="circle-invitations-panel">
+                    <div className="section-title"><div><span className="eyebrow">Private circle</span><h3>Invitations</h3><p>Create a wallet-bound one-time invitation. Deposits remain disabled until the circle activates.</p></div></div>
+                    <div className="invitation-create-grid">
+                      <label><span>Member wallet address</span><input autoCapitalize="none" autoCorrect="off" onChange={(event) => setInviteeAddress(event.target.value.trim())} placeholder="0x…" spellCheck={false} value={inviteeAddress} /></label>
+                      <label><span>Invitation expires</span><input max={snapshot.enrollmentDeadline?.toISOString().slice(0, 16)} min={futureInput(0)} onChange={(event) => setInviteExpiry(event.target.value)} type="datetime-local" value={inviteExpiry} /></label>
+                    </div>
+                    <button className="primary compact" disabled={riskActionsDisabled || !inviteeAddress || !inviteExpiry} onClick={() => void createPrivateInvitation()} type="button">Generate one-time invitation</button>
+                    {createdInvitation && (
+                      <div className="invitation-secret-reveal">
+                        <strong>Share this invitation now</strong>
+                        <p>The complete secret is shown only during this creation flow. Send it through a private channel.</p>
+                        <code>{encodeGroupInvitation(createdInvitation)}</code>
+                        <div>
+                          <button className="secondary compact" onClick={() => void navigator.clipboard.writeText(encodeGroupInvitation(createdInvitation))} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite code</button>
+                          <button className="secondary compact" onClick={() => void navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/explore-circles?invite=${encodeURIComponent(encodeGroupInvitation(createdInvitation))}`)} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite link</button>
+                          <button className="secondary compact" onClick={() => setCreatedInvitation(null)} type="button">Hide secret</button>
+                        </div>
+                      </div>
+                    )}
+                    {managedInvitations.length > 0 && (
+                      <div className="managed-invitations">
+                        <button className="secondary compact" disabled={actionsDisabled} onClick={() => void refreshPrivateInvitations()} type="button">Refresh statuses</button>
+                        {managedInvitations.map((invitation) => (
+                          <article key={invitation.commitment}>
+                            <div><strong>{short(invitation.invitee)}</strong><span className={`invitation-status ${invitation.status}`}>{invitation.status}</span></div>
+                            <small>Expires {invitation.expiry.toLocaleString()}</small>
+                            {invitation.status === "available" && <button className="secondary destructive compact" disabled={riskActionsDisabled} onClick={() => void revokePrivateInvitation(invitation)} type="button">Revoke invitation</button>}
+                          </article>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 )}
                 <div className="vault-tab-section" hidden={snapshot.isGroup && vaultDetailTab !== "overview"} role={snapshot.isGroup ? "tabpanel" : undefined}>
@@ -3850,9 +4258,9 @@ export function App() {
                           ),
                         "Emergency withdrawal confirmed.",
                         {
-                          title: "Congratulations, savings habit unlocked",
-                          message: "Your emergency funds are back in your wallet. Your recorded goal progress is unchanged.",
-                          kind: "withdrawal",
+                          title: "Your emergency funds are available",
+                          message: "Your emergency funds have been returned to your wallet. Your locked savings and goal progress remain unchanged.",
+                          kind: "emergency",
                         }
                       );
                     }}
@@ -4188,54 +4596,164 @@ export function App() {
             <>
             <div className="market-layout">
           <aside className="panel market-browser">
-            <div className="section-title">
+            <div className={`section-title ${marketView === "mine" ? "my-exit-section-title" : ""}`}>
               <div>
                 <h2>{marketView === "mine" ? "My exit requests" : "Fund an early withdrawal"}</h2>
                 <p>{marketView === "mine" ? "Create, review or cancel your own early-withdrawal requests." : "Help another saver withdraw early and receive their future savings claim."}</p>
               </div>
-              {marketView === "mine" && <button
-                className="secondary compact icon-action"
-                disabled={riskActionsDisabled}
-                onClick={() => {
-                  setSnapshot(null);
-                  setExitDraft(null);
-                  setExitState(null);
-                  setMarketPositionPickerOpen(true);
-                }}
-                type="button"
-              >
-                <HandCoins aria-hidden="true" size={14} /> Request early exit
-              </button>}
-              <button
-                className="icon-button"
-                disabled={riskActionsDisabled}
-                onClick={() => void refreshPortfolio()}
-                title="Refresh"
-              >
-                ↻
-              </button>
-            </div>
-            <div className="filter-row swipe-tabs" {...listingFilterSwipe}>
-              {LISTING_FILTER_TABS.map(
-                (filter) => (
+              {marketView === "mine" ? (
+                <div className="my-exit-heading-actions">
                   <button
-                    className={listingFilter === filter ? "active" : ""}
-                    key={filter}
-                    onClick={() => setListingFilter(filter)}
+                    className="secondary compact icon-action"
+                    disabled={riskActionsDisabled}
+                    onClick={() => {
+                      setSnapshot(null);
+                      setExitDraft(null);
+                      setExitState(null);
+                      setMarketPositionPickerOpen(true);
+                    }}
+                    type="button"
                   >
-                    {filter}
+                    <HandCoins aria-hidden="true" size={20} strokeWidth={1.5} /> Request early exit
                   </button>
-                )
+                  <button
+                    aria-label="Refresh exit requests"
+                    className="icon-button my-exit-refresh"
+                    disabled={riskActionsDisabled}
+                    onClick={() => void refreshPortfolio()}
+                    title="Refresh exit requests"
+                    type="button"
+                  >
+                    <RefreshCw aria-hidden="true" size={20} strokeWidth={1.5} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="icon-button"
+                  disabled={riskActionsDisabled}
+                  onClick={() => void refreshPortfolio()}
+                  title="Refresh"
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" size={20} strokeWidth={1.5} />
+                </button>
               )}
             </div>
-            <div className="listing-list">
+            {marketView === "fund" && (
+              <div className="exit-market-filtering">
+                <div className="exit-filter-toolbar">
+                  <button
+                    aria-controls="exit-market-filter-controls"
+                    aria-expanded={marketFiltersOpen}
+                    className={`exit-filter-toggle ${activeMarketFilterCount > 0 ? "has-active-filters" : ""}`}
+                    onClick={() => setMarketFiltersOpen((open) => !open)}
+                    type="button"
+                  >
+                    <ListFilter aria-hidden="true" size={20} strokeWidth={1.5} />
+                    <span>Filter{activeMarketFilterCount > 0 ? ` · ${activeMarketFilterCount}` : ""}</span>
+                    <ChevronDown aria-hidden="true" className={marketFiltersOpen ? "expanded" : ""} size={18} strokeWidth={1.5} />
+                  </button>
+                </div>
+
+                {marketFiltersOpen && (
+                  <div className="exit-filter-controls" id="exit-market-filter-controls">
+                    <fieldset>
+                      <legend>Position type</legend>
+                      <div className="exit-filter-chips">
+                        {LISTING_FILTER_TABS.map((filter) => (
+                          <button
+                            aria-pressed={listingFilter === filter}
+                            className={listingFilter === filter ? "selected" : ""}
+                            key={filter}
+                            onClick={() => setListingFilter(filter)}
+                            type="button"
+                          >
+                            {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <fieldset>
+                      <legend>Time to maturity</legend>
+                      <div className="exit-filter-chips">
+                        {MATURITY_FILTERS.map((option) => {
+                          const selected = maturityFilters.includes(option.value);
+                          return (
+                            <button
+                              aria-pressed={selected}
+                              className={selected ? "selected" : ""}
+                              key={option.value}
+                              onClick={() => setMaturityFilters((current) => selected ? current.filter((value) => value !== option.value) : [...current, option.value])}
+                              type="button"
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                    <fieldset>
+                      <legend>Position value</legend>
+                      <div className="exit-filter-chips">
+                        {POSITION_VALUE_FILTERS.map((option) => {
+                          const selected = positionValueFilters.includes(option.value);
+                          return (
+                            <button
+                              aria-pressed={selected}
+                              className={selected ? "selected" : ""}
+                              key={option.value}
+                              onClick={() => setPositionValueFilters((current) => selected ? current.filter((value) => value !== option.value) : [...current, option.value])}
+                              type="button"
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                    <fieldset>
+                      <legend>Discount offer</legend>
+                      <div className="exit-filter-chips">
+                        {DISCOUNT_FILTERS.map((option) => {
+                          const selected = discountFilters.includes(option.value);
+                          return (
+                            <button
+                              aria-pressed={selected}
+                              className={selected ? "selected" : ""}
+                              key={option.value}
+                              onClick={() => setDiscountFilters((current) => selected ? current.filter((value) => value !== option.value) : [...current, option.value])}
+                              type="button"
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  </div>
+                )}
+                <p className="exit-filter-result-count">
+                  {filteredListings.length} {filteredListings.length === 1 ? "position" : "positions"} available
+                </p>
+              </div>
+            )}
+            <div className="listing-list own-exit-list">
               {filteredListings.length === 0 ? (
                 <div className="market-empty-list">
-                  <Suspense fallback={<div className="trade-animation-fallback" />}>
-                    <TradeCompletionAnimation />
-                  </Suspense>
-                  <strong>{marketView === "mine" ? "You have no open exit requests" : "No early withdrawals need funding right now"}</strong>
-                  <span>{marketView === "mine" ? "Choose one of your active savings positions when you need to withdraw early." : "New saver requests will appear here at their contract-calculated payout."}</span>
+                  {marketView === "fund" && activeMarketFilterCount > 0 ? (
+                    <>
+                      <ListFilter aria-hidden="true" size={24} strokeWidth={1.5} />
+                      <strong>No exit positions match these filters.</strong>
+                    </>
+                  ) : (
+                    <>
+                      <Suspense fallback={<div className="trade-animation-fallback" />}>
+                        <TradeCompletionAnimation />
+                      </Suspense>
+                      <strong>{marketView === "mine" ? "You have no open exit requests" : "No early withdrawals need funding right now"}</strong>
+                      <span>{marketView === "mine" ? "Choose one of your active savings positions when you need to withdraw early." : "New saver requests will appear here at their contract-calculated payout."}</span>
+                    </>
+                  )}
                   {marketView === "mine" && <button
                     className="secondary compact"
                     disabled={riskActionsDisabled}
@@ -4252,8 +4770,8 @@ export function App() {
                       <button
                         className={
                           selectedListing?.id === entry.listing.id
-                            ? `listing-card selected ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
-                            : `listing-card ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
+                            ? `listing-card selected own-exit-card ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
+                            : `listing-card own-exit-card ${entry.listing.isGroup ? "group-listing" : "personal-listing"}`
                         }
                         key={entry.listing.id.toString()}
                         onClick={() => {
@@ -4269,36 +4787,46 @@ export function App() {
                             <code>#{entry.listing.id.toString()}</code>
                           </div>
                           <span className="listing-art-mark">
-                            {entry.listing.isGroup ? (
-                              <UsersRound aria-hidden="true" size={30} />
-                            ) : (
-                              <Vault aria-hidden="true" size={30} />
-                            )}
+                            <Wallet aria-hidden="true" size={22} strokeWidth={1.5} />
                           </span>
                           <div className="listing-art-value">
                             <small>Locked claim</small>
-                            <strong>{entry.listing.currentClaimValue}</strong>
+                            <strong>{Number(entry.listing.currentClaimValue).toFixed(2)}</strong>
                             <b>mUSDT</b>
                           </div>
                         </div>
-                        <div className="listing-card-copy">
+                        <div className="listing-card-copy own-exit-card-copy">
+                          {marketView !== "mine" && <span className="exit-discount-tag">{entry.reference.discountPercent.toFixed(2)}% discount</span>}
                           <span className="listing-card-heading">
                             <strong>{vaultType(entry.listing.isGroup)} savings exit</strong>
+                            <em className={`own-exit-status ${entry.listing.active ? "active" : "closed"}`}>{entry.listing.active ? "Active" : "Closed"}</em>
                           </span>
-                          <div className="buyer-listing-facts">
-                            <span>
-                              <small>Buy at a discount</small>
-                              <strong>{entry.reference.discountPercent.toFixed(2)}% off</strong>
-                              <em>{entry.listing.currentProviderPotentialReturn} mUSDT before fee</em>
-                            </span>
-                            <span>
-                              <small>Unlocks in</small>
-                              <strong>{daysUntil(entry.listing.maturity)} days</strong>
-                              <em>{entry.listing.maturity.toLocaleDateString()}</em>
-                            </span>
-                          </div>
-                          <b>Pay {entry.listing.currentTotalProviderPaid} mUSDT</b>
-                          <code>{walletDisplayName(entry.listing.seller)}</code>
+                          {marketView === "mine" ? (
+                            <dl className="own-exit-facts">
+                              <div><dt>Calculated discount</dt><dd>{entry.reference.discountPercent.toFixed(2)}% discount</dd></div>
+                              <div><dt>You receive</dt><dd>{Number(entry.listing.currentSaverPayout).toFixed(2)} mUSDT</dd></div>
+                              <div><dt>Time until maturity</dt><dd>{daysUntil(entry.listing.maturity)} days</dd><small>{entry.listing.maturity.toLocaleDateString()}</small></div>
+                              <div><dt>Request status</dt><dd>{entry.listing.active ? "Active" : "Closed"}</dd></div>
+                            </dl>
+                          ) : (
+                            <>
+                              <div className="buyer-listing-facts">
+                                <span>
+                                  <small>Calculated discount</small>
+                                  <strong>{entry.reference.discountPercent.toFixed(2)}% discount</strong>
+                                  <em>{Number(entry.listing.currentProviderPotentialReturn).toFixed(2)} mUSDT potential return</em>
+                                </span>
+                                <span>
+                                  <small>Time until maturity</small>
+                                  <strong>{daysUntil(entry.listing.maturity)} days</strong>
+                                  <em>{entry.listing.maturity.toLocaleDateString()}</em>
+                                </span>
+                              </div>
+                              <b>You pay {Number(entry.listing.currentTotalProviderPaid).toFixed(2)} mUSDT</b>
+                              <code>{walletDisplayName(entry.listing.seller)}</code>
+                            </>
+                          )}
+                          <span className="exit-card-action">View position <ArrowRight aria-hidden="true" size={20} strokeWidth={1.5} /></span>
                         </div>
                       </button>
                     )
@@ -4349,8 +4877,8 @@ export function App() {
               <div className="market-position-sheet">
                 <div className="section-title">
                   <div>
-                    <h2>Choose a position to list</h2>
-                    <p>The next screen shows the contract-calculated exit price.</p>
+                    <h2>Choose a savings position</h2>
+                    <p>Select the savings position you want to offer for early exit. You will review the contract-calculated payout before confirming.</p>
                   </div>
                 </div>
                 <div className="market-position-picker">
@@ -4383,12 +4911,14 @@ export function App() {
                         }}
                         type="button"
                       >
-                        <span className={`tag ${vault.isGroup ? "group" : "personal"}`}>
-                          {vaultType(vault.isGroup)}
-                        </span>
                         <span className="exit-position-name">
-                          <strong>{positionName}</strong>
-                          <small>Position #{vault.positionId.toString()}</small>
+                          <span>
+                            <strong>{positionName}</strong>
+                            <span className={`tag ${vault.isGroup ? "group" : "personal"}`}>
+                              {vaultType(vault.isGroup)}
+                            </span>
+                          </span>
+                          {vault.positionId > 0n && <small>Position #{vault.positionId.toString()}</small>}
                         </span>
                         <span className="exit-position-value">
                           <strong>{vault.currentValue} mUSDT</strong>
@@ -4411,7 +4941,6 @@ export function App() {
                 minimumPayout={minimumPayout}
                 disabled={riskActionsDisabled || !exitState}
                 onExpiration={setExitExpiration}
-                onMinimumPayout={setMinimumPayout}
                 onSubmit={() =>
                   void transactAndRefresh(
                     exitState?.listing
@@ -4433,23 +4962,18 @@ export function App() {
             ) : ownActiveListing && snapshot && selectedListing ? (
               <div className="saver-listing-success">
                 <div className="saver-listing-copy">
-                  <span className={`tag ${snapshot.isGroup ? "group" : "personal"}`}>
-                    {vaultType(snapshot.isGroup)} position is live
+                  <span className="eyebrow">EXIT REQUEST ACTIVE</span>
+                  <span className="saver-listing-icon" aria-hidden="true">
+                    <HandCoins size={24} strokeWidth={1.5} />
                   </span>
-                  <blockquote>
-                    Don&apos;t cry because it&apos;s over. Smile because it happened.
-                  </blockquote>
+                  <h2>Your exit request is live</h2>
                   <p>
-                    The first provider to fund this listing receives the locked
-                    claim. Until then, you can still cancel it.
+                    You will receive {Number(selectedListing.currentSaverPayout).toFixed(2)} mUSDT when a provider funds this request. Until then, you can cancel the listing.
                   </p>
                 </div>
-                <Suspense fallback={<div className="trade-animation-fallback" />}>
-                  <SaverListingAnimation />
-                </Suspense>
                 <div className="saver-payout-ticket">
-                  <span>Receive when funded</span>
-                  <strong>{selectedListing.currentSaverPayout}</strong>
+                  <span>You receive when funded</span>
+                  <strong>{Number(selectedListing.currentSaverPayout).toFixed(2)}</strong>
                   <b>mUSDT</b>
                 </div>
                 <div className="listing-streak-grid">
@@ -4507,6 +5031,7 @@ export function App() {
                 disabled={actionsDisabled}
                 fundDisabled={riskActionsDisabled || purchaseAsset === "nim" || Boolean(listingFundingError)}
                 fundError={listingFundingError}
+                purchasing={transaction.status === "pending"}
                 onCancel={() =>
                   void transactAndRefresh(
                     "Cancelling listing…",
@@ -4592,11 +5117,14 @@ export function App() {
                   </p>
                 </div>
                 <button
-                  className="secondary"
+                  aria-label="Refresh recent exits"
+                  className="secondary recent-exits-refresh"
                   disabled={!deploymentReady}
                   onClick={() => void refreshPublicTradeHistory()}
+                  type="button"
                 >
-                  Refresh
+                  <RefreshCw aria-hidden="true" size={18} strokeWidth={1.5} />
+                  <span>Refresh</span>
                 </button>
               </div>
               {publicTradesError && (
@@ -4703,6 +5231,10 @@ export function App() {
                     trade={selectedCompletedTrade}
                     connectedAddress={connectedAddress!}
                     explorerBaseUrl={explorerBaseUrl}
+                    onOpenPurchased={() => {
+                      navigate(selectedCompletedTrade.isGroup ? "groups" : "position");
+                      void openVault(selectedCompletedTrade.vault, selectedCompletedTrade.positionId);
+                    }}
                   />
                 ) : (
                   <div className="empty-state">
@@ -4734,12 +5266,12 @@ export function App() {
                 No activity found.
               </div>
             ) : (
-              <div className="timeline">
+              <div className="timeline activity-history-list">
                 {activity.map((item) => (
-                  <div className="timeline-item" key={item.id}>
-                    <span className="timeline-dot" />
-                    <div>
-                      <strong>{item.title}</strong>
+                  <article className={`timeline-item ${/withdraw|exit|sold|payout/i.test(item.title) ? "outgoing" : "incoming"}`} key={item.id}>
+                    <span className="activity-kind-icon">{/withdraw|exit|sold|payout/i.test(item.title) ? <Minus aria-hidden="true" strokeWidth={1.8} /> : <CirclePlus aria-hidden="true" strokeWidth={1.8} />}</span>
+                    <div className="activity-copy">
+                      <div className="activity-title-row"><strong>{item.title}</strong>{item.amount && <span className="history-activity-amount">{item.amount} USDT</span>}</div>
                       <p>{item.detail}</p>
                       <small>
                         {item.timestamp.toLocaleString()} · Block{" "}
@@ -4749,19 +5281,21 @@ export function App() {
                     </div>
                     {explorerBaseUrl ? (
                       <a
+                        className="activity-explorer-action"
                         href={`${explorerBaseUrl}/tx/${item.transactionHash}`}
                         rel="noreferrer"
                         target="_blank"
-                        title="Open transaction in the configured explorer"
+                        aria-label={`View ${item.title} transaction in explorer`}
+                        title="View transaction"
                       >
-                        {short(item.transactionHash)}
+                        <ArrowUpRight aria-hidden="true" size={17} />
                       </a>
                     ) : (
-                      <code title={item.transactionHash}>
+                      <code className="activity-transaction-fallback" title={item.transactionHash}>
                         {short(item.transactionHash)}
                       </code>
                     )}
-                  </div>
+                  </article>
                 ))}
               </div>
             )}
@@ -4871,18 +5405,41 @@ export function App() {
       )}
 
       {celebration && (
-        <div className="celebration-layer" role="dialog" aria-modal="true" aria-labelledby="celebration-title">
+        <div className={`celebration-layer ${celebration.kind === "emergency" ? "emergency-confirmation" : ""}`} role="dialog" aria-modal="true" aria-labelledby="celebration-title">
           <button aria-label="Close celebration" className="overlay-backdrop" onClick={dismissCelebration} type="button" />
-          <article className="celebration-card">
-            {celebration.kind === "deposit" || celebration.kind === "withdrawal" ? (
+          <article className={`celebration-card ${celebration.kind === "emergency" ? "emergency-confirmation-card" : ""}`}>
+            {celebration.kind === "emergency" ? (
+              <span className="celebration-watermark emergency" aria-hidden="true">
+                <WalletCards size={28} strokeWidth={1.5} />
+              </span>
+            ) : celebration.kind === "deposit" || celebration.kind === "withdrawal" ? (
               <SavingsLockAnimation mode={celebration.kind} />
             ) : (
               <span className="celebration-watermark" aria-hidden="true"><Check /></span>
             )}
-            <small>LockedIn milestone</small>
+            <small>{celebration.kind === "emergency" ? "EMERGENCY FUNDS WITHDRAWN" : "LockedIn milestone"}</small>
             <h2 id="celebration-title">{celebration.title}</h2>
             <p>{celebration.message}</p>
-            <button className="primary full-width" onClick={dismissCelebration} type="button">{celebration.kind === "withdrawal" ? "Done" : "Keep saving"}</button>
+            <button className="primary full-width" onClick={dismissCelebration} type="button">{celebration.kind === "withdrawal" || celebration.kind === "emergency" ? "Done" : "Keep saving"}</button>
+          </article>
+        </div>
+      )}
+
+      {purchaseReceipt && evmSession && (
+        <div className="purchase-receipt-layer" role="dialog" aria-modal="true" aria-label="Purchased savings position">
+          <button aria-label="Close purchase receipt" className="overlay-backdrop" onClick={() => setPurchaseReceipt(null)} type="button" />
+          <article className="purchase-receipt-card">
+            <button aria-label="Close purchase receipt" className="purchase-receipt-close" onClick={() => setPurchaseReceipt(null)} type="button"><X aria-hidden="true" size={17} /></button>
+            <TradeReceiptCard
+              trade={purchaseReceipt}
+              connectedAddress={evmSession.address}
+              explorerBaseUrl={explorerBaseUrl}
+              onOpenPurchased={() => {
+                setPurchaseReceipt(null);
+                navigate(purchaseReceipt.isGroup ? "groups" : "position");
+                void openVault(purchaseReceipt.vault, purchaseReceipt.positionId);
+              }}
+            />
           </article>
         </div>
       )}
@@ -4892,10 +5449,14 @@ export function App() {
           className={`transaction ${transaction.status}`}
           role={transaction.status === "error" ? "alert" : "status"}
         >
+          <svg aria-hidden="true" className="transaction-wave" viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 256C110 120 210 304 330 190S540 80 670 222 890 286 1010 146 1240 214 1440 64V320H0Z" /></svg>
           {transaction.status === "success" && (
             <span className="transaction-watermark" aria-hidden="true">
               <Check />
             </span>
+          )}
+          {transaction.status === "pending" && (
+            <span className="transaction-pending-icon" aria-hidden="true"><LoaderCircle size={19} /></span>
           )}
           {transaction.status === "error" && (
             <AlertTriangle className="transaction-icon" aria-hidden="true" size={18} />
@@ -4933,20 +5494,21 @@ export function App() {
         <div className="create-action-layer" role="dialog" aria-modal="true" aria-label="Create savings">
           <button aria-label="Close create menu" className="create-action-backdrop" onClick={() => setCreateMenuOpen(false)} type="button" />
           <div className="create-action-stack">
+            <h2 className="create-action-title">What would you like to do?</h2>
             <button className="save-action" onClick={() => startQuickVaultAction("save")} type="button">
-              <span><PiggyBank aria-hidden="true" size={20} /></span>
+              <span><CirclePlus aria-hidden="true" size={20} strokeWidth={1.5} /></span>
               <strong>Add savings</strong>
             </button>
             <button className="withdraw-action" onClick={() => startQuickVaultAction("withdraw")} type="button">
-              <span><WalletCards aria-hidden="true" size={20} /></span>
+              <span><Minus aria-hidden="true" size={20} strokeWidth={1.5} /></span>
               <strong>Withdraw</strong>
             </button>
             <button onClick={() => startVaultCreation("personal")} type="button">
-              <span><Vault aria-hidden="true" size={20} /></span>
+              <span><Wallet aria-hidden="true" size={20} strokeWidth={1.5} /></span>
               <strong>Create goal</strong>
             </button>
             <button className="group-action" onClick={() => startVaultCreation("group")} type="button">
-              <span><UsersRound aria-hidden="true" size={20} /></span>
+              <span><UsersRound aria-hidden="true" size={20} strokeWidth={1.5} /></span>
               <strong>Create circle vault</strong>
             </button>
           </div>
@@ -4973,7 +5535,7 @@ export function App() {
                   : undefined;
                 return (
                   <button className={vault.isGroup ? "group-vault" : "personal-vault"} key={`${vault.address}-${vault.positionId.toString()}`} onClick={() => void chooseQuickActionVault(vault)} type="button">
-                    <span className="quick-vault-icon">{vault.isGroup ? <UsersRound aria-hidden="true" size={20} /> : <Vault aria-hidden="true" size={20} />}</span>
+                    <span className="quick-vault-icon"><VaultGoalIconView icon={plan?.icon ?? (vault.isGroup ? "circle" : "target")} /></span>
                     <span><strong>{plan?.vaultName || (vault.isGroup ? "Group savings circle" : "Personal savings goal")}</strong><small>{quickVaultAction === "save" ? `${vault.deposited} of ${vault.target} USDT saved` : `${vault.emergencyBalance} USDT emergency balance`}</small></span>
                     <span className={`tag ${vault.vaultMode}`}>{vault.vaultMode}</span>
                     <ArrowRight aria-hidden="true" size={17} />
@@ -4986,9 +5548,9 @@ export function App() {
       )}
       <nav className={`bottom-nav ${createMenuOpen ? "create-open" : ""}`} aria-label="Quick navigation">
         <div className="bottom-nav-main">
-          <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><Home aria-hidden="true" />Home</button>
-          <button className={route === "position" || route === "groups" ? "active" : ""} onClick={() => navigate("position")} type="button"><Vault aria-hidden="true" />Vaults</button>
-          <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><HandCoins aria-hidden="true" />Exits</button>
+          <button className={route === "discover" ? "active" : ""} onClick={() => navigate("discover")} type="button"><House aria-hidden="true" strokeWidth={1.6} />Home</button>
+          <button className={route === "position" || route === "groups" ? "active" : ""} onClick={() => navigate("position")} type="button"><Wallet aria-hidden="true" strokeWidth={1.6} />Vaults</button>
+          <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><ArrowUpDown aria-hidden="true" strokeWidth={1.6} />Exits</button>
         </div>
         <button aria-expanded={createMenuOpen} aria-label={createMenuOpen ? "Close create menu" : "Create savings"} className="bottom-create-button" onClick={() => setCreateMenuOpen((open) => !open)} type="button">
           {createMenuOpen ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
@@ -5002,6 +5564,53 @@ export function App() {
         <span>Unaudited test deployment</span>
       </aside>
     </main>
+  );
+}
+
+function VaultGoalIconView({ icon, size = 21 }: { icon?: VaultGoalIcon; size?: number }) {
+  const props = { "aria-hidden": true, size, strokeWidth: 1.6 } as const;
+  switch (icon) {
+    case "wallet": return <Wallet {...props} />;
+    case "laptop": return <Laptop {...props} />;
+    case "travel": return <Plane {...props} />;
+    case "car": return <Car {...props} />;
+    case "home": return <House {...props} />;
+    case "education": return <GraduationCap {...props} />;
+    case "work": return <Briefcase {...props} />;
+    case "gift": return <Gift {...props} />;
+    case "circle": return <UsersRound {...props} />;
+    default: return <Target {...props} />;
+  }
+}
+
+function IrreversibleChecklist({
+  formId,
+  legend,
+  terms,
+}: {
+  formId?: string;
+  legend: string;
+  terms: readonly string[];
+}) {
+  const colours = ["blue", "green", "purple"] as const;
+  const visibleColours = colours.slice(0, terms.length);
+  return (
+    <fieldset className="irreversible-checklist">
+      <legend>{legend}</legend>
+      <div className="confirmation-colours" aria-hidden="true">
+        {visibleColours.map((colour) => <i className={colour} key={colour} />)}
+      </div>
+      {terms.map((term, index) => {
+        const colour = colours[Math.min(index, colours.length - 1)];
+        return (
+        <label className={`ios-confirmation ${colour}`} key={term}>
+          <input form={formId} required type="checkbox" />
+          <span className="confirmation-box"><Check aria-hidden="true" size={17} strokeWidth={2.5} /></span>
+          <span>{term}</span>
+        </label>
+        );
+      })}
+    </fieldset>
   );
 }
 
@@ -5020,18 +5629,16 @@ function RecentTradeTable({
       {trades.map((trade) => (
         <article className="recent-trade-card" key={trade.listingId.toString()}>
           <header>
-            <span className={`tag ${trade.isGroup ? "group" : "personal"}`}>
-              {vaultType(trade.isGroup)} position
-            </span>
+            <span className={`tag ${trade.isGroup ? "group" : "personal"}`}>{vaultType(trade.isGroup)}</span>
             <strong>Exit #{trade.listingId.toString()}</strong>
             <time dateTime={trade.timestamp.toISOString()}>
               {trade.timestamp.toLocaleDateString()}
             </time>
           </header>
           <div className="trade-card-values">
-            <span><small>Seller payout</small><strong>{trade.saverPayout} mUSDT</strong></span>
+            <span><small>Seller payout</small><strong>{Number(trade.saverPayout).toFixed(2)} mUSDT</strong></span>
             <span><small>Discount</small><strong>{trade.systemDiscountPercent.toFixed(2)}%</strong></span>
-            <span><small>Claim acquired</small><strong>{trade.claimValue} mUSDT</strong></span>
+            <span><small>Claim acquired</small><strong>{Number(trade.claimValue).toFixed(2)} mUSDT</strong></span>
           </div>
           <div className="trade-card-wallets">
             <span><small>Seller</small><code>{walletDisplayName(trade.seller)}</code></span>
@@ -5060,98 +5667,83 @@ function TradeReceiptCard({
   trade,
   connectedAddress,
   explorerBaseUrl,
+  onOpenPurchased,
 }: {
   trade: CompletedTrade;
   connectedAddress: string;
   explorerBaseUrl?: string;
+  onOpenPurchased?: () => void;
 }) {
   const isSaver = trade.seller.toLowerCase() === connectedAddress.toLowerCase();
+  const copyAddress = (address: string) => {
+    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(address);
+  };
+  const AddressDetail = ({ label, address }: { label: string; address: string }) => (
+    <div className="receipt-address-detail">
+      <dt>{label}</dt>
+      <dd>
+        <code title={address}>{short(address)}</code>
+        <button aria-label={`Copy ${label.toLowerCase()}`} onClick={() => copyAddress(address)} type="button">
+          <Copy aria-hidden="true" size={18} strokeWidth={1.5} />
+        </button>
+      </dd>
+    </div>
+  );
   return (
-    <div className="trade-receipt">
-      <header>
+    <div className={`trade-receipt ${isSaver ? "saver-receipt" : "provider-receipt"}`}>
+      <header className="compact-receipt-header">
+        <span className="receipt-status">Exit completed</span>
         <div>
-            <span className="eyebrow">LockedIn Circle · Exit receipt</span>
-          <h2>Savings exit #{trade.listingId.toString()}</h2>
-          <p>Finalized on Polygon Amoy</p>
+          <small>Claim acquired</small>
+          <strong>{Number(trade.claimValue).toFixed(2)} mUSDT</strong>
         </div>
-        <span className="receipt-status">Completed</span>
+        <p>Total paid: <b>{Number(trade.totalProviderPaid).toFixed(2)} mUSDT</b></p>
       </header>
-      <div className="receipt-summary">
-        <div>
-          <small>Your role</small>
-          <strong>{isSaver ? "Saver" : "Exit funder"}</strong>
-        </div>
-        <div>
-          <small>Position type</small>
-          <strong>{vaultType(trade.isGroup)}</strong>
-        </div>
-        <div>
-          <small>Completed</small>
-          <strong>{trade.timestamp.toLocaleString()}</strong>
-        </div>
+
+      <div className="compact-receipt-metrics">
+        <Metric label="Discount" value={`${trade.systemDiscountPercent.toFixed(2)}%`} />
+        <Metric label="Provider fee" value={`${Number(trade.providerFee).toFixed(2)} mUSDT`} />
+        <Metric label="Potential return" value={`${Number(trade.providerPotentialReturn).toFixed(2)} mUSDT`} />
       </div>
-      <div className="trade-completion-visual" aria-label="Completed trade participants">
-        <div className="receipt-trader">
-          <span>{walletAvatarLabel(trade.seller)}</span>
-          <small>Saver</small>
-          <code>{walletDisplayName(trade.seller)}</code>
-        </div>
-        <Suspense fallback={<div className="trade-animation-fallback" />}>
-          <TradeCompletionAnimation />
-        </Suspense>
-        <div className="receipt-trader">
-          <span>{walletAvatarLabel(trade.provider)}</span>
-          <small>Provider</small>
-          <code>{walletDisplayName(trade.provider)}</code>
-        </div>
-      </div>
-      <div className="receipt-amount">
-        <span><b>Pay</b><em>Completed</em></span>
-        <div><small>USDT</small><strong>{isSaver ? "+" : ""}{isSaver ? trade.saverPayout : trade.claimValue}</strong></div>
-        <small>
-          {isSaver
-            ? "Paid directly to your connected wallet. Confirm it in your wallet activity or on the explorer."
-            : `Acquired after a ${trade.systemDiscountPercent.toFixed(2)}% system discount.`}
-        </small>
-      </div>
-      <div className="receipt-grid">
-        <Metric label="Provider fee (0.9%)" value={`${trade.providerFee} mUSDT`} />
-        <Metric
-          label="Total provider paid"
-          value={`${trade.totalProviderPaid} mUSDT`}
-        />
-        <Metric
-          label="Provider potential return"
-          value={`${trade.providerPotentialReturn} mUSDT`}
-        />
-        <Metric label="Position ID" value={`#${trade.positionId.toString()}`} />
-      </div>
-      <dl className="receipt-parties">
-        <div>
-          <dt>Saver</dt>
-          <dd>{trade.seller}</dd>
-        </div>
-        <div>
-          <dt>Exit funder</dt>
-          <dd>{trade.provider}</dd>
-        </div>
-        <div>
-          <dt>Vault</dt>
-          <dd>{trade.vault}</dd>
-        </div>
-      </dl>
-      <footer>
-        <span>Block {trade.blockNumber}</span>
+
+      {!isSaver && onOpenPurchased && (
+        <button className="compact-receipt-position" onClick={onOpenPurchased} type="button">
+          <span>Open acquired position</span>
+          <ArrowRight aria-hidden="true" size={20} strokeWidth={1.5} />
+        </button>
+      )}
+
+      <details className="receipt-technical-details">
+        <summary>View transaction details</summary>
+        <dl>
+          <div><dt>Listing ID</dt><dd>#{trade.listingId.toString()}</dd></div>
+          <div><dt>Position ID</dt><dd>#{trade.positionId.toString()}</dd></div>
+          <div><dt>Network</dt><dd>Polygon Amoy</dd></div>
+          <div><dt>Your role</dt><dd>{isSaver ? "Saver" : "Exit funder"}</dd></div>
+          <div><dt>Position type</dt><dd>{vaultType(trade.isGroup)}</dd></div>
+          <div><dt>Completed</dt><dd>{trade.timestamp.toLocaleString()}</dd></div>
+          <div><dt>Exact claim acquired</dt><dd>{trade.claimValue} mUSDT</dd></div>
+          <div><dt>Exact discount</dt><dd>{trade.systemDiscountPercent}%</dd></div>
+          <div><dt>Exact saver payout</dt><dd>{trade.saverPayout} mUSDT</dd></div>
+          <div><dt>Exact provider fee</dt><dd>{trade.providerFee} mUSDT</dd></div>
+          <div><dt>Exact total paid</dt><dd>{trade.totalProviderPaid} mUSDT</dd></div>
+          <div><dt>Exact potential return</dt><dd>{trade.providerPotentialReturn} mUSDT</dd></div>
+          <AddressDetail label="Saver address" address={trade.seller} />
+          <AddressDetail label="Exit funder address" address={trade.provider} />
+          <AddressDetail label="Vault address" address={trade.vault} />
+          <div><dt>Block number</dt><dd>{trade.blockNumber}</dd></div>
+          <div><dt>Transaction</dt><dd><code title={trade.transactionHash}>{short(trade.transactionHash)}</code></dd></div>
+        </dl>
+      </details>
+
+      <footer className="compact-receipt-footer">
         {explorerBaseUrl ? (
-          <a
-            href={`${explorerBaseUrl}/tx/${trade.transactionHash}`}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Verify on explorer ↗
+          <a href={`${explorerBaseUrl}/tx/${trade.transactionHash}`} rel="noreferrer" target="_blank">
+            View on PolygonScan
+            <ArrowRight aria-hidden="true" size={18} strokeWidth={1.5} />
           </a>
         ) : (
-          <code>{trade.transactionHash}</code>
+          <code>{short(trade.transactionHash)}</code>
         )}
       </footer>
     </div>
@@ -5523,7 +6115,6 @@ function ListingComposer({
   minimumPayout,
   disabled,
   onExpiration,
-  onMinimumPayout,
   onSubmit,
 }: {
   snapshot: Pick<VaultSnapshot, "isGroup">;
@@ -5534,7 +6125,6 @@ function ListingComposer({
   minimumPayout: string;
   disabled: boolean;
   onExpiration: (value: string) => void;
-  onMinimumPayout: (value: string) => void;
   onSubmit: () => void;
 }) {
   const pricing = exitState?.reference;
@@ -5596,13 +6186,18 @@ function ListingComposer({
       )}
       <form
         className="exit-create"
-        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           if (formError) return;
           onSubmit();
         }}
       >
+        <IrreversibleChecklist
+          legend="Before you list"
+          terms={[
+            "A completed sale permanently transfers the locked claim.",
+          ]}
+        />
         <label>
           <span>Listing expiration</span>
           <WheelDatePicker includeTime label="Exit listing expiration" onChange={onExpiration} value={expiration} />
@@ -5613,19 +6208,16 @@ function ListingComposer({
           <span>Minimum payout</span>
           <div className="input-unit">
             <input
-              min="0.000001"
-              onChange={(event) => onMinimumPayout(event.target.value)}
-              required
-              step="0.000001"
-              type="number"
+              aria-readonly="true"
+              readOnly
+              type="text"
               value={minimumPayout}
-              placeholder="Example: 95"
             />
             <b>mUSDT</b>
           </div>
           <small>
-            Settlement reverts if the recalculated payout falls below this
-            floor.
+            This floor is set from the current contract-calculated payout.
+            Settlement reverts if the live payout falls below it.
           </small>
         </label>
         <div className="quote">
@@ -5657,6 +6249,7 @@ function ListingDetail({
   disabled,
   fundDisabled,
   fundError,
+  purchasing,
   onCancel,
   onFund,
 }: {
@@ -5665,6 +6258,7 @@ function ListingDetail({
   disabled: boolean;
   fundDisabled: boolean;
   fundError?: string | null;
+  purchasing: boolean;
   onCancel: () => void;
   onFund: () => void;
 }) {
@@ -5673,6 +6267,7 @@ function ListingDetail({
   const belowFloor =
     Number(listing.currentSaverPayout) < Number(listing.minimumPayout);
   const unlockDays = daysUntil(listing.maturity);
+  const purchaseFormId = `purchase-confirm-${listing.id.toString()}`;
   return (
     <div className="listing-view">
       <div className="section-title">
@@ -5687,6 +6282,17 @@ function ListingDetail({
           {listing.status}
         </span>
       </div>
+      {!isSeller && listing.active && (
+        <IrreversibleChecklist
+          formId={purchaseFormId}
+          legend="Confirm the purchase terms"
+          terms={[
+            "The contract recalculates the price when the purchase settles.",
+            `You pay the saver plus the separate ${listing.currentProviderFee} mUSDT provider fee.`,
+            "The locked claim transfers permanently; the saver keeps emergency funds.",
+          ]}
+        />
+      )}
       {!isSeller && (
         <div className="buyer-decision-strip" aria-label="Buyer decision summary">
           <div>
@@ -5776,13 +6382,16 @@ function ListingDetail({
           </button>
         )}
         {!isSeller && listing.active && (
-          <button
-            className="primary"
-            disabled={fundDisabled || belowFloor}
-            onClick={onFund}
-          >
-            Fund at system price
-          </button>
+          <form id={purchaseFormId} onSubmit={(event) => { event.preventDefault(); onFund(); }}>
+            <button
+              className={`primary purchase-position-button ${purchasing ? "is-purchasing" : ""}`}
+              disabled={fundDisabled || belowFloor}
+              type="submit"
+            >
+              <span aria-hidden="true">{purchasing ? <i /> : <ArrowRight size={18} strokeWidth={1.6} />}</span>
+              <strong>{purchasing ? "Buying…" : "Buy position"}</strong>
+            </button>
+          </form>
         )}
       </div>
       {!isSeller && listing.active && (
