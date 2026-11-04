@@ -400,6 +400,20 @@ function futureInput(days: number): string {
   return date.toISOString().slice(0, 16);
 }
 
+function transactionErrorTitle(message: string): string {
+  if (/not enough POL|network fee/i.test(message)) return "Network fee needed";
+  if (/cancelled in your wallet/i.test(message)) return "Request cancelled";
+  if (/wrong network/i.test(message)) return "Switch network";
+  if (/already listed|no longer available/i.test(message)) return "Position unavailable";
+  if (/could not be read|taking longer|RPC/i.test(message)) return "Network unavailable";
+  if (/not enough USDT/i.test(message)) return "Insufficient USDT";
+  return "Action not completed";
+}
+
+function errorCanRefreshData(message: string): boolean {
+  return /could not be read|taking longer|refresh the (vault|position|exit)|no longer available/i.test(message);
+}
+
 function short(value: string): string {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
@@ -2073,7 +2087,17 @@ export function App() {
     if (nextMode === "group") setMaxParticipants(4);
     setVaultIcon(nextMode === "group" ? "circle" : "target");
     setCreationStep(0);
-    setQuickTestMaturity(false);
+    const useQuickTest = import.meta.env.VITE_TEST_CONFIGURATION === "true";
+    setQuickTestMaturity(useQuickTest);
+    if (useQuickTest) {
+      const now = Date.now();
+      setMaturity(localDateTimeInput(new Date(now + (minimumMaturitySeconds + 75) * 1_000)));
+      if (nextMode === "group") {
+        setEnrollmentDeadline(localDateTimeInput(new Date(
+          now + Math.max(120, minimumMaturitySeconds - 120) * 1_000
+        )));
+      }
+    }
     setCreatedVaultReceipt(null);
     setCreateMenuOpen(false);
     navigate("vaults");
@@ -5773,12 +5797,12 @@ export function App() {
           <div className="transaction-copy">
             <span>
               {transaction.status === "error"
-                ? "Something went wrong"
+                ? transactionErrorTitle(transaction.message)
                 : "Completed"}
             </span>
             <p>{transaction.message}</p>
           </div>
-          {transaction.status === "error" && evmSession && deployment.status === "valid" && (
+          {transaction.status === "error" && evmSession && deployment.status === "valid" && errorCanRefreshData(transaction.message) && (
             <button
               className="outline-action compact"
               onClick={() => void refreshPortfolio()}

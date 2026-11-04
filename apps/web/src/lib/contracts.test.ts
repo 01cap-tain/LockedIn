@@ -112,6 +112,22 @@ describe("contract error copy", () => {
     );
   });
 
+  it("preserves the calculated POL reserve and shortfall for vault creation", () => {
+    expect(describeContractError(new Error(
+      "The connected Amoy account 0xEA04 has 0.1075 POL, but this vault can reserve up to 0.1486 POL for gas."
+    ))).toBe(
+      "Not enough POL for this vault creation. Your wallet has 0.1075 POL; the transaction may need up to 0.1486 POL. Add at least 0.0411 POL and try again."
+    );
+  });
+
+  it("preserves the standard wallet POL requirement", () => {
+    expect(describeContractError(new Error(
+      "Insufficient POL for network fees. Your wallet has 0.0200 POL; keep about 0.0500 POL available before continuing."
+    ))).toBe(
+      "Not enough POL for the network fee. Your wallet has 0.0200 POL; keep about 0.0500 POL available and try again."
+    );
+  });
+
   it("does not fall back to the old reasonless error copy", () => {
     const message = describeContractError({ unexpected: true });
     expect(message).toMatch(/wallet did not provide a reason/i);

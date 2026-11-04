@@ -2992,11 +2992,30 @@ export function describeContractError(error: unknown): string {
   visit(error, 0);
   const raw = fragments.join(" ");
 
+  const vaultGasReserve = raw.match(
+    /has\s+([0-9]+(?:\.[0-9]+)?)\s+POL,\s+but this vault can reserve up to\s+([0-9]+(?:\.[0-9]+)?)\s+POL/i
+  );
+  if (vaultGasReserve) {
+    const available = Number(vaultGasReserve[1]);
+    const required = Number(vaultGasReserve[2]);
+    const shortfall = Math.max(0, required - available);
+    return `Not enough POL for this vault creation. Your wallet has ${available.toFixed(4)} POL; the transaction may need up to ${required.toFixed(4)} POL. Add at least ${shortfall.toFixed(4)} POL and try again.`;
+  }
+
+  const generalGasReserve = raw.match(
+    /wallet has\s+([0-9]+(?:\.[0-9]+)?)\s+POL;\s+keep about\s+([0-9]+(?:\.[0-9]+)?)\s+POL/i
+  );
+  if (generalGasReserve) {
+    const available = Number(generalGasReserve[1]);
+    const required = Number(generalGasReserve[2]);
+    return `Not enough POL for the network fee. Your wallet has ${available.toFixed(4)} POL; keep about ${required.toFixed(4)} POL available and try again.`;
+  }
+
   if (/user rejected|user denied|action_rejected|4001/i.test(raw))
     return "The request was cancelled in your wallet. Nothing was changed.";
   if (/invalid address|bad address checksum|unsupported addressable value/i.test(raw))
     return "Enter a valid Polygon wallet address for this invitation.";
-  if (/insufficient funds.*gas|intrinsic transaction cost|gas required exceeds/i.test(raw))
+  if (/insufficient funds.*gas|intrinsic transaction cost|gas required exceeds|insufficient POL|not enough POL|needs more POL/i.test(raw))
     return "Your wallet needs more POL to cover the Polygon network fee.";
   if (/transfer amount exceeds balance|erc20insufficientbalance|insufficient token|insufficient wallet funds/i.test(raw))
     return "Your wallet does not have enough USDT for this action.";
