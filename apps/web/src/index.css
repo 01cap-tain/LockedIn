@@ -13760,3 +13760,398 @@ svg.lucide {
     transition: none;
   }
 }
+
+/* Final Group Circles, Profile and blocking-status refinement ------------ */
+.discover-page .circle-stack {
+  gap: 10px;
+  padding-bottom: calc(112px + env(safe-area-inset-bottom));
+}
+
+.discover-page .circle-card.group-vault,
+.discover-page .circle-card.group-vault.joined-circle {
+  border-color: rgba(155, 139, 232, .3) !important;
+  border-radius: 18px !important;
+  padding: 12px !important;
+  background:
+    radial-gradient(circle at 94% 4%, rgba(155, 139, 232, .09), transparent 28%),
+    linear-gradient(148deg, #171a17 0%, #1d211c 62%, #151815 100%) !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, .2) !important;
+}
+
+.discover-page .circle-card.group-vault::before,
+.discover-page .circle-card.group-vault.joined-circle::before {
+  right: 12px;
+  left: 12px;
+  height: 2px;
+  opacity: .55;
+}
+
+.discover-page .circle-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  grid-column: 1;
+}
+
+.discover-page .circle-card-heading > div { min-width: 0; }
+
+.discover-page .circle-card-heading h3 {
+  overflow: hidden;
+  margin: 0 !important;
+  color: #f5f2e9 !important;
+  font-size: 16px !important;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discover-page .circle-card-heading .circle-address {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: #aeb3ad !important;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discover-page .circle-number {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: #929891 !important;
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.discover-page .circle-card .circle-card-top {
+  grid-column: 1;
+  margin-top: 8px;
+}
+
+.discover-page .circle-card .circle-card-top > div {
+  flex-wrap: nowrap;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.discover-page .circle-card .circle-card-top > div::-webkit-scrollbar { display: none; }
+
+.discover-page .circle-card .circle-card-top :is(.tag, .circle-state) {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 8px !important;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.discover-page .circle-card .group-power-visual {
+  height: 142px;
+  margin: 8px 0 10px;
+  border-color: rgba(244, 200, 74, .12);
+  box-shadow: none;
+}
+
+.discover-page .circle-card .member-avatar-note {
+  margin: -3px 0 7px;
+  font-size: 9px;
+}
+
+.discover-page .circle-card .circle-roadmap {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+  border: 1px solid rgba(214, 169, 68, .14);
+  border-radius: 12px;
+  padding: 9px 10px;
+  color: #f5f2e9;
+  background: linear-gradient(135deg, rgba(69, 57, 20, .58), rgba(24, 29, 23, .92)) !important;
+  box-shadow: none;
+}
+
+.discover-page .circle-card .circle-roadmap :is(span, small, b) {
+  color: #e7e3d8 !important;
+}
+
+.discover-page .circle-card .circle-roadmap > div {
+  font-size: 9px;
+}
+
+.discover-page .circle-card .circle-roadmap > div:first-child span:nth-child(2) {
+  color: #b9b6ac !important;
+}
+
+.discover-page .circle-card .circle-roadmap > i {
+  height: 4px;
+  background: rgba(245, 242, 233, .13);
+}
+
+.discover-page .circle-card .circle-roadmap > i > span {
+  box-shadow: none;
+}
+
+.discover-page .circle-card .circle-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 8px 0;
+}
+
+.discover-page .circle-card .circle-meta > span {
+  min-height: 0;
+  gap: 5px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: #b9beb8 !important;
+  background: transparent;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.discover-page .circle-card .circle-meta svg.lucide {
+  width: 12px;
+  height: 12px;
+  color: #d8d5ca !important;
+  stroke-width: 1.5 !important;
+}
+
+.discover-page .circle-card .circle-joined-action,
+.discover-page .circle-card .join-circle-button,
+.discover-page .circle-card .review-invitation-track {
+  min-height: 44px;
+  margin-top: 5px;
+  border-radius: 13px;
+  padding: 8px 11px;
+}
+
+.profile-sheet {
+  max-height: min(90dvh, 820px) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  padding: 14px 14px calc(28px + env(safe-area-inset-bottom)) !important;
+  color: #f5f2e9;
+  overscroll-behavior: contain;
+}
+
+.profile-sheet .sheet-grabber {
+  margin: -4px auto 10px;
+  background: rgba(245, 242, 233, .35);
+}
+
+.profile-sheet .profile-heading {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.profile-sheet .profile-heading h2 {
+  overflow: hidden;
+  margin: 1px 0 0;
+  color: #f5f2e9;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-sheet .profile-heading small {
+  color: #a8aea8;
+  font-size: 11px;
+}
+
+.profile-sheet .profile-heading .icon-button {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  justify-self: end;
+}
+
+.profile-sheet .profile-name-editor { margin: 0 0 10px; }
+
+.profile-sheet .profile-name-editor form {
+  gap: 8px;
+  border: 1px solid rgba(245, 242, 233, .1);
+  border-radius: 14px;
+  padding: 11px;
+  color: #f5f2e9;
+  background: #141814;
+}
+
+.profile-sheet .profile-name-editor label,
+.profile-sheet .profile-name-editor small {
+  color: #adb3ad;
+}
+
+.profile-sheet .profile-name-editor input {
+  min-height: 44px;
+  border: 1px solid rgba(245, 242, 233, .16);
+  color: #f5f2e9;
+  background: #1a1e1b;
+  font-size: 16px;
+}
+
+.profile-sheet .profile-name-editor input:focus-visible {
+  border-color: #d6a944;
+  outline: 2px solid rgba(214, 169, 68, .28);
+  outline-offset: 1px;
+}
+
+.profile-sheet .profile-name-action {
+  min-height: 44px;
+  border: 1px solid rgba(245, 242, 233, .1);
+  color: #f5f2e9;
+  background: #171b17;
+}
+
+.profile-sheet .profile-name-action :is(span, strong) { color: inherit; }
+
+.profile-sheet .wallet-balance-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.profile-sheet .wallet-balance-card {
+  gap: 5px;
+  border: 1px solid rgba(245, 242, 233, .1);
+  border-radius: 14px;
+  padding: 12px;
+  color: #f5f2e9;
+  background: #171b17;
+}
+
+.profile-sheet .wallet-balance-card > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #adb3ad;
+  font-size: 10px;
+}
+
+.profile-sheet .wallet-balance-card strong {
+  color: #f5f2e9;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-sheet .wallet-balance-card small {
+  color: #9fa69f;
+  font-size: 10px;
+}
+
+.profile-sheet .wallet-not-connected { color: #d9b96b !important; }
+.profile-sheet .gas-balance { color: #aeb4ae !important; }
+
+.profile-sheet .savings-calendar {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 10px 0 14px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 169, 68, .18);
+  border-radius: 16px;
+  padding: 13px;
+  color: #f5f2e9;
+  background: linear-gradient(145deg, #171b17, #222116);
+  box-shadow: none;
+  transform: none;
+}
+
+.profile-sheet .savings-calendar .calendar-heading h3 { color: #f5f2e9; }
+.profile-sheet .savings-calendar .eyebrow,
+.profile-sheet .savings-calendar .streak-count { color: #d6b558; }
+
+.profile-sheet .savings-calendar .react-calendar {
+  min-width: 0;
+  margin-top: 8px;
+  color: #f5f2e9;
+}
+
+.profile-sheet .savings-calendar .react-calendar__navigation { margin-bottom: 2px; }
+
+.profile-sheet .savings-calendar .react-calendar__navigation button,
+.profile-sheet .savings-calendar .react-calendar__tile {
+  min-width: 0;
+  color: #dedbd1;
+  background: transparent;
+  font-size: 11px;
+}
+
+.profile-sheet .savings-calendar .react-calendar__month-view__weekdays {
+  color: #9fa69f;
+  font-size: 9px;
+}
+
+.profile-sheet .savings-calendar .react-calendar__tile--now {
+  color: #f5f2e9;
+  background: rgba(214, 169, 68, .12);
+}
+
+.profile-sheet .savings-calendar .react-calendar__tile--active {
+  color: #111411;
+  background: #d6a944;
+}
+
+.profile-sheet .savings-calendar .calendar-note {
+  color: #aeb4ae;
+  line-height: 1.45;
+}
+
+.slow-function-loader {
+  border: 1px solid rgba(214, 169, 68, .2) !important;
+  color: #f5f2e9 !important;
+  background: #1a1e1b !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .48) !important;
+}
+
+.slow-function-loader strong,
+.slow-function-loader > span { color: #f5f2e9 !important; }
+
+.slow-function-loader > span:last-child {
+  color: #a8aea8 !important;
+  font-size: 11px;
+}
+
+.blocking-loader-icon {
+  position: relative;
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  color: #d6a944 !important;
+}
+
+.blocking-loader-icon .blocking-loader-spinner {
+  position: absolute;
+  inset: 6px;
+  color: rgba(214, 169, 68, .42) !important;
+  animation: loading-spin .9s linear infinite;
+}
+
+@media (max-width: 430px) {
+  .discover-page .circle-card .circle-meta { gap: 5px 10px; }
+  .profile-sheet .wallet-balance-grid { grid-template-columns: 1fr; }
+  .profile-sheet .savings-calendar { padding: 11px 9px; }
+}
+
+@media (max-width: 360px) {
+  .available-circles-page .circle-card {
+    grid-template-columns: minmax(0, 1fr) 76px;
+    column-gap: 7px;
+  }
+
+  .available-circles-page .compact-circle-visual {
+    width: 76px;
+    transform: scale(.86);
+    transform-origin: right center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blocking-loader-icon .blocking-loader-spinner { animation: none; }
+}

@@ -32,6 +32,7 @@ export async function deployFactory(
     maxPositionPrincipal = 1_000_000n * UNIT,
     maxVaultPrincipal = 10_000_000n * UNIT,
     maxProtocolPrincipal = 100_000_000n * UNIT,
+    minimumMaturityDuration = 10 * 60,
   } = {},
 ) {
   const [deployer] = await ethers.getSigners()
@@ -60,6 +61,7 @@ export async function deployFactory(
     factoryArguments[5],
     await vaultDeployer.getAddress(),
     await safetyController.getAddress(),
+    minimumMaturityDuration,
   ])
   return { factory, safetyController, vaultDeployer }
 }

@@ -55,7 +55,7 @@ export class WalletAuthService {
     const nonce = randomBytes(32).toString('hex')
     const expiresAt = new Date(now.getTime() + this.nonceMinutes * 60_000)
     const message = [
-      'LockedIn Circle notification access',
+      'LockedIn Circle account access',
       '',
       `Address: ${normalized}`,
       `Nonce: ${nonce}`,

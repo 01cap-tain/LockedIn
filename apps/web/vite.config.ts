@@ -16,7 +16,7 @@ interface AmoyManifest {
     safetyController: { address: string };
   };
   profile?: string;
-  factoryConfiguration?: { yieldAdapter?: string; vaultMode?: string };
+  factoryConfiguration?: { yieldAdapter?: string; vaultMode?: string; minimumMaturitySeconds?: number; testConfiguration?: boolean };
 }
 
 function amoyFactoryDefinition(mode: string): Record<string, string> {
@@ -97,6 +97,8 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
     "import.meta.env.VITE_EXPECTED_MARKET_ADDRESS": JSON.stringify(manifest.contracts.earlyExitMarket.address),
     "import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS": JSON.stringify(manifest.contracts.safetyController.address),
     "import.meta.env.VITE_DEPLOYMENTS_JSON": JSON.stringify(JSON.stringify(deployments)),
+    "import.meta.env.VITE_MIN_MATURITY_SECONDS": JSON.stringify(String(manifest.factoryConfiguration?.minimumMaturitySeconds ?? 3_600)),
+    "import.meta.env.VITE_TEST_CONFIGURATION": JSON.stringify(String(Boolean(manifest.factoryConfiguration?.testConfiguration))),
   };
 }
 

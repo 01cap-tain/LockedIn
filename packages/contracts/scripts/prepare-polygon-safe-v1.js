@@ -2,6 +2,7 @@ import process from 'node:process'
 
 import { Contract, JsonRpcProvider, getAddress, getCreateAddress } from 'ethers'
 import { polygonAaveConfig } from './polygon-aave-config.js'
+import { assertProductionMaturityConfiguration } from './production-profile.js'
 
 const required = (name) => {
   const value = process.env[name]
@@ -14,6 +15,8 @@ const positive = (name) => {
   return value
 }
 
+const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS ?? 86_400)
+assertProductionMaturityConfiguration({ chainId: 137, profile: 'safe-only-v1-production', minimumMaturityDuration })
 const provider = new JsonRpcProvider(required('POLYGON_RPC_URL'), 137, { staticNetwork: true })
 if (Number((await provider.getNetwork()).chainId) !== 137) throw new Error('Expected Polygon chain 137.')
 const safetyCouncil = getAddress(required('POLYGON_SAFETY_COUNCIL_ADDRESS'))
@@ -43,7 +46,7 @@ const predicted = {
 const constructorArguments = {
   safetyController: [predicted.vaultFactory, safetyCouncil, 86_400, caps.position.toString(), caps.vault.toString(), caps.protocol.toString()],
   savingsVaultDeployer: [predicted.vaultFactory],
-  vaultFactory: [polygonAaveConfig.usdt, maintenanceTreasury, 137, predicted.savingsVaultDeployer, predicted.safetyController],
+  vaultFactory: [polygonAaveConfig.usdt, maintenanceTreasury, 137, predicted.savingsVaultDeployer, predicted.safetyController, minimumMaturityDuration],
 }
 console.log(JSON.stringify({
   status: 'READ_ONLY_SAFE_V1_DEPLOYMENT_PLAN',
@@ -51,6 +54,7 @@ console.log(JSON.stringify({
   profile: 'safe-only-v1',
   asset: { address: polygonAaveConfig.usdt, decimals: Number(decimals) },
   features: { earn: false, rewards: false, upgradeability: false },
+  minimumMaturityDuration,
   feeDistribution: { maintenanceTreasuryBps: 10_000, rewardPoolBps: 0, riskReserveBps: 0 },
   governance: { safetyCouncil, maintenanceTreasury },
   caps: Object.fromEntries(Object.entries(caps).map(([key, value]) => [key, value.toString()])),

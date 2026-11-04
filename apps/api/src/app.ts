@@ -9,6 +9,7 @@ import type { MultiDeploymentIndexer } from './indexer/multi-indexer.js'
 import { registerAuthRoutes } from './routes/auth-routes.js'
 import { registerReadRoutes } from './routes/read-routes.js'
 import { registerStreamRoutes } from './routes/stream-routes.js'
+import { registerInvitationRoutes } from './routes/invitation-routes.js'
 import type { IndexerEventStream } from './realtime/event-stream.js'
 
 export async function buildApp(
@@ -87,5 +88,6 @@ export async function buildApp(
   await registerReadRoutes(app, pool)
   await registerStreamRoutes(app, stream)
   await registerAuthRoutes(app, pool, auth)
+  await registerInvitationRoutes(app, pool, auth, config)
   return app
 }

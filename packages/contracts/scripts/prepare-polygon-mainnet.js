@@ -2,6 +2,7 @@ import process from "node:process";
 
 import { Contract, JsonRpcProvider, getAddress } from "ethers";
 import { polygonAaveConfig } from "./polygon-aave-config.js";
+import { assertProductionMaturityConfiguration } from "./production-profile.js";
 
 // This command is intentionally read-only. It validates authoritative Aave
 // identities and explicit production governance inputs, but owns no signer and
@@ -12,6 +13,8 @@ const required = (name) => {
   return value;
 };
 const rpcUrl = required("POLYGON_RPC_URL");
+const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS ?? 86_400);
+assertProductionMaturityConfiguration({ chainId: 137, profile: "polygon-mainnet-production", minimumMaturityDuration });
 const safetyCouncil = getAddress(required("POLYGON_SAFETY_COUNCIL_ADDRESS"));
 const riskReserve = getAddress(required("POLYGON_RISK_RESERVE_ADDRESS"));
 const maintenanceTreasury = getAddress(required("POLYGON_MAINTENANCE_TREASURY_ADDRESS"));
@@ -49,5 +52,6 @@ console.log(JSON.stringify({
   aave: polygonAaveConfig,
   governance: { safetyCouncil, riskReserve, maintenanceTreasury },
   caps: Object.fromEntries(Object.entries(caps).map(([key, value]) => [key, value.toString()])),
+  minimumMaturityDuration,
   note: "No transaction was signed or broadcast. A reviewed multisig deployment procedure is still required.",
 }, null, 2));

@@ -39,7 +39,6 @@ export function SavingsCalendar({ activity }: SavingsCalendarProps) {
 
   return (
     <section className="savings-calendar" aria-label="Monthly savings activity">
-      <span className="sticky-tape" aria-hidden="true" />
       <div className="calendar-heading">
         <div>
           <span className="eyebrow">Savings rhythm</span>

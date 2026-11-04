@@ -28,8 +28,7 @@ contract SavingsVault is ReentrancyGuard {
     uint16 public constant MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS = 2_500;
     uint256 public constant MIN_GROUP_SIZE = 4;
     uint256 public constant MIN_ACTIVE_MEMBERS_AFTER_COOPERATIVE_EXIT = 2;
-    // Testnet release boundary. Restore a production policy before mainnet.
-    uint64 public constant MIN_MATURITY_DURATION = 1 hours;
+    uint64 public constant LOWEST_CONFIGURABLE_MATURITY_DURATION = 10 minutes;
     uint64 public constant MAX_MATURITY_DURATION = 5 * 365 days;
 
     enum VaultMode { Safe, Earn }
@@ -110,6 +109,7 @@ contract SavingsVault is ReentrancyGuard {
 
     IERC20 public immutable asset;
     uint64 public immutable maturity;
+    uint64 public immutable minimumMaturityDuration;
     uint64 public immutable createdAt;
     bool public immutable isGroup;
     address public immutable groupCreator;
@@ -218,7 +218,8 @@ contract SavingsVault is ReentrancyGuard {
         uint256 publicMemberTarget_,
         uint16 publicEmergencyBps_,
         bool openEnrollment_,
-        uint64 enrollmentDeadline_
+        uint64 enrollmentDeadline_,
+        uint64 minimumMaturityDuration_
     ) {
         uint256 count = members_.length;
         if (
@@ -228,7 +229,8 @@ contract SavingsVault is ReentrancyGuard {
             address(safetyController_) == address(0) || address(safetyController_).code.length == 0 ||
             factory_ == address(0) || factory_.code.length == 0 ||
             maturity_ <= block.timestamp ||
-            uint256(maturity_) < block.timestamp + MIN_MATURITY_DURATION ||
+            minimumMaturityDuration_ < LOWEST_CONFIGURABLE_MATURITY_DURATION ||
+            uint256(maturity_) < block.timestamp + minimumMaturityDuration_ ||
             uint256(maturity_) > block.timestamp + MAX_MATURITY_DURATION ||
             count == 0 || count != targets_.length ||
             count != emergencyBps_.length ||
@@ -243,6 +245,7 @@ contract SavingsVault is ReentrancyGuard {
 
         asset = asset_;
         maturity = maturity_;
+        minimumMaturityDuration = minimumMaturityDuration_;
         createdAt = uint64(block.timestamp);
         isGroup = isGroup_;
         groupCreator = groupCreator_;

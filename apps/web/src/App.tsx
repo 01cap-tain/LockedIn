@@ -61,6 +61,8 @@ import {
   type PublicGroupSummary,
   type DeploymentVerification,
 } from "./lib/contracts";
+import { copyText } from "./lib/clipboard";
+import { loadCreatorInvitations, registerShortInvitation, registerVerifiedUsername, resolveInvitationRecipient, resolveShortInvitation } from "./lib/invitation-api";
 import { loadNimBalance } from "./lib/nim-balance";
 import { NimSwapFlow } from "./components/NimSwapFlow";
 import { createConfiguredMockSwapAdapter } from "./swap/mock-swap-adapter";
@@ -202,6 +204,7 @@ type CachedPublicGroup = Omit<PublicGroupSummary, "maturity" | "enrollmentDeadli
 type StoredInvitation = {
   creator: string;
   code: string;
+  shortCode?: string;
 };
 
 const PUBLIC_GROUP_CACHE_KEY = "lockedin-public-groups-v1";
@@ -339,14 +342,14 @@ function loadStoredInvitations(
   }
 }
 
-function persistInvitation(creator: string, invitation: SecureGroupInvitation): void {
+function persistInvitation(creator: string, invitation: SecureGroupInvitation, shortCode?: string): void {
   try {
     const stored = JSON.parse(
       window.localStorage.getItem(PRIVATE_INVITATION_STORAGE_KEY) ?? "[]"
     ) as StoredInvitation[];
     const code = encodeGroupInvitation(invitation);
     const next = [
-      { creator, code },
+      { creator, code, shortCode },
       ...stored.filter((entry) => {
         try {
           return decodeGroupInvitation(entry.code).commitment !== invitation.commitment;
@@ -358,6 +361,17 @@ function persistInvitation(creator: string, invitation: SecureGroupInvitation): 
     window.localStorage.setItem(PRIVATE_INVITATION_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // The invitation still works for this session when browser storage is unavailable.
+  }
+}
+
+function storedInvitationShortCode(commitment: string): string {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PRIVATE_INVITATION_STORAGE_KEY) ?? "[]") as StoredInvitation[];
+    return stored.find((entry) => {
+      try { return decodeGroupInvitation(entry.code).commitment === commitment; } catch { return false; }
+    })?.shortCode ?? "";
+  } catch {
+    return "";
   }
 }
 
@@ -378,29 +392,6 @@ function clearStoredInvitations(creator: string, vault: string): void {
   } catch {
     // Storage is convenience-only; the contract remains authoritative.
   }
-}
-
-async function copyText(value: string): Promise<void> {
-  if (window.isSecureContext && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return;
-    } catch {
-      // Permission can still be denied on HTTPS; use the user-gesture fallback.
-    }
-  }
-  const field = document.createElement("textarea");
-  field.value = value;
-  field.readOnly = true;
-  field.style.position = "fixed";
-  field.style.opacity = "0";
-  field.style.pointerEvents = "none";
-  document.body.appendChild(field);
-  field.select();
-  field.setSelectionRange(0, value.length);
-  const copied = document.execCommand("copy");
-  field.remove();
-  if (!copied) throw new Error("ClipboardUnavailable");
 }
 
 function futureInput(days: number): string {
@@ -453,6 +444,16 @@ function localDateTimeInput(date: Date): string {
 
 function amountLabel(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function displayBalance(value: string | null, maximumFractionDigits = 2): string {
+  if (value === null) return "—";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return numeric.toLocaleString(undefined, {
+    maximumFractionDigits,
+    minimumFractionDigits: 0,
+  });
 }
 
 function onboardingStorageKey(
@@ -822,9 +823,11 @@ function SwipeReviewInvitation({
 function DelayedFunctionLoader({
   active,
   label,
+  immediate = false,
 }: {
   active: boolean;
   label: string;
+  immediate?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -837,12 +840,15 @@ function DelayedFunctionLoader({
     return () => window.clearTimeout(timer);
   }, [active]);
 
-  if (!active || !visible) return null;
+  if (!active || (!visible && !immediate)) return null;
   return (
-    <div className="slow-function-loader" role="status" aria-live="polite">
-      <LoadingAnimation />
+    <div className="slow-function-loader" role="status" aria-live="polite" aria-label={label}>
+      <span className="blocking-loader-icon" aria-hidden="true">
+        <LockKeyhole size={23} strokeWidth={1.5} />
+        <LoaderCircle className="blocking-loader-spinner" size={42} strokeWidth={1.5} />
+      </span>
       <strong>{label}</strong>
-      <span>Securing your savings update</span>
+      <span>Please confirm when your wallet opens.</span>
     </div>
   );
 }
@@ -950,8 +956,10 @@ export function App() {
   const [secureInvitation, setSecureInvitation] = useState<SecureGroupInvitation | null>(null);
   const [inviteRulesConfirmed, setInviteRulesConfirmed] = useState(false);
   const [inviteeAddress, setInviteeAddress] = useState("");
+  const [resolvedInvitee, setResolvedInvitee] = useState<{ username?: string; walletAddress: string } | null>(null);
   const [inviteExpiry, setInviteExpiry] = useState(() => futureInput(2));
   const [createdInvitation, setCreatedInvitation] = useState<SecureGroupInvitation | null>(null);
+  const [createdInvitationCode, setCreatedInvitationCode] = useState("");
   const [managedInvitations, setManagedInvitations] = useState<GroupInvitationRecord[]>([]);
   const [storedInvitations, setStoredInvitations] = useState<SecureGroupInvitation[]>([]);
   const [vaults, setVaults] = useState<VaultSummary[]>([]);
@@ -1168,12 +1176,13 @@ export function App() {
   );
   const hasContributionPlan = Number(planContribution) > 0;
   const maturityTime = new Date(maturity).getTime();
-  const minimumMaturityTime = Date.now() + 3_600_000;
+  const minimumMaturitySeconds = Number(import.meta.env.VITE_MIN_MATURITY_SECONDS ?? 3_600);
+  const minimumMaturityTime = Date.now() + minimumMaturitySeconds * 1_000;
   const maximumMaturityTime = Date.now() + 5 * 365 * 86_400_000;
   const maturityValidationError = !Number.isFinite(maturityTime)
     ? "Choose a valid maturity date."
     : maturityTime < minimumMaturityTime
-      ? "The plan must run for at least 1 hour."
+      ? `The plan must run for at least ${minimumMaturitySeconds / 60} minutes.`
       : maturityTime > maximumMaturityTime
         ? "The plan cannot run for more than 5 years."
         : null;
@@ -1480,19 +1489,21 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!inviteCode || pendingGroup || publicGroups.length === 0) return;
-    try {
-      const invitation = decodeGroupInvitation(inviteCode);
-      const group = publicGroups.find(
-        (candidate) => candidate.address.toLowerCase() === invitation.vault.toLowerCase()
-      );
-      if (!group || group.publicJoining) throw new Error("InvitationInvalid");
-      setPendingGroup(group);
-      setConnectionSheetOpen(true);
-    } catch (error) {
-      setTransaction({ status: "error", message: describeContractError(error) });
-    }
-  }, [inviteCode, pendingGroup, publicGroups]);
+    if (!inviteCode || pendingGroup || publicGroups.length === 0 || !evmSession) return;
+    void (async () => {
+      try {
+        const invitation = await resolveShortInvitation(evmSession.signer, inviteCode);
+        const group = publicGroups.find(
+          (candidate) => candidate.address.toLowerCase() === invitation.vault.toLowerCase()
+        );
+        if (!group || group.publicJoining) throw new Error("InvitationInvalid");
+        setPendingGroup(group);
+        setConnectionSheetOpen(true);
+      } catch (error) {
+        setTransaction({ status: "error", message: describeContractError(error) });
+      }
+    })();
+  }, [evmSession, inviteCode, pendingGroup, publicGroups]);
 
   useEffect(() => {
     if (
@@ -1513,25 +1524,31 @@ export function App() {
       setCreatedInvitation(null);
       return;
     }
-    const stored = loadStoredInvitations(
-      evmSession.address,
-      snapshot.address,
-      evmSession.chainId
-    );
-    setStoredInvitations(stored);
-    if (stored.length === 0) {
-      setManagedInvitations([]);
-      return;
-    }
-    void Promise.all(stored.map((invitation) =>
-      loadSecureGroupInvitation(
-        evmSession.signer,
-        snapshot.address,
-        invitation.commitment
-      )
-    )).then(setManagedInvitations).catch((error) =>
-      setTransaction({ status: "error", message: describeContractError(error) })
-    );
+    void (async () => {
+      let stored = loadStoredInvitations(evmSession.address, snapshot.address, evmSession.chainId);
+      try {
+        const remote = (await loadCreatorInvitations(evmSession.signer)).filter((entry) =>
+          entry.invitation.vault.toLowerCase() === snapshot.address.toLowerCase() &&
+          entry.invitation.chainId === BigInt(evmSession.chainId)
+        );
+        for (const entry of remote) persistInvitation(evmSession.address, entry.invitation, entry.code);
+        stored = loadStoredInvitations(evmSession.address, snapshot.address, evmSession.chainId);
+      } catch {
+        // Local recovery remains available while the optional resolver is offline.
+      }
+      setStoredInvitations(stored);
+      if (stored.length === 0) {
+        setManagedInvitations([]);
+        return;
+      }
+      try {
+        setManagedInvitations(await Promise.all(stored.map((invitation) =>
+          loadSecureGroupInvitation(evmSession.signer, snapshot.address, invitation.commitment)
+        )));
+      } catch (error) {
+        setTransaction({ status: "error", message: describeContractError(error) });
+      }
+    })();
   }, [snapshot?.address, snapshot?.groupLifecycle, snapshot?.enrollmentDeadline, evmSession?.address, evmSession?.chainId]);
 
   useEffect(() => {
@@ -2142,7 +2159,7 @@ export function App() {
       return;
     }
     try {
-      const invitation = decodeGroupInvitation(inviteCode);
+      const invitation = await resolveShortInvitation(evmSession.signer, inviteCode);
       if (invitation.vault.toLowerCase() !== pendingGroup.address.toLowerCase()) {
         throw new Error("InvitationInvalid");
       }
@@ -2167,8 +2184,28 @@ export function App() {
 
   async function createPrivateInvitation(): Promise<void> {
     if (!snapshot || !evmSession) return;
+    let recipient = resolvedInvitee;
+    const recipientStillMatches = recipient && (recipient.username
+      ? recipient.username.toLowerCase() === inviteeAddress.replace(/^@/, "").toLowerCase()
+      : recipient.walletAddress.toLowerCase() === inviteeAddress.toLowerCase());
+    if (!recipientStillMatches) {
+      try {
+        recipient = await resolveInvitationRecipient(evmSession.signer, inviteeAddress);
+        if (recipient.walletAddress.toLowerCase() === evmSession.address.toLowerCase()) {
+          throw new Error("You cannot invite your own wallet.");
+        }
+        setResolvedInvitee(recipient);
+        setTransaction({ status: "idle" });
+        return;
+      } catch (error) {
+        setResolvedInvitee(null);
+        setTransaction({ status: "error", message: error instanceof Error ? error.message : "The recipient could not be verified." });
+        return;
+      }
+    }
+    if (!recipient) return;
     if (snapshot.members.some((member) =>
-      member.member.toLowerCase() === inviteeAddress.toLowerCase()
+      member.member.toLowerCase() === recipient.walletAddress.toLowerCase()
     )) {
       setTransaction({
         status: "error",
@@ -2180,7 +2217,7 @@ export function App() {
       const existing = await loadActiveSecureGroupInvitation(
         evmSession.signer,
         snapshot.address,
-        inviteeAddress
+        recipient.walletAddress
       );
       if (existing?.status === "available") {
         setManagedInvitations((current) => [
@@ -2203,21 +2240,28 @@ export function App() {
         const invitation = await createSecureGroupInvitation(
           evmSession.signer,
           snapshot.address,
-          inviteeAddress,
+          recipient.walletAddress,
           new Date(inviteExpiry)
+        );
+        const shortInvitation = await registerShortInvitation(
+          evmSession.signer,
+          invitation,
+          recipient.username
         );
         const record = await loadSecureGroupInvitation(
           evmSession.signer,
           snapshot.address,
           invitation.commitment
         );
-        persistInvitation(evmSession.address, invitation);
+        persistInvitation(evmSession.address, invitation, shortInvitation.code);
         setCreatedInvitation(invitation);
+        setCreatedInvitationCode(shortInvitation.code);
         setStoredInvitations((current) => [
           invitation,
           ...current.filter((item) => item.commitment !== invitation.commitment),
         ]);
         setInviteeAddress("");
+        setResolvedInvitee(null);
         setManagedInvitations((current) => [record, ...current.filter((item) => item.commitment !== record.commitment)]);
       },
       "One-time invitation created. Share it through a private channel."
@@ -2228,7 +2272,13 @@ export function App() {
     invitation: SecureGroupInvitation,
     kind: "code" | "link"
   ): Promise<void> {
-    const code = encodeGroupInvitation(invitation);
+    const code = invitation.commitment === createdInvitation?.commitment
+      ? createdInvitationCode
+      : storedInvitationShortCode(invitation.commitment);
+    if (!code) {
+      setTransaction({ status: "error", message: "The short invite code is unavailable. Create a new invitation or retry saving this invitation." });
+      return;
+    }
     const value = kind === "code"
       ? code
       : `${window.location.origin}${window.location.pathname}#/explore-circles?invite=${encodeURIComponent(code)}`;
@@ -2236,7 +2286,7 @@ export function App() {
       await copyText(value);
       setTransaction({
         status: "success",
-        message: kind === "code" ? "Secure invitation copied." : "Private invite link copied.",
+        message: kind === "code" ? "Invite code copied" : "Invite link copied",
       });
     } catch {
       setTransaction({
@@ -2561,7 +2611,7 @@ export function App() {
       const session = requireSession();
       setTransaction({
         status: "pending",
-        message: "Checking the vault settings and exact network feeâ€¦",
+        message: "Checking vault settings and estimating the network fee…",
       });
       const input: CreateVaultInput = {
         groupMode: mode,
@@ -2579,10 +2629,10 @@ export function App() {
         setTransaction({
           status: "pending",
           message: stage === "preflight"
-            ? "Checking the vault settings and exact network feeâ€¦"
+            ? "Checking vault settings and estimating the network fee…"
             : stage === "signature"
               ? "Open your wallet to confirm the vault transaction."
-              : "Transaction submitted. Waiting for Polygon confirmationâ€¦",
+              : "Transaction submitted. Waiting for Polygon confirmation…",
         })
       );
       const preferences: VaultPlanPreferences = {
@@ -2717,6 +2767,7 @@ export function App() {
     evm.status === "connecting" ||
     nimiq.status === "connecting" ||
     deployment.status === "checking" ||
+    openingVault ||
     transaction.status === "pending";
   const slowOperationLabel =
     transaction.status === "pending"
@@ -2738,6 +2789,7 @@ export function App() {
       <DelayedFunctionLoader
         active={slowOperationActive}
         label={slowOperationLabel}
+        immediate={transaction.status === "pending"}
       />
       <header className="mobile-app-header">
         <button aria-label="Open navigation" className="header-icon menu-icon" onClick={() => setMenuOpen(true)} type="button">
@@ -2941,6 +2993,7 @@ export function App() {
               <span>Test network</span>
               <strong>Polygon Amoy</strong>
               <small>Mock assets only. No real funds.</small>
+              {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <small>Test configuration · 10-minute minimum maturity</small>}
             </div>
           </aside>
         </div>
@@ -2966,10 +3019,19 @@ export function App() {
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
-                      const saved = saveLocalUsername(profileWalletAddress, profileUsernameDraft);
-                      setProfileUsername(saved);
-                      setProfileUsernameDraft(saved);
-                      setEditingProfileUsername(false);
+                      void (async () => {
+                        try {
+                          const verified = evmSession
+                            ? await registerVerifiedUsername(evmSession.signer, profileUsernameDraft)
+                            : profileUsernameDraft;
+                          const saved = saveLocalUsername(profileWalletAddress, verified);
+                          setProfileUsername(saved);
+                          setProfileUsernameDraft(saved);
+                          setEditingProfileUsername(false);
+                        } catch (error) {
+                          setTransaction({ status: "error", message: error instanceof Error ? error.message : "The profile name could not be saved." });
+                        }
+                      })();
                     }}
                   >
                     <label htmlFor="profile-username">Profile name</label>
@@ -3001,11 +3063,15 @@ export function App() {
               </div>
             )}
             <div className="wallet-balance-grid">
-              <div><span><CircleDollarSign aria-hidden="true" size={13} />NIM wallet</span><strong>{nimBalanceLuna === null ? "—" : `${formatAssetAmount(nimBalanceLuna, 5)} NIM`}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Not connected"}</small></div>
-              <div>
-                <span><Landmark aria-hidden="true" size={13} />Polygon wallet</span>
-                <strong>{mockTokenBalance === null ? "—" : `${mockTokenBalance} mUSDT`}</strong>
-                <small>{nativeTokenBalance === null ? "POL fee balance unavailable" : `${nativeTokenBalance} POL for transaction fees`}</small>
+              <div className="wallet-balance-card">
+                <span><CircleDollarSign aria-hidden="true" size={16} strokeWidth={1.5} />NIM wallet</span>
+                <strong>{displayBalance(nimBalanceLuna === null ? null : formatAssetAmount(nimBalanceLuna, 5), 2)} NIM</strong>
+                <small className={!nimiqWallet ? "wallet-not-connected" : ""}>{nimiqWallet ? short(nimiqWallet.address) : "Not connected"}</small>
+              </div>
+              <div className="wallet-balance-card polygon-balance-card">
+                <span><Landmark aria-hidden="true" size={16} strokeWidth={1.5} />Polygon wallet</span>
+                <strong>{displayBalance(mockTokenBalance, 2)} mUSDT</strong>
+                <small className="gas-balance">Network fees · {nativeTokenBalance === null ? "POL unavailable" : `${displayBalance(nativeTokenBalance, 4)} POL`}</small>
               </div>
             </div>
             <SavingsCalendar activity={activity} />
@@ -3128,7 +3194,7 @@ export function App() {
               <section className="private-invite-entry">
                 <strong>Enter invite code</strong>
                 <p>This is a private circle. Enter the one-time code shared with you to continue.</p>
-                <label><span>One-time invite code</span><textarea autoCapitalize="none" autoCorrect="off" onChange={(event) => setInviteCode(event.target.value.trim())} placeholder="LIC1.…" rows={3} spellCheck={false} value={inviteCode} /></label>
+                <label><span>Six-character invite code</span><input autoCapitalize="characters" autoCorrect="off" maxLength={6} onChange={(event) => setInviteCode(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6))} placeholder="K7M4PX" spellCheck={false} value={inviteCode} /></label>
                 <button className="secondary full-width" disabled={!evmSession || !inviteCode} onClick={() => void verifyPrivateInvitation()} type="button">Verify invitation</button>
               </section>
             )}
@@ -3382,12 +3448,16 @@ export function App() {
                   : undefined;
                 return (
                 <article className={`circle-card group-vault${joinedMember ? " joined-circle" : ""}`} key={group.address}>
+                  <div className="circle-card-heading">
+                    <div>
+                      <h3>{group.groupName || `Savings Circle ${index + 1}`}</h3>
+                      <p className="circle-address">Created by {walletDisplayName(group.creator)}</p>
+                    </div>
+                    <small className="circle-number">Circle {String(index + 1).padStart(2, "0")}</small>
+                  </div>
                   <div className="circle-card-top">
                     <div><span className={`tag ${group.vaultMode}`}>{group.vaultMode}</span><span className={`circle-state ${group.lifecycle}`}>{group.lifecycle}</span><span className={`tag circle-visibility ${group.publicJoining ? "public" : "invite-only"}`}>{group.publicJoining ? "Public" : "Invite only"}</span></div>
-                    <small>Circle {String(index + 1).padStart(2, "0")}</small>
                   </div>
-                  <h3>{group.groupName || `Savings Circle ${index + 1}`}</h3>
-                  <p className="circle-address">Created by {walletDisplayName(group.creator)}</p>
                   {route === "explore-circles" ? <CompactCircleVisual group={group} /> : <GroupPowerVisual group={group} />}
                   {route !== "explore-circles" && <p className="member-avatar-note">Wallet initials represent the members powering this shared goal.</p>}
                   <div className="circle-roadmap">
@@ -3662,7 +3732,7 @@ export function App() {
               <p className="frequency-explainer full-width">
                 {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
               </p>
-              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Testnet range: 1 hour to 5 years.`}</small></div></div>
+              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Testnet range: ${minimumMaturitySeconds / 60} minutes to 5 years.`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -4004,17 +4074,18 @@ export function App() {
                   <section className="circle-invitations-panel">
                     <div className="section-title"><div><span className="eyebrow">Private circle</span><h3>Invitations</h3><p>Create a wallet-bound one-time invitation. Deposits remain disabled until the circle activates.</p></div></div>
                     <div className="invitation-create-grid">
-                      <label><span>Member wallet address</span><input autoCapitalize="none" autoCorrect="off" onChange={(event) => setInviteeAddress(event.target.value.trim())} placeholder="0x…" spellCheck={false} value={inviteeAddress} /></label>
+                      <label><span>Username or Polygon wallet</span><input autoCapitalize="none" autoCorrect="off" onChange={(event) => { setInviteeAddress(event.target.value.trim()); setResolvedInvitee(null); }} placeholder="@username or 0x…" spellCheck={false} value={inviteeAddress} /></label>
                       <label><span>Invitation expires</span><input max={snapshot.enrollmentDeadline?.toISOString().slice(0, 16)} min={futureInput(0)} onChange={(event) => setInviteExpiry(event.target.value)} type="datetime-local" value={inviteExpiry} /></label>
                     </div>
-                    <button className="primary compact" disabled={riskActionsDisabled || !inviteeAddress || !inviteExpiry} onClick={() => void createPrivateInvitation()} type="button">Generate one-time invitation</button>
+                    {resolvedInvitee && <div className="invitation-recipient-confirm"><strong>{resolvedInvitee.username ? `Inviting @${resolvedInvitee.username}` : "Inviting wallet"}</strong><span>{short(resolvedInvitee.walletAddress)}</span></div>}
+                    <button className="primary compact" disabled={riskActionsDisabled || !inviteeAddress || !inviteExpiry} onClick={() => void createPrivateInvitation()} type="button">{resolvedInvitee ? "Create invitation" : "Verify recipient"}</button>
                     {createdInvitation && (
                       <div className="invitation-secret-reveal">
                         <strong>Share this invitation now</strong>
-                        <p>Invite {invitationReference(createdInvitation)} is saved on this device until the circle activates. The copied code remains cryptographically secure and wallet-bound.</p>
-                        <code>Invite {invitationReference(createdInvitation)}</code>
+                        <p>This lookup code remains available until it expires, is revoked, is accepted, or the circle activates. The contract still verifies the intended wallet and one-time secret.</p>
+                        <code>{createdInvitationCode || invitationReference(createdInvitation)}</code>
                         <div>
-                          <button className="secondary compact" onClick={() => void copyInvitation(createdInvitation, "code")} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy secure code</button>
+                          <button className="secondary compact" onClick={() => void copyInvitation(createdInvitation, "code")} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy code</button>
                           <button className="secondary compact" onClick={() => void copyInvitation(createdInvitation, "link")} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite link</button>
                           <button className="secondary compact" onClick={() => setCreatedInvitation(null)} type="button">Hide secret</button>
                         </div>
@@ -4027,7 +4098,7 @@ export function App() {
                           const stored = storedInvitations.find((item) => item.commitment === invitation.commitment);
                           return (
                             <article key={invitation.commitment}>
-                              <div><strong>Invite {invitation.commitment.slice(2, 8).toUpperCase()} · {short(invitation.invitee)}</strong><span className={`invitation-status ${invitation.status}`}>{invitation.status}</span></div>
+                              <div><strong>{storedInvitationShortCode(invitation.commitment) ? `Invite ${storedInvitationShortCode(invitation.commitment)}` : "Invitation"} · {short(invitation.invitee)}</strong><span className={`invitation-status ${invitation.status}`}>{invitation.status}</span></div>
                               <small>Expires {invitation.expiry.toLocaleString()}</small>
                               {stored && invitation.status === "available" && <div className="invitation-row-actions"><button className="secondary compact" onClick={() => void copyInvitation(stored, "code")} type="button"><Copy aria-hidden="true" size={15} strokeWidth={1.5} />Copy code</button><button className="secondary compact" onClick={() => void copyInvitation(stored, "link")} type="button"><Copy aria-hidden="true" size={15} strokeWidth={1.5} />Copy link</button></div>}
                               {invitation.status === "available" && <button className="secondary destructive compact" disabled={riskActionsDisabled} onClick={() => void revokePrivateInvitation(invitation)} type="button">Revoke invitation</button>}
@@ -5646,7 +5717,7 @@ export function App() {
         </div>
       )}
 
-      {transaction.status !== "idle" && (
+      {transaction.status !== "idle" && transaction.status !== "pending" && (
         <div
           className={`transaction ${transaction.status}`}
           role={transaction.status === "error" ? "alert" : "status"}
@@ -5657,9 +5728,6 @@ export function App() {
               <Check />
             </span>
           )}
-          {transaction.status === "pending" && (
-            <span className="transaction-pending-icon" aria-hidden="true"><LoaderCircle size={19} /></span>
-          )}
           {transaction.status === "error" && (
             <AlertTriangle className="transaction-icon" aria-hidden="true" size={18} />
           )}
@@ -5667,9 +5735,7 @@ export function App() {
             <span>
               {transaction.status === "error"
                 ? "Something went wrong"
-                : transaction.status === "pending"
-                  ? "Confirm in your wallet"
-                  : "Completed"}
+                : "Completed"}
             </span>
             <p>{transaction.message}</p>
           </div>
@@ -5764,6 +5830,7 @@ export function App() {
         <span>Mock USDT</span>
         <span>Simulated yield</span>
         <span>Unaudited test deployment</span>
+        {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <span>10-minute test maturity</span>}
       </aside>
     </main>
   );

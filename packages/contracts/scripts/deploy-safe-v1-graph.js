@@ -9,7 +9,11 @@ export async function deploySafeV1Graph({
   maxPositionPrincipal,
   maxVaultPrincipal,
   maxProtocolPrincipal,
+  minimumMaturityDuration,
 }) {
+  if (!Number.isSafeInteger(minimumMaturityDuration) || minimumMaturityDuration < 600) {
+    throw new Error('minimumMaturityDuration must be at least 600 seconds.')
+  }
   const deployerAddress = await deployer.getAddress()
   const nonce = await ethers.provider.getTransactionCount(deployerAddress, 'pending')
   const predictedFactory = ethers.getCreateAddress({ from: deployerAddress, nonce: nonce + 2 })
@@ -40,6 +44,7 @@ export async function deploySafeV1Graph({
     chainId,
     await vaultDeployer.getAddress(),
     await safety.getAddress(),
+    minimumMaturityDuration,
   ]
   const factory = await factoryFactory.deploy(...factoryArguments, { gasLimit: 4_500_000n })
   await factory.waitForDeployment()

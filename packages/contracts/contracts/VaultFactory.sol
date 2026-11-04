@@ -12,9 +12,11 @@ import {SafetyController} from "./SafetyController.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/1.2.0-safe";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/1.3.0-safe";
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
+    uint64 public constant MIN_CONFIGURABLE_MATURITY_DURATION = 10 minutes;
+    uint64 public constant MAX_CONFIGURABLE_MATURITY_DURATION = 5 * 365 days;
 
     error InvalidConfiguration();
     error UnsupportedToken();
@@ -28,6 +30,7 @@ contract VaultFactory {
     bytes32 public immutable deploymentId;
     SavingsVaultDeployer public immutable vaultDeployer;
     SafetyController public immutable safetyController;
+    uint64 public immutable minimumMaturityDuration;
 
     address[] private _vaults;
     mapping(address member => address[] vaults) private _memberVaults;
@@ -48,14 +51,17 @@ contract VaultFactory {
         address maintenanceTreasury_,
         uint256 deploymentChainId_,
         SavingsVaultDeployer vaultDeployer_,
-        SafetyController safetyController_
+        SafetyController safetyController_,
+        uint64 minimumMaturityDuration_
     ) {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
             block.chainid != deploymentChainId_ ||
             maintenanceTreasury_ == address(0) ||
             maintenanceTreasury_ == address(asset_) ||
-            maintenanceTreasury_ == address(this)
+            maintenanceTreasury_ == address(this) ||
+            minimumMaturityDuration_ < MIN_CONFIGURABLE_MATURITY_DURATION ||
+            minimumMaturityDuration_ > MAX_CONFIGURABLE_MATURITY_DURATION
         ) revert InvalidConfiguration();
         if (
             address(vaultDeployer_) == address(0) ||
@@ -77,6 +83,7 @@ contract VaultFactory {
         deploymentChainId = deploymentChainId_;
         vaultDeployer = vaultDeployer_;
         safetyController = safetyController_;
+        minimumMaturityDuration = minimumMaturityDuration_;
         earlyExitMarket = new EarlyExitMarket(
             asset_,
             address(this),
@@ -94,7 +101,8 @@ contract VaultFactory {
                 address(asset_),
                 address(earlyExitMarket),
                 maintenanceTreasury_,
-                address(safetyController_)
+                address(safetyController_),
+                minimumMaturityDuration_
             )
         );
     }
@@ -217,7 +225,8 @@ contract VaultFactory {
             publicMemberTarget,
             publicEmergencyBps,
             openEnrollment,
-            enrollmentDeadline
+            enrollmentDeadline,
+            minimumMaturityDuration
         );
         _vaults.push(vault);
         isVault[vault] = true;

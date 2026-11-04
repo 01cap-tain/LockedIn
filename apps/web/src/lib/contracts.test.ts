@@ -128,6 +128,7 @@ describe("group creation compatibility", () => {
       /secure invite-only circles require protocol 1\.2\.0/i
     );
     expect(groupCreationUnsupportedReason("lockedin-circle/1.2.0-safe", "invite-only")).toBeNull();
+    expect(groupCreationUnsupportedReason("lockedin-circle/1.3.0-safe", "invite-only")).toBeNull();
   });
 
   it("allows creator-first circles on immutable Safe-only V1", () => {

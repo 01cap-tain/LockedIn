@@ -28,6 +28,7 @@ const factoryAbi = [
   "error ProtocolIsPaused()",
   "error ExposureCapExceeded()",
   "function PROTOCOL_VERSION() view returns (string)",
+  "function minimumMaturityDuration() view returns (uint64)",
   "function deploymentId() view returns (bytes32)",
   "function deploymentChainId() view returns (uint256)",
   "function asset() view returns (address)",
@@ -330,7 +331,7 @@ export function groupCreationUnsupportedReason(
   visibility: "public" | "invite-only"
 ): string | null {
   if (visibility === "invite-only" && !supportsSecureInvitations(protocolVersion)) {
-    return `Secure invite-only circles require protocol 1.2.0; the connected factory is ${protocolVersion}.`;
+    return `Secure invite-only circles require protocol 1.2.0 or later; the connected factory is ${protocolVersion}.`;
   }
   if (supportsOpenEnrollmentProtocol(protocolVersion)) return null;
   if (visibility === "public") {
@@ -344,11 +345,13 @@ export function supportsOpenEnrollmentProtocol(protocolVersion: string): boolean
   return protocolVersion === "lockedin-circle/0.8.0" ||
     protocolVersion === "lockedin-circle/1.0.0-safe" ||
     protocolVersion === "lockedin-circle/1.1.0-safe" ||
-    protocolVersion === "lockedin-circle/1.2.0-safe";
+    protocolVersion === "lockedin-circle/1.2.0-safe" ||
+    protocolVersion === "lockedin-circle/1.3.0-safe";
 }
 
 export function supportsSecureInvitations(protocolVersion: string): boolean {
-  return protocolVersion === "lockedin-circle/1.2.0-safe";
+  return protocolVersion === "lockedin-circle/1.2.0-safe" ||
+    protocolVersion === "lockedin-circle/1.3.0-safe";
 }
 
 export interface VaultSnapshot {
@@ -1013,10 +1016,16 @@ export async function createVault(
     throw new Error("Choose a valid maturity date.");
   const maturity = BigInt(Math.floor(maturityMilliseconds / 1_000));
   const now = BigInt(Math.floor(Date.now() / 1_000));
-  const minimumMaturity = now + 60n * 60n;
+  let minimumDuration = 60n * 60n;
+  try {
+    minimumDuration = BigInt(await factory.getFunction("minimumMaturityDuration")());
+  } catch {
+    // Legacy factories retain their immutable one-hour rule.
+  }
+  const minimumMaturity = now + minimumDuration;
   const maximumMaturity = now + 5n * 365n * 24n * 60n * 60n;
   if (maturity < minimumMaturity)
-    throw new Error("Maturity must be at least 1 hour from now.");
+    throw new Error(`Maturity must be at least ${Number(minimumDuration) / 60} minutes from now.`);
   if (maturity > maximumMaturity)
     throw new Error("Maturity cannot be more than 5 years from now.");
   if (input.yieldMode !== "safe")
@@ -3034,7 +3043,7 @@ export function describeContractError(error: unknown): string {
   if (/tokenaccountingmismatch/i.test(raw))
     return "The token transfer did not match the expected amount, so the contract safely cancelled the action.";
   if (/invalidconfiguration/i.test(raw))
-    return "One or more vault settings are invalid. Check the goal, 10%â€“15% emergency amount, member limit, join deadline and maturity date.";
+    return "One or more vault settings are invalid. Check the goal, 10%–15% emergency amount, member limit, join deadline and maturity date.";
   if (/earndisabled/i.test(raw))
     return "Earn is coming soon. Create this vault in Safe mode.";
   if (/protocolispaused/i.test(raw))
@@ -3044,7 +3053,7 @@ export function describeContractError(error: unknown): string {
   if (/confirmation timed out|submitted but confirmation/i.test(raw))
     return "The transaction was submitted but confirmation is taking longer than expected. Check PolygonScan before trying again to avoid a duplicate action.";
   if (/-32603|internal json-?rpc error/i.test(raw))
-    return "Your walletâ€™s Polygon RPC could not submit this transaction. Confirm Polygon Amoy is selected, reopen the wallet and try once more.";
+    return "Your wallet’s Polygon RPC could not submit this transaction. Confirm Polygon Amoy is selected, reopen the wallet and try once more.";
   if (/provideronly|saver cannot fund their own/i.test(raw))
     return "You cannot fund your own savings exit. Connect a different provider wallet to complete this purchase.";
   if (/listingunavailable|positionalreadysold/i.test(raw))
