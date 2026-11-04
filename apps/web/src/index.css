@@ -5063,6 +5063,53 @@ textarea::placeholder {
   background: #302c20;
 }
 
+.quick-test-maturity {
+  align-items: center;
+  background: rgba(229, 168, 75, 0.08);
+  border: 1px solid rgba(229, 168, 75, 0.28);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.quick-test-maturity > svg {
+  color: #e5a84b;
+}
+
+.quick-test-maturity div {
+  display: grid;
+  gap: 3px;
+}
+
+.quick-test-maturity strong {
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+
+.quick-test-maturity span {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+.quick-test-maturity.active {
+  background: rgba(244, 200, 74, 0.13);
+  border-color: rgba(244, 200, 74, 0.5);
+}
+
+@media (max-width: 430px) {
+  .quick-test-maturity {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .quick-test-maturity button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+}
+
 .estimated-date > div {
   display: grid;
   gap: 3px;
