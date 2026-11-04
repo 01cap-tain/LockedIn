@@ -3,12 +3,12 @@
   "profile": "safe-only-v1",
   "network": "polygon-amoy",
   "chainId": 80002,
-  "protocolVersion": "lockedin-circle/1.2.0-safe",
-  "deploymentId": "0xdc470cdf90b4fa20337991b0fd222179331f5b04d1fff7dca84893e09f65eee2",
-  "deploymentBlock": 51947369,
+  "protocolVersion": "lockedin-circle/1.3.0-safe",
+  "deploymentId": "0x419b2309e5b3cd4f7e821a50d7d4bb1dd849e7c52583e427e3ccec13dba6656e",
+  "deploymentBlock": 51986703,
   "explorer": "https://amoy.polygonscan.com",
-  "gitCommit": "4f642b211d1e64db5c81b676094afa544d52a7a1",
-  "deploymentTimestamp": "2026-11-04T05:25:47.475Z",
+  "gitCommit": "ec00ea8afd585903ae01bc7fdf2406a972fa9ff0",
+  "deploymentTimestamp": "2026-11-04T16:21:21.404Z",
   "tokenDecimals": 6,
   "contracts": {
     "mockUsdt": {
@@ -17,29 +17,29 @@
       "blockNumber": 50538011
     },
     "safetyController": {
-      "address": "0x242F0c1676dAD96F4845B841F5fbDe33F3758C64",
-      "transactionHash": "0x9edac7c4dbed49a2802f603e432fa956094364fe9af6287c4d7bd2983e520c5b",
-      "blockNumber": 51947363
+      "address": "0xe5d1E2b79317561d8EdeDE0af119d868450B0a92",
+      "transactionHash": "0xd83659ee30a10e991727070636a7d75ec404ee6cfe507dfe0e93d89137580d0d",
+      "blockNumber": 51986697
     },
     "savingsVaultDeployer": {
-      "address": "0x21ECcaD617043e534D0D0427947DC1B31b3Ac8b0",
-      "transactionHash": "0x50805b20a851432546890fbdb4265e4afd39b13a87f22777b16700e69a07dd95",
-      "blockNumber": 51947366
+      "address": "0x7E51800912a9b2C0E0B5cD028d5Eab5454C551fB",
+      "transactionHash": "0x774a9e4b874fbf49b400ad902846b39b967b9dbbfe5392474abbc67daa2467cf",
+      "blockNumber": 51986700
     },
     "vaultFactory": {
-      "address": "0x729b691eF7513C1FfD9dc3992308745991093B27",
-      "transactionHash": "0x86c605e686fe00025d267d91627f113530a90c535e5c191fa90d66ddfa3e32a7",
-      "blockNumber": 51947369
+      "address": "0x34747B33Bd9Dd1d0C8946dceD9D5D3125c6FDf97",
+      "transactionHash": "0xebcbefea384332c8f3d1c34728a36c231af1daf27de5bf8cf6cf0b6afe9be90e",
+      "blockNumber": 51986703
     },
     "earlyExitMarket": {
-      "address": "0x986069d63bFe126d4569355BE2026972E61FfF93",
-      "transactionHash": "0x86c605e686fe00025d267d91627f113530a90c535e5c191fa90d66ddfa3e32a7",
-      "blockNumber": 51947369
+      "address": "0xC8e6d6D5Fc615Ac7E68c621F3fE4Ec47d7C3d577",
+      "transactionHash": "0xebcbefea384332c8f3d1c34728a36c231af1daf27de5bf8cf6cf0b6afe9be90e",
+      "blockNumber": 51986703
     }
   },
   "constructorArguments": {
     "safety": [
-      "0x729b691eF7513C1FfD9dc3992308745991093B27",
+      "0x34747B33Bd9Dd1d0C8946dceD9D5D3125c6FDf97",
       "0x7b255ed18e9c86Fb1Ad08732F28e1E0172138e9f",
       86400,
       "1000000000000",
@@ -47,14 +47,15 @@
       "100000000000000"
     ],
     "vaultDeployer": [
-      "0x729b691eF7513C1FfD9dc3992308745991093B27"
+      "0x34747B33Bd9Dd1d0C8946dceD9D5D3125c6FDf97"
     ],
     "factory": [
       "0xE6a4cea6d52bc03941fe42C949C81864B7Eb3a63",
       "0x7c5ba0eE0e5aE7E426CfeE5B09C4380Ee10216Ad",
       80002,
-      "0x21ECcaD617043e534D0D0427947DC1B31b3Ac8b0",
-      "0x242F0c1676dAD96F4845B841F5fbDe33F3758C64"
+      "0x7E51800912a9b2C0E0B5cD028d5Eab5454C551fB",
+      "0xe5d1E2b79317561d8EdeDE0af119d868450B0a92",
+      600
     ]
   },
   "factoryConfiguration": {
@@ -62,6 +63,8 @@
     "vaultMode": "Safe-only",
     "earnEnabled": false,
     "rewardsEnabled": false,
+    "minimumMaturitySeconds": 600,
+    "testConfiguration": true,
     "feeDistribution": {
       "maintenanceTreasuryBps": 10000,
       "rewardPoolBps": 0,
