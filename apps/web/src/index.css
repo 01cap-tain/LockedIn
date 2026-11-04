@@ -3165,6 +3165,12 @@ footer {
   padding-top: 10px;
 }
 
+.invitation-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .managed-invitations article > div {
   display: flex;
   align-items: center;

@@ -100,6 +100,18 @@ describe("contract error copy", () => {
     })).toMatch(/goal.*emergency.*member limit.*join deadline.*maturity/i);
   });
 
+  it("explains duplicate available circle invitations", () => {
+    expect(describeContractError(new Error("InvitationAlreadyAvailable"))).toMatch(
+      /already has an available invitation/i
+    );
+  });
+
+  it("explains invalid invitee wallet addresses", () => {
+    expect(describeContractError(new Error("invalid address"))).toMatch(
+      /valid Polygon wallet address/i
+    );
+  });
+
   it("does not fall back to the old reasonless error copy", () => {
     const message = describeContractError({ unexpected: true });
     expect(message).toMatch(/wallet did not provide a reason/i);

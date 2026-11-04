@@ -21,6 +21,7 @@ import {
   loadAllExitListings,
   loadPublicCompletedTrades,
   loadPublicGroups,
+  loadActiveSecureGroupInvitation,
   loadSecureGroupInvitation,
   joinInviteOnlyGroup,
   joinPublicGroup,
@@ -198,8 +199,13 @@ type CachedPublicGroup = Omit<PublicGroupSummary, "maturity" | "enrollmentDeadli
     }
   >;
 };
+type StoredInvitation = {
+  creator: string;
+  code: string;
+};
 
 const PUBLIC_GROUP_CACHE_KEY = "lockedin-public-groups-v1";
+const PRIVATE_INVITATION_STORAGE_KEY = "lockedin-private-invitations-v1";
 const WEEK_DAYS = [
   { value: 1, label: "Mon" },
   { value: 2, label: "Tue" },
@@ -301,6 +307,100 @@ function routeFromHash(): AppRoute {
 function invitationCodeFromHash(): string {
   const query = window.location.hash.split("?")[1];
   return query ? new URLSearchParams(query).get("invite") ?? "" : "";
+}
+
+function invitationReference(invitation: SecureGroupInvitation): string {
+  return invitation.commitment.slice(2, 8).toUpperCase();
+}
+
+function loadStoredInvitations(
+  creator: string,
+  vault: string,
+  chainId: string
+): SecureGroupInvitation[] {
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(PRIVATE_INVITATION_STORAGE_KEY) ?? "[]"
+    ) as StoredInvitation[];
+    return stored.flatMap((entry) => {
+      if (entry.creator.toLowerCase() !== creator.toLowerCase()) return [];
+      try {
+        const invitation = decodeGroupInvitation(entry.code);
+        return invitation.vault.toLowerCase() === vault.toLowerCase() &&
+          invitation.chainId === BigInt(chainId)
+          ? [invitation]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+function persistInvitation(creator: string, invitation: SecureGroupInvitation): void {
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(PRIVATE_INVITATION_STORAGE_KEY) ?? "[]"
+    ) as StoredInvitation[];
+    const code = encodeGroupInvitation(invitation);
+    const next = [
+      { creator, code },
+      ...stored.filter((entry) => {
+        try {
+          return decodeGroupInvitation(entry.code).commitment !== invitation.commitment;
+        } catch {
+          return false;
+        }
+      }),
+    ];
+    window.localStorage.setItem(PRIVATE_INVITATION_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // The invitation still works for this session when browser storage is unavailable.
+  }
+}
+
+function clearStoredInvitations(creator: string, vault: string): void {
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(PRIVATE_INVITATION_STORAGE_KEY) ?? "[]"
+    ) as StoredInvitation[];
+    const next = stored.filter((entry) => {
+      if (entry.creator.toLowerCase() !== creator.toLowerCase()) return true;
+      try {
+        return decodeGroupInvitation(entry.code).vault.toLowerCase() !== vault.toLowerCase();
+      } catch {
+        return false;
+      }
+    });
+    window.localStorage.setItem(PRIVATE_INVITATION_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Storage is convenience-only; the contract remains authoritative.
+  }
+}
+
+async function copyText(value: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Permission can still be denied on HTTPS; use the user-gesture fallback.
+    }
+  }
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.readOnly = true;
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  field.style.pointerEvents = "none";
+  document.body.appendChild(field);
+  field.select();
+  field.setSelectionRange(0, value.length);
+  const copied = document.execCommand("copy");
+  field.remove();
+  if (!copied) throw new Error("ClipboardUnavailable");
 }
 
 function futureInput(days: number): string {
@@ -853,6 +953,7 @@ export function App() {
   const [inviteExpiry, setInviteExpiry] = useState(() => futureInput(2));
   const [createdInvitation, setCreatedInvitation] = useState<SecureGroupInvitation | null>(null);
   const [managedInvitations, setManagedInvitations] = useState<GroupInvitationRecord[]>([]);
+  const [storedInvitations, setStoredInvitations] = useState<SecureGroupInvitation[]>([]);
   const [vaults, setVaults] = useState<VaultSummary[]>([]);
   const [snapshot, setSnapshot] = useState<VaultSnapshot | null>(null);
   // Cached snapshots make repeat vault opens instant. Every open still starts a
@@ -1392,6 +1493,46 @@ export function App() {
       setTransaction({ status: "error", message: describeContractError(error) });
     }
   }, [inviteCode, pendingGroup, publicGroups]);
+
+  useEffect(() => {
+    if (
+      !snapshot || !evmSession || !snapshot.isGroup || snapshot.publicJoining ||
+      evmSession.address.toLowerCase() !== snapshot.groupCreator.toLowerCase()
+    ) return;
+    if (snapshot.enrollmentDeadline) {
+      const deadline = snapshot.enrollmentDeadline.getTime();
+      const selectedExpiry = new Date(inviteExpiry).getTime();
+      if (!Number.isFinite(selectedExpiry) || selectedExpiry >= deadline) {
+        setInviteExpiry(localDateTimeInput(new Date(Math.max(Date.now() + 60_000, deadline - 5 * 60_000))));
+      }
+    }
+    if (snapshot.groupLifecycle !== "pending") {
+      clearStoredInvitations(evmSession.address, snapshot.address);
+      setStoredInvitations([]);
+      setManagedInvitations([]);
+      setCreatedInvitation(null);
+      return;
+    }
+    const stored = loadStoredInvitations(
+      evmSession.address,
+      snapshot.address,
+      evmSession.chainId
+    );
+    setStoredInvitations(stored);
+    if (stored.length === 0) {
+      setManagedInvitations([]);
+      return;
+    }
+    void Promise.all(stored.map((invitation) =>
+      loadSecureGroupInvitation(
+        evmSession.signer,
+        snapshot.address,
+        invitation.commitment
+      )
+    )).then(setManagedInvitations).catch((error) =>
+      setTransaction({ status: "error", message: describeContractError(error) })
+    );
+  }, [snapshot?.address, snapshot?.groupLifecycle, snapshot?.enrollmentDeadline, evmSession?.address, evmSession?.chainId]);
 
   useEffect(() => {
     const username = loadLocalUsername(profileWalletAddress);
@@ -2026,6 +2167,36 @@ export function App() {
 
   async function createPrivateInvitation(): Promise<void> {
     if (!snapshot || !evmSession) return;
+    if (snapshot.members.some((member) =>
+      member.member.toLowerCase() === inviteeAddress.toLowerCase()
+    )) {
+      setTransaction({
+        status: "error",
+        message: "This wallet has already joined the circle. Enter a different wallet address.",
+      });
+      return;
+    }
+    try {
+      const existing = await loadActiveSecureGroupInvitation(
+        evmSession.signer,
+        snapshot.address,
+        inviteeAddress
+      );
+      if (existing?.status === "available") {
+        setManagedInvitations((current) => [
+          existing,
+          ...current.filter((item) => item.commitment !== existing.commitment),
+        ]);
+        setTransaction({
+          status: "error",
+          message: "This wallet already has an available invitation. Copy the saved invitation below, or revoke it before generating another.",
+        });
+        return;
+      }
+    } catch (error) {
+      setTransaction({ status: "error", message: describeContractError(error) });
+      return;
+    }
     await runTransaction(
       "Creating one-time invitation…",
       async () => {
@@ -2040,12 +2211,39 @@ export function App() {
           snapshot.address,
           invitation.commitment
         );
+        persistInvitation(evmSession.address, invitation);
         setCreatedInvitation(invitation);
+        setStoredInvitations((current) => [
+          invitation,
+          ...current.filter((item) => item.commitment !== invitation.commitment),
+        ]);
         setInviteeAddress("");
         setManagedInvitations((current) => [record, ...current.filter((item) => item.commitment !== record.commitment)]);
       },
       "One-time invitation created. Share it through a private channel."
     );
+  }
+
+  async function copyInvitation(
+    invitation: SecureGroupInvitation,
+    kind: "code" | "link"
+  ): Promise<void> {
+    const code = encodeGroupInvitation(invitation);
+    const value = kind === "code"
+      ? code
+      : `${window.location.origin}${window.location.pathname}#/explore-circles?invite=${encodeURIComponent(code)}`;
+    try {
+      await copyText(value);
+      setTransaction({
+        status: "success",
+        message: kind === "code" ? "Secure invitation copied." : "Private invite link copied.",
+      });
+    } catch {
+      setTransaction({
+        status: "error",
+        message: "Your browser blocked clipboard access. Open this page in Chrome or copy from a secure HTTPS version of the app.",
+      });
+    }
   }
 
   async function revokePrivateInvitation(record: GroupInvitationRecord): Promise<void> {
@@ -3813,11 +4011,11 @@ export function App() {
                     {createdInvitation && (
                       <div className="invitation-secret-reveal">
                         <strong>Share this invitation now</strong>
-                        <p>The complete secret is shown only during this creation flow. Send it through a private channel.</p>
-                        <code>{encodeGroupInvitation(createdInvitation)}</code>
+                        <p>Invite {invitationReference(createdInvitation)} is saved on this device until the circle activates. The copied code remains cryptographically secure and wallet-bound.</p>
+                        <code>Invite {invitationReference(createdInvitation)}</code>
                         <div>
-                          <button className="secondary compact" onClick={() => void navigator.clipboard.writeText(encodeGroupInvitation(createdInvitation))} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite code</button>
-                          <button className="secondary compact" onClick={() => void navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/explore-circles?invite=${encodeURIComponent(encodeGroupInvitation(createdInvitation))}`)} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite link</button>
+                          <button className="secondary compact" onClick={() => void copyInvitation(createdInvitation, "code")} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy secure code</button>
+                          <button className="secondary compact" onClick={() => void copyInvitation(createdInvitation, "link")} type="button"><Copy aria-hidden="true" size={16} strokeWidth={1.5} />Copy invite link</button>
                           <button className="secondary compact" onClick={() => setCreatedInvitation(null)} type="button">Hide secret</button>
                         </div>
                       </div>
@@ -3825,13 +4023,17 @@ export function App() {
                     {managedInvitations.length > 0 && (
                       <div className="managed-invitations">
                         <button className="secondary compact" disabled={actionsDisabled} onClick={() => void refreshPrivateInvitations()} type="button">Refresh statuses</button>
-                        {managedInvitations.map((invitation) => (
-                          <article key={invitation.commitment}>
-                            <div><strong>{short(invitation.invitee)}</strong><span className={`invitation-status ${invitation.status}`}>{invitation.status}</span></div>
-                            <small>Expires {invitation.expiry.toLocaleString()}</small>
-                            {invitation.status === "available" && <button className="secondary destructive compact" disabled={riskActionsDisabled} onClick={() => void revokePrivateInvitation(invitation)} type="button">Revoke invitation</button>}
-                          </article>
-                        ))}
+                        {managedInvitations.map((invitation) => {
+                          const stored = storedInvitations.find((item) => item.commitment === invitation.commitment);
+                          return (
+                            <article key={invitation.commitment}>
+                              <div><strong>Invite {invitation.commitment.slice(2, 8).toUpperCase()} · {short(invitation.invitee)}</strong><span className={`invitation-status ${invitation.status}`}>{invitation.status}</span></div>
+                              <small>Expires {invitation.expiry.toLocaleString()}</small>
+                              {stored && invitation.status === "available" && <div className="invitation-row-actions"><button className="secondary compact" onClick={() => void copyInvitation(stored, "code")} type="button"><Copy aria-hidden="true" size={15} strokeWidth={1.5} />Copy code</button><button className="secondary compact" onClick={() => void copyInvitation(stored, "link")} type="button"><Copy aria-hidden="true" size={15} strokeWidth={1.5} />Copy link</button></div>}
+                              {invitation.status === "available" && <button className="secondary destructive compact" disabled={riskActionsDisabled} onClick={() => void revokePrivateInvitation(invitation)} type="button">Revoke invitation</button>}
+                            </article>
+                          );
+                        })}
                       </div>
                     )}
                   </section>

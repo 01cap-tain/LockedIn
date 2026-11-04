@@ -88,6 +88,7 @@ const vaultAbi = [
   "function enrollmentDeadline() view returns (uint64)",
   "function joinPublicGroup(uint256 target,uint16 emergencyBps)",
   "function createGroupInvitation(address invitee,bytes32 commitment,uint64 expiry,uint256 nonce)",
+  "function activeGroupInvitation(address invitee) view returns (bytes32)",
   "function revokeGroupInvitation(bytes32 commitment)",
   "function joinInviteOnlyGroup(address invitee,bytes32 secret,uint64 expiry,uint256 nonce,uint256 target,uint16 emergencyBps)",
   "function invitationStatus(bytes32 commitment) view returns (uint8)",
@@ -1165,6 +1166,16 @@ export async function createSecureGroupInvitation(
   };
   const invitation = { ...unsigned, commitment: groupInvitationCommitment(unsigned) };
   const contract = new Contract(vault, vaultAbi, signer);
+  const readContract = new Contract(vault, vaultAbi, readProviderFor(signer));
+  const existingCommitment = String(
+    await readContract.getFunction("activeGroupInvitation")(invitee)
+  );
+  if (!/^0x0{64}$/i.test(existingCommitment)) {
+    const existingStatus = Number(
+      await readContract.getFunction("invitationStatus")(existingCommitment)
+    );
+    if (existingStatus === 1) throw new Error("InvitationAlreadyAvailable");
+  }
   const transaction = await contract.getFunction("createGroupInvitation")(
     invitee,
     invitation.commitment,
@@ -1206,6 +1217,21 @@ export async function loadSecureGroupInvitation(
     nonce: BigInt(record.nonce),
     status: invitationStatusNames[Number(status)] ?? "unavailable",
   };
+}
+
+export async function loadActiveSecureGroupInvitation(
+  signer: Signer,
+  vaultAddress: string,
+  inviteeAddress: string
+): Promise<GroupInvitationRecord | null> {
+  const vault = getAddress(vaultAddress);
+  const invitee = getAddress(inviteeAddress);
+  const contract = new Contract(vault, vaultAbi, readProviderFor(signer));
+  const commitment = String(
+    await contract.getFunction("activeGroupInvitation")(invitee)
+  );
+  if (/^0x0{64}$/i.test(commitment)) return null;
+  return loadSecureGroupInvitation(signer, vault, commitment);
 }
 
 export async function joinInviteOnlyGroup(
@@ -1721,12 +1747,9 @@ export async function loadPublicGroups(
         maturity: new Date(Number(maturity) * 1_000),
         memberCount: Number(memberCount),
         acceptedMemberCount: Number(acceptedCount),
-        maxMemberCount: publicJoining
-          ? Number(maxMemberCount)
-          : Number(memberCount),
+        maxMemberCount: Number(maxMemberCount),
         publicJoining,
         joiningOpen:
-          publicJoining &&
           !publicJoinClosed &&
           (circleState === "open" || circleState === "ready") &&
           Number(memberCount) < Number(maxMemberCount) &&
@@ -2962,6 +2985,8 @@ export function describeContractError(error: unknown): string {
 
   if (/user rejected|user denied|action_rejected|4001/i.test(raw))
     return "The request was cancelled in your wallet. Nothing was changed.";
+  if (/invalid address|bad address checksum|unsupported addressable value/i.test(raw))
+    return "Enter a valid Polygon wallet address for this invitation.";
   if (/insufficient funds.*gas|intrinsic transaction cost|gas required exceeds/i.test(raw))
     return "Your wallet needs more POL to cover the Polygon network fee.";
   if (/transfer amount exceeds balance|erc20insufficientbalance|insufficient token|insufficient wallet funds/i.test(raw))
