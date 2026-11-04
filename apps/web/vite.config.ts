@@ -109,6 +109,10 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: true,
     port: 5173,
+    // Never hide a stale build by silently opening 5174/5175. The developer
+    // must stop the process already holding 5173, making manifest mismatches
+    // visible instead of serving multiple deployment versions at once.
+    strictPort: true,
     // Keep the API bound to localhost during LAN/mobile development. Browsers
     // use this same-origin proxy, including the long-lived SSE connection.
     proxy: {
