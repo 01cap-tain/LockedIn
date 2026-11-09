@@ -7,12 +7,15 @@ import {SavingsVault} from "./SavingsVault.sol";
 import {SavingsVaultDeployer} from "./SavingsVaultDeployer.sol";
 import {EarlyExitMarket} from "./EarlyExitMarket.sol";
 import {SafetyController} from "./SafetyController.sol";
+import {RewardPool} from "./RewardPool.sol";
 
 /// @notice Deploys immutable Safe-only V1 savings vaults and records membership indexes.
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/1.3.0-safe";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/1.4.0-safe";
+    uint256 public constant POLYGON_MAINNET_CHAIN_ID = 137;
+    uint64 public constant POLYGON_MAINNET_MINIMUM_MATURITY_DURATION = 7 hours;
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
     uint64 public constant MIN_CONFIGURABLE_MATURITY_DURATION = 10 minutes;
@@ -25,6 +28,8 @@ contract VaultFactory {
 
     IERC20 public immutable asset;
     EarlyExitMarket public immutable earlyExitMarket;
+    RewardPool public immutable rewardPool;
+    address public immutable riskReserve;
     address public immutable maintenanceTreasury;
     uint256 public immutable deploymentChainId;
     bytes32 public immutable deploymentId;
@@ -48,6 +53,8 @@ contract VaultFactory {
 
     constructor(
         IERC20 asset_,
+        RewardPool rewardPool_,
+        address riskReserve_,
         address maintenanceTreasury_,
         uint256 deploymentChainId_,
         SavingsVaultDeployer vaultDeployer_,
@@ -57,16 +64,25 @@ contract VaultFactory {
         if (
             address(asset_) == address(0) || address(asset_).code.length == 0 ||
             block.chainid != deploymentChainId_ ||
-            maintenanceTreasury_ == address(0) ||
+            address(rewardPool_) == address(0) || address(rewardPool_).code.length == 0 ||
+            riskReserve_ == address(0) || maintenanceTreasury_ == address(0) ||
+            address(rewardPool_) == riskReserve_ || address(rewardPool_) == maintenanceTreasury_ ||
+            riskReserve_ == maintenanceTreasury_ ||
+            address(rewardPool_) == address(asset_) || riskReserve_ == address(asset_) ||
             maintenanceTreasury_ == address(asset_) ||
             maintenanceTreasury_ == address(this) ||
             minimumMaturityDuration_ < MIN_CONFIGURABLE_MATURITY_DURATION ||
-            minimumMaturityDuration_ > MAX_CONFIGURABLE_MATURITY_DURATION
+            minimumMaturityDuration_ > MAX_CONFIGURABLE_MATURITY_DURATION ||
+            (
+                deploymentChainId_ == POLYGON_MAINNET_CHAIN_ID &&
+                minimumMaturityDuration_ < POLYGON_MAINNET_MINIMUM_MATURITY_DURATION
+            )
         ) revert InvalidConfiguration();
         if (
             address(vaultDeployer_) == address(0) ||
             address(vaultDeployer_).code.length == 0 ||
-            vaultDeployer_.factory() != address(this)
+            vaultDeployer_.factory() != address(this) ||
+            rewardPool_.factory() != address(this)
         ) revert InvalidConfiguration();
         try IERC20Metadata(address(asset_)).decimals() returns (uint8 tokenDecimals) {
             if (tokenDecimals != 6) revert UnsupportedToken();
@@ -79,6 +95,8 @@ contract VaultFactory {
             safetyController_.factory() != address(this)
         ) revert InvalidConfiguration();
         asset = asset_;
+        rewardPool = rewardPool_;
+        riskReserve = riskReserve_;
         maintenanceTreasury = maintenanceTreasury_;
         deploymentChainId = deploymentChainId_;
         vaultDeployer = vaultDeployer_;
@@ -87,6 +105,8 @@ contract VaultFactory {
         earlyExitMarket = new EarlyExitMarket(
             asset_,
             address(this),
+            address(rewardPool_),
+            riskReserve_,
             maintenanceTreasury_,
             safetyController
         );
@@ -100,6 +120,8 @@ contract VaultFactory {
                 address(this),
                 address(asset_),
                 address(earlyExitMarket),
+                address(rewardPool_),
+                riskReserve_,
                 maintenanceTreasury_,
                 address(safetyController_),
                 minimumMaturityDuration_

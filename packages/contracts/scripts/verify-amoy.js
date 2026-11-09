@@ -24,6 +24,11 @@ if (manifest.profile !== 'safe-only-v1' || manifest.schemaVersion < 6) {
 
 const targets = [
   {
+    name: 'RewardPool',
+    address: contracts.rewardPool.address,
+    constructorArgs: manifest.constructorArguments.rewardPool,
+  },
+  {
     name: 'MockUSDT',
     address: contracts.mockUsdt.address,
     constructorArgs: [],
@@ -46,6 +51,8 @@ const targets = [
     constructorArgs: [
       contracts.mockUsdt.address,
       contracts.vaultFactory.address,
+      contracts.rewardPool.address,
+      config.riskReserve,
       config.maintenanceTreasury,
       contracts.safetyController.address,
     ],

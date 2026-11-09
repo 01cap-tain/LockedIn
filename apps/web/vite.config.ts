@@ -16,7 +16,85 @@ interface AmoyManifest {
     safetyController: { address: string };
   };
   profile?: string;
-  factoryConfiguration?: { yieldAdapter?: string; vaultMode?: string; minimumMaturitySeconds?: number; testConfiguration?: boolean };
+  factoryConfiguration?: {
+    yieldAdapter?: string;
+    vaultMode?: string;
+    minimumMaturitySeconds?: number;
+    testConfiguration?: boolean;
+    riskReserve?: string;
+    maintenanceTreasury?: string;
+    feeDistribution?: { rewardPoolBps?: number; riskReserveBps?: number; maintenanceTreasuryBps?: number };
+  };
+}
+
+interface PolygonManifest extends Omit<AmoyManifest, "contracts"> {
+  contracts: {
+    usdt: { address: string };
+    rewardPool: { address: string };
+    vaultFactory: { address: string; blockNumber: number };
+    earlyExitMarket: { address: string };
+    safetyController: { address: string };
+  };
+}
+
+const POLYGON_USDT = "0xc2132D05D31c914a87C6611c10748AEb04B58e8F";
+
+function polygonProductionDefinition(mode: string): Record<string, string> {
+  if (mode !== "production") return {};
+  const manifestPath = path.resolve(
+    import.meta.dirname,
+    "../../packages/contracts/deployments/polygon/latest.json"
+  );
+  const blocked = (reason: string) => ({
+    "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("false"),
+    "import.meta.env.VITE_DEPLOYMENT_BLOCK_REASON": JSON.stringify(reason),
+  });
+  if (!existsSync(manifestPath)) {
+    return blocked("No reviewed Polygon mainnet deployment manifest is installed. Contract actions are disabled.");
+  }
+  let manifest: PolygonManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PolygonManifest;
+  } catch {
+    return blocked("The Polygon mainnet deployment manifest is not valid JSON.");
+  }
+  const minimumMaturity = manifest.factoryConfiguration?.minimumMaturitySeconds ?? 0;
+  const productionValid = manifest.schemaVersion >= 6
+    && manifest.chainId === 137
+    && manifest.protocolVersion === "lockedin-circle/1.4.0-safe"
+    && Boolean(manifest.deploymentId && manifest.deploymentBlock)
+    && manifest.contracts?.usdt?.address?.toLowerCase() === POLYGON_USDT.toLowerCase()
+    && Boolean(manifest.contracts?.rewardPool?.address)
+    && Boolean(manifest.contracts?.vaultFactory?.address)
+    && Boolean(manifest.contracts?.earlyExitMarket?.address)
+    && Boolean(manifest.contracts?.safetyController?.address)
+    && Boolean(manifest.factoryConfiguration?.riskReserve)
+    && Boolean(manifest.factoryConfiguration?.maintenanceTreasury)
+    && manifest.factoryConfiguration?.feeDistribution?.rewardPoolBps === 6_000
+    && manifest.factoryConfiguration?.feeDistribution?.riskReserveBps === 2_000
+    && manifest.factoryConfiguration?.feeDistribution?.maintenanceTreasuryBps === 2_000
+    && minimumMaturity >= 25_200
+    && manifest.factoryConfiguration?.testConfiguration === false;
+  if (!productionValid) {
+    return blocked("The Polygon mainnet manifest failed production identity, asset, version, or maturity validation.");
+  }
+  return {
+    "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("true"),
+    "import.meta.env.VITE_FACTORY_ADDRESS": JSON.stringify(manifest.contracts.vaultFactory.address),
+    "import.meta.env.VITE_CONTRACT_START_BLOCK": JSON.stringify(String(manifest.contracts.vaultFactory.blockNumber)),
+    "import.meta.env.VITE_EXPECTED_CHAIN_ID": JSON.stringify("137"),
+    "import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION": JSON.stringify(manifest.protocolVersion),
+    "import.meta.env.VITE_EXPECTED_DEPLOYMENT_ID": JSON.stringify(manifest.deploymentId),
+    "import.meta.env.VITE_EXPECTED_ASSET_ADDRESS": JSON.stringify(POLYGON_USDT),
+    "import.meta.env.VITE_EXPECTED_MARKET_ADDRESS": JSON.stringify(manifest.contracts.earlyExitMarket.address),
+    "import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS": JSON.stringify(manifest.contracts.safetyController.address),
+    "import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS": JSON.stringify(manifest.contracts.rewardPool.address),
+    "import.meta.env.VITE_EXPECTED_RISK_RESERVE_ADDRESS": JSON.stringify(manifest.factoryConfiguration?.riskReserve),
+    "import.meta.env.VITE_EXPECTED_MAINTENANCE_TREASURY_ADDRESS": JSON.stringify(manifest.factoryConfiguration?.maintenanceTreasury),
+    "import.meta.env.VITE_MIN_MATURITY_SECONDS": JSON.stringify(String(minimumMaturity)),
+    "import.meta.env.VITE_TEST_CONFIGURATION": JSON.stringify("false"),
+    "import.meta.env.VITE_YIELD_ADAPTER_KIND": JSON.stringify("Disabled"),
+  };
 }
 
 function amoyFactoryDefinition(mode: string): Record<string, string> {
@@ -103,9 +181,25 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react()],
+  plugins: [
+    react(),
+    ...(mode === "production" ? [{
+      name: "production-facing-copy",
+      renderChunk(code: string) {
+        return code
+          .replaceAll("mUSDT", "USDT")
+          .replaceAll("Polygon Amoy", "Polygon")
+          .replaceAll("MockUSDT", "USDT")
+          .replaceAll("Mock USDT", "USDT")
+          .replaceAll("Unaudited test deployment", "Deployment pending review")
+          .replaceAll("Live from the current testnet deployment.", "Save toward shared goals with your circle.")
+          .replaceAll("Simulated testnet yield position", "Legacy yield position")
+          .replace(/test deployment/gi, "deployment");
+      },
+    }] : []),
+  ],
   envDir: "../../",
-  define: amoyFactoryDefinition(mode),
+  define: { ...amoyFactoryDefinition(mode), ...polygonProductionDefinition(mode) },
   server: {
     host: true,
     port: 5173,

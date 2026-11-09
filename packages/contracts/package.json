@@ -20,7 +20,8 @@
     "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile",
     "inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile",
     "prepare:polygon": "node scripts/prepare-polygon-mainnet.js",
-    "prepare:polygon:v1": "node scripts/prepare-polygon-safe-v1.js"
+    "prepare:polygon:v1": "node scripts/prepare-polygon-safe-v1.js",
+    "deploy:polygon:v1": "hardhat run scripts/deploy-polygon-v1.js --network polygon --no-compile"
   },
   "dependencies": {
     "@aave-dao/aave-address-book": "^4.74.1",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "4.0.0",
+    "@nomicfoundation/hardhat-keystore": "3.1.2",
     "@nomicfoundation/hardhat-verify": "3.1.3",
     "hardhat": "3.20.0"
   }

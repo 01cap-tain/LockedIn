@@ -13,6 +13,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
   let outsider
   let riskReserve
   let maintenanceTreasury
+  let rewardPool
   let token
   let factory
   let vault
@@ -23,7 +24,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
     ;({ ethers, networkHelpers } = await network.create())
     ;[saver, providerOne, providerTwo, outsider, riskReserve, maintenanceTreasury] = await ethers.getSigners()
     token = await ethers.deployContract('MockUSDT')
-    ;({ factory } = await deployFactory(ethers, [
+    ;({ factory, rewardPool } = await deployFactory(ethers, [
       await token.getAddress(),
       await riskReserve.getAddress(),
       await maintenanceTreasury.getAddress(),
@@ -141,14 +142,18 @@ describe('EarlyExitMarket deterministic pricing', function () {
       .to.be.revertedWithCustomError(factory, 'EarnDisabled')
   })
 
-  it('sends the complete 0.9% provider fee to maintenance and emits the settlement receipt', async function () {
+  it('splits the 0.9% fee 60/20/20 and emits an exact allocation receipt', async function () {
     const quote = await createListing()
     await fundProvider(providerOne, quote.saverPayout, quote.providerFee)
     const providerBefore = await token.balanceOf(await providerOne.getAddress())
     const saverBefore = await token.balanceOf(await saver.getAddress())
+    const rewardBefore = await token.balanceOf(await rewardPool.getAddress())
+    const riskBefore = await token.balanceOf(await riskReserve.getAddress())
     const maintenanceBefore = await token.balanceOf(await maintenanceTreasury.getAddress())
+    const allocations = await market.feeAllocations(quote.providerFee)
 
-    await expect(market.connect(providerOne).fundListing(0))
+    const settlement = market.connect(providerOne).fundListing(0)
+    await expect(settlement)
       .to.emit(market, 'EarlyExitSettled')
       .withArgs(
         0,
@@ -158,13 +163,38 @@ describe('EarlyExitMarket deterministic pricing', function () {
         quote.providerFee,
         quote.claimValue,
       )
+    await expect(settlement).to.emit(market, 'ProviderFeeDistributed').withArgs(
+      0,
+      quote.providerFee,
+      allocations.rewardAllocation,
+      allocations.riskAllocation,
+      allocations.maintenanceAllocation,
+    )
 
     expect(providerBefore - await token.balanceOf(await providerOne.getAddress()))
       .to.equal(quote.saverPayout + quote.providerFee)
     expect((await token.balanceOf(await saver.getAddress())) - saverBefore).to.equal(quote.saverPayout)
+    expect((await token.balanceOf(await rewardPool.getAddress())) - rewardBefore)
+      .to.equal(allocations.rewardAllocation)
+    expect((await token.balanceOf(await riskReserve.getAddress())) - riskBefore)
+      .to.equal(allocations.riskAllocation)
     expect((await token.balanceOf(await maintenanceTreasury.getAddress())) - maintenanceBefore)
+      .to.equal(allocations.maintenanceAllocation)
+    expect(allocations.rewardAllocation + allocations.riskAllocation + allocations.maintenanceAllocation)
       .to.equal(quote.providerFee)
+    expect(await rewardPool.protocolRevenue()).to.equal(allocations.rewardAllocation)
     expect(await token.balanceOf(await market.getAddress())).to.equal(0n)
+  })
+
+  it('assigns every indivisible fee remainder to maintenance', async function () {
+    for (const fee of [0n, 1n, 2n, 3n, 4n, 5n, 7n, 11n, 101n, 1_000_003n]) {
+      const allocation = await market.feeAllocations(fee)
+      expect(allocation.rewardAllocation).to.equal(fee * 6_000n / 10_000n)
+      expect(allocation.riskAllocation).to.equal(fee * 2_000n / 10_000n)
+      expect(allocation.maintenanceAllocation).to.equal(
+        fee - allocation.rewardAllocation - allocation.riskAllocation,
+      )
+    }
   })
 
   it('lets the first successful provider atomically fund and own the full claim', async function () {

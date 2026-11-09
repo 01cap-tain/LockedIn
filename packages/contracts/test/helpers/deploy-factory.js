@@ -33,6 +33,10 @@ export async function deployFactory(
     maxVaultPrincipal = 10_000_000n * UNIT,
     maxProtocolPrincipal = 100_000_000n * UNIT,
     minimumMaturityDuration = 10 * 60,
+    epochDuration = 30 * 24 * 60 * 60,
+    registrationGrace = 3 * 24 * 60 * 60,
+    minimumRewardTarget = 10n * UNIT,
+    minimumSavingDuration = 7 * 60 * 60,
   } = {},
 ) {
   const [deployer] = await ethers.getSigners()
@@ -40,7 +44,7 @@ export async function deployFactory(
   const nonce = await ethers.provider.getTransactionCount(deployerAddress)
   const predictedFactory = ethers.getCreateAddress({
     from: deployerAddress,
-    nonce: nonce + 2,
+    nonce: nonce + 3,
   })
   const safetyController = await ethers.deployContract('SafetyController', [
     predictedFactory,
@@ -53,17 +57,27 @@ export async function deployFactory(
   const vaultDeployer = await ethers.deployContract('SavingsVaultDeployer', [
     predictedFactory,
   ])
+  const rewardPool = await ethers.deployContract('RewardPool', [
+    factoryArguments[0],
+    predictedFactory,
+    epochDuration,
+    registrationGrace,
+    minimumRewardTarget,
+    minimumSavingDuration,
+  ])
   // Existing tests pass the former graph arguments. V1 deliberately selects
   // only asset, maintenance treasury and chain ID from that tuple.
   const factory = await ethers.deployContract('VaultFactory', [
     factoryArguments[0],
+    await rewardPool.getAddress(),
+    factoryArguments[1],
     factoryArguments[2],
     factoryArguments[5],
     await vaultDeployer.getAddress(),
     await safetyController.getAddress(),
     minimumMaturityDuration,
   ])
-  return { factory, safetyController, vaultDeployer }
+  return { factory, rewardPool, safetyController, vaultDeployer }
 }
 
 /**

@@ -43,11 +43,23 @@ async function authenticatedFetch(signer: Signer, path: string, init?: RequestIn
   });
 }
 
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const result = await response.json().catch(() => null) as { message?: string } | null;
+  return new Error(result?.message?.trim() || fallback);
+}
+
+export async function loadVerifiedUsername(signer: Signer): Promise<string> {
+  const response = await authenticatedFetch(signer, "/api/profile");
+  if (!response.ok) throw await responseError(response, "Your profile could not be loaded.");
+  const result = await response.json() as { username: string | null };
+  return result.username?.trim() ?? "";
+}
+
 export async function resolveInvitationRecipient(signer: Signer, value: string): Promise<ResolvedRecipient> {
   const input = value.trim();
   try { return { walletAddress: getAddress(input) }; } catch { /* Treat as username. */ }
   const response = await authenticatedFetch(signer, `/api/profiles/resolve/${encodeURIComponent(input.replace(/^@/, ""))}`);
-  if (!response.ok) throw new Error("Username not found. Enter the recipient’s Polygon wallet address instead.");
+  if (!response.ok) throw await responseError(response, "Username not found. Enter the recipient's Polygon wallet address instead.");
   const result = await response.json() as { username: string; wallet_address: string };
   return { username: result.username, walletAddress: getAddress(result.wallet_address) };
 }
@@ -57,8 +69,7 @@ export async function registerVerifiedUsername(signer: Signer, username: string)
     method: "PUT", body: JSON.stringify({ username: username.trim() }),
   });
   if (!response.ok) {
-    const result = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(result?.message ?? "This username could not be registered.");
+    throw await responseError(response, "This username could not be registered.");
   }
   const result = await response.json() as { username: string };
   return result.username;
@@ -77,13 +88,13 @@ export async function registerShortInvitation(
       payload: { encodedInvitation: encodeGroupInvitation(invitation) },
     }),
   });
-  if (!response.ok) throw new Error("The secure invite was created on-chain, but its short code could not be saved. Please retry from the invitation card.");
+  if (!response.ok) throw await responseError(response, "The secure invite was created on-chain, but its short code could not be saved. Please retry from the invitation card.");
   return response.json() as Promise<ShortInvitation>;
 }
 
 export async function loadCreatorInvitations(signer: Signer): Promise<CreatorInvitation[]> {
   const response = await authenticatedFetch(signer, "/api/invitations");
-  if (!response.ok) throw new Error("Saved invitations could not be loaded.");
+  if (!response.ok) throw await responseError(response, "Saved invitations could not be loaded.");
   const result = await response.json() as { items: Array<{ code: string; recipient_username?: string; invitation_payload: { encodedInvitation: string } }> };
   return result.items.flatMap((item) => {
     try {
@@ -96,7 +107,7 @@ export async function loadCreatorInvitations(signer: Signer): Promise<CreatorInv
 
 export async function resolveShortInvitation(signer: Signer, code: string): Promise<SecureGroupInvitation> {
   const response = await authenticatedFetch(signer, `/api/invitations/${encodeURIComponent(code.trim().toUpperCase())}`);
-  if (!response.ok) throw new Error("This invitation is invalid or no longer available.");
+  if (!response.ok) throw await responseError(response, "This invitation is invalid or no longer available.");
   const result = await response.json() as { payload: { encodedInvitation: string } };
   return decodeGroupInvitation(result.payload.encodedInvitation);
 }

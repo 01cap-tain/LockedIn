@@ -2,6 +2,7 @@ export async function deploySafeV1Graph({
   ethers,
   deployer,
   asset,
+  riskReserve,
   maintenanceTreasury,
   safetyCouncil,
   chainId,
@@ -10,13 +11,18 @@ export async function deploySafeV1Graph({
   maxVaultPrincipal,
   maxProtocolPrincipal,
   minimumMaturityDuration,
+  rewardEpochDuration = 30 * 24 * 60 * 60,
+  rewardRegistrationGrace = 3 * 24 * 60 * 60,
+  minimumRewardTarget = 10n * 10n ** 6n,
+  minimumRewardSavingDuration = 7 * 60 * 60,
 }) {
   if (!Number.isSafeInteger(minimumMaturityDuration) || minimumMaturityDuration < 600) {
     throw new Error('minimumMaturityDuration must be at least 600 seconds.')
   }
   const deployerAddress = await deployer.getAddress()
   const nonce = await ethers.provider.getTransactionCount(deployerAddress, 'pending')
-  const predictedFactory = ethers.getCreateAddress({ from: deployerAddress, nonce: nonce + 2 })
+  if (!riskReserve) throw new Error('riskReserve is required for the immutable 60/20/20 fee split.')
+  const predictedFactory = ethers.getCreateAddress({ from: deployerAddress, nonce: nonce + 3 })
   const safetyArguments = [
     predictedFactory,
     safetyCouncil,
@@ -27,6 +33,7 @@ export async function deploySafeV1Graph({
   ]
   const safetyFactory = await ethers.getContractFactory('SafetyController', deployer)
   const vaultDeployerFactory = await ethers.getContractFactory('SavingsVaultDeployer', deployer)
+  const rewardPoolFactory = await ethers.getContractFactory('RewardPool', deployer)
   const factoryFactory = await ethers.getContractFactory('VaultFactory', deployer)
 
   // Public Amoy providers have repeatedly failed estimation for creation code
@@ -38,8 +45,21 @@ export async function deploySafeV1Graph({
   const vaultDeployer = await vaultDeployerFactory.deploy(predictedFactory, { gasLimit: 6_500_000n })
   await vaultDeployer.waitForDeployment()
   console.log(`SavingsVaultDeployer confirmed at ${await vaultDeployer.getAddress()}.`)
+  const rewardPoolArguments = [
+    asset,
+    predictedFactory,
+    rewardEpochDuration,
+    rewardRegistrationGrace,
+    minimumRewardTarget,
+    minimumRewardSavingDuration,
+  ]
+  const rewardPool = await rewardPoolFactory.deploy(...rewardPoolArguments, { gasLimit: 2_500_000n })
+  await rewardPool.waitForDeployment()
+  console.log(`RewardPool confirmed at ${await rewardPool.getAddress()}.`)
   const factoryArguments = [
     asset,
+    await rewardPool.getAddress(),
+    riskReserve,
     maintenanceTreasury,
     chainId,
     await vaultDeployer.getAddress(),
@@ -73,10 +93,12 @@ export async function deploySafeV1Graph({
     factory,
     safety,
     vaultDeployer,
-    constructorArguments: { safety: safetyArguments, vaultDeployer: [predictedFactory], factory: factoryArguments },
+    rewardPool,
+    constructorArguments: { safety: safetyArguments, vaultDeployer: [predictedFactory], rewardPool: rewardPoolArguments, factory: factoryArguments },
     records: {
       safetyController: safetyRecord,
       savingsVaultDeployer: vaultDeployerRecord,
+      rewardPool: await deploymentRecord(rewardPool),
       vaultFactory: factoryRecord,
       earlyExitMarket: {
         address: await factory.earlyExitMarket(),

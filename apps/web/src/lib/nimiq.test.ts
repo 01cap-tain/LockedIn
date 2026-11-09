@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   getHostNetwork: vi.fn<() => string | undefined>(),
@@ -25,11 +25,22 @@ beforeEach(() => {
   sdk.listAccounts.mockReset()
 })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('Nimiq Pay connection', () => {
   it('detects the host network exposed by Nimiq Pay', () => {
     sdk.getHostNetwork.mockReturnValue('test')
 
     expect(getNimiqEnvironment()).toEqual({ isNimiqPay: true, network: 'test' })
+  })
+
+  it('detects the documented injected provider pair before host metadata is ready', () => {
+    sdk.getHostNetwork.mockReturnValue(undefined)
+    vi.stubGlobal('window', { nimiq: {}, ethereum: {} })
+
+    expect(getNimiqEnvironment()).toEqual({ isNimiqPay: true, network: null })
   })
 
   it('initializes the official provider and reads the disclosed wallet address', async () => {

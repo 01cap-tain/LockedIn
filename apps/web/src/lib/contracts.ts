@@ -15,6 +15,15 @@ import {
   type Provider,
   type Signer,
 } from "ethers";
+import {
+  attachSubmittedTransaction,
+  pendingOperationsFor,
+  recordAwaitingOperation,
+  recordSubmittedOperation,
+  updateRecoverableOperation,
+  type FinancialAction,
+  type RecoverableOperation,
+} from "./transaction-recovery";
 
 // Thin client for contract reads and signed transactions. It deliberately
 // contains no authoritative pricing or ownership rules: those are enforced by
@@ -40,6 +49,9 @@ const factoryAbi = [
   "function isVault(address vault) view returns (bool)",
   "function groupName(address vault) view returns (string)",
   "function earlyExitMarket() view returns (address)",
+  "function rewardPool() view returns (address)",
+  "function riskReserve() view returns (address)",
+  "function maintenanceTreasury() view returns (address)",
   "function safetyController() view returns (address)",
   "event VaultCreated(address indexed vault,address indexed creator,bool indexed isGroup,uint8 mode,address yieldAdapter,uint64 maturity)",
 ] as const;
@@ -68,6 +80,7 @@ const vaultAbi = [
   "error InvitationRevoked()",
   "error InvitationAlreadyUsed()",
   "error InvitationAlreadyAvailable()",
+  "error PublicJoiningUnavailable()",
   "error CircleFull()",
   "error GroupExitUnresolved()",
   "error NotMatured()",
@@ -154,6 +167,7 @@ const tokenAbi = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
   "function mint(address recipient,uint256 amount)",
+  "event Approval(address indexed owner,address indexed spender,uint256 value)",
 ] as const;
 
 const marketAbi = [
@@ -180,6 +194,7 @@ const marketAbi = [
   "event ListingCancelled(uint256 indexed listingId)",
   "event ListingExpired(uint256 indexed listingId)",
   "event ListingFunded(uint256 indexed listingId,address indexed provider,uint256 claimValue,uint16 systemDiscountBps,uint256 saverPayout,uint256 providerPotentialReturn,uint256 providerFee)",
+  "event ProviderFeeDistributed(uint256 indexed listingId,uint256 totalFee,uint256 rewardPoolAllocation,uint256 riskReserveAllocation,uint256 maintenanceAllocation)",
 ] as const;
 
 const USDT_DECIMALS = 6;
@@ -346,12 +361,14 @@ export function supportsOpenEnrollmentProtocol(protocolVersion: string): boolean
     protocolVersion === "lockedin-circle/1.0.0-safe" ||
     protocolVersion === "lockedin-circle/1.1.0-safe" ||
     protocolVersion === "lockedin-circle/1.2.0-safe" ||
-    protocolVersion === "lockedin-circle/1.3.0-safe";
+    protocolVersion === "lockedin-circle/1.3.0-safe" ||
+    protocolVersion === "lockedin-circle/1.4.0-safe";
 }
 
 export function supportsSecureInvitations(protocolVersion: string): boolean {
   return protocolVersion === "lockedin-circle/1.2.0-safe" ||
-    protocolVersion === "lockedin-circle/1.3.0-safe";
+    protocolVersion === "lockedin-circle/1.3.0-safe" ||
+    protocolVersion === "lockedin-circle/1.4.0-safe";
 }
 
 export interface VaultSnapshot {
@@ -414,6 +431,9 @@ export interface DeploymentVerification {
   asset: string;
   market: string;
   safetyController: string;
+  rewardPool?: string;
+  riskReserve?: string;
+  maintenanceTreasury?: string;
   paused: boolean;
 }
 
@@ -441,6 +461,9 @@ export function assertDeploymentMatches(
   mismatch("asset", actual.asset, expected.asset);
   mismatch("market", actual.market, expected.market);
   mismatch("safety controller", actual.safetyController, expected.safetyController);
+  mismatch("reward pool", actual.rewardPool ?? "", expected.rewardPool);
+  mismatch("risk reserve", actual.riskReserve ?? "", expected.riskReserve);
+  mismatch("maintenance treasury", actual.maintenanceTreasury ?? "", expected.maintenanceTreasury);
 }
 
 export interface VaultMemberSnapshot {
@@ -504,6 +527,7 @@ export interface IndexedVaultReference {
 export interface ExitPositionSnapshot {
   address: string;
   positionId: bigint;
+  maturity: Date;
   ownsLockedPosition: boolean;
   isOriginalMember: boolean;
   isGroup: boolean;
@@ -771,6 +795,14 @@ async function verifyDeploymentOnce(
       factory.getFunction("earlyExitMarket")(),
       factory.getFunction("safetyController")(),
     ]);
+  const productionRoles = String(protocolVersion) === "lockedin-circle/1.4.0-safe"
+    ? await Promise.all([
+        factory.getFunction("rewardPool")(),
+        factory.getFunction("riskReserve")(),
+        factory.getFunction("maintenanceTreasury")(),
+      ])
+    : [undefined, undefined, undefined];
+  const [rewardPool, riskReserve, maintenanceTreasury] = productionRoles;
   const expected = {
     chainId: import.meta.env.VITE_EXPECTED_CHAIN_ID,
     protocolVersion: import.meta.env.VITE_EXPECTED_PROTOCOL_VERSION,
@@ -778,6 +810,9 @@ async function verifyDeploymentOnce(
     asset: import.meta.env.VITE_EXPECTED_ASSET_ADDRESS,
     market: import.meta.env.VITE_EXPECTED_MARKET_ADDRESS,
     safetyController: import.meta.env.VITE_EXPECTED_SAFETY_CONTROLLER_ADDRESS,
+    rewardPool: import.meta.env.VITE_EXPECTED_REWARD_POOL_ADDRESS,
+    riskReserve: import.meta.env.VITE_EXPECTED_RISK_RESERVE_ADDRESS,
+    maintenanceTreasury: import.meta.env.VITE_EXPECTED_MAINTENANCE_TREASURY_ADDRESS,
   };
   if (network.chainId !== BigInt(chainId))
     throw new Error(`Deployment mismatch: wallet chain ${network.chainId} does not match factory chain ${chainId}.`);
@@ -789,6 +824,9 @@ async function verifyDeploymentOnce(
       asset: String(asset),
       market: String(market),
       safetyController: String(safetyController),
+      rewardPool: rewardPool ? String(rewardPool) : undefined,
+      riskReserve: riskReserve ? String(riskReserve) : undefined,
+      maintenanceTreasury: maintenanceTreasury ? String(maintenanceTreasury) : undefined,
     },
     {
       chainId: expected.chainId ? BigInt(expected.chainId) : undefined,
@@ -797,9 +835,13 @@ async function verifyDeploymentOnce(
       asset: expected.asset,
       market: expected.market,
       safetyController: expected.safetyController,
+      rewardPool: expected.rewardPool,
+      riskReserve: expected.riskReserve,
+      maintenanceTreasury: expected.maintenanceTreasury,
     }
   );
-  const linkedContracts = [["asset", asset], ["market", market], ["safety controller", safetyController]] as const;
+  const linkedContracts: Array<readonly [string, unknown]> = [["asset", asset], ["market", market], ["safety controller", safetyController]];
+  if (rewardPool) linkedContracts.push(["reward pool", rewardPool]);
   const linkedCode = await Promise.all(
     linkedContracts.map(([, address]) => provider.getCode(String(address)))
   );
@@ -815,6 +857,9 @@ async function verifyDeploymentOnce(
     asset: getAddress(String(asset)),
     market: getAddress(String(market)),
     safetyController: getAddress(String(safetyController)),
+    rewardPool: rewardPool ? getAddress(String(rewardPool)) : undefined,
+    riskReserve: riskReserve ? getAddress(String(riskReserve)) : undefined,
+    maintenanceTreasury: maintenanceTreasury ? getAddress(String(maintenanceTreasury)) : undefined,
     paused: Boolean(await safety.getFunction("paused")()),
   };
 }
@@ -990,17 +1035,218 @@ export async function warmTransactionPreflight(
  * must not turn a confirmed transaction into a UI failure when receipt polling
  * is rate-limited.
  */
-async function confirmTransaction(signer: Signer, hash: string) {
-  const receipt = await withAmoyReadRetry(() =>
-    readProviderFor(signer).waitForTransaction(hash, 1, 60_000)
-  , undefined, { timeoutMs: 65_000 });
-  if (!receipt)
-    throw new Error(
-      `Transaction ${hash} was submitted but confirmation timed out. Check it on PolygonScan before retrying.`
+interface TransactionExpectation {
+  action: FinancialAction;
+  target: string;
+  event: string;
+  abi: readonly string[];
+  arguments?: Record<string, string | bigint>;
+}
+
+type SubmittedTransaction = {
+  hash: string;
+  nonce?: number;
+  from?: string;
+  to?: string | null;
+};
+
+function operationEventMatches(
+  receipt: { logs: readonly Log[] } | null,
+  expectation: TransactionExpectation
+): boolean {
+  if (!receipt) return false;
+  return receipt.logs.some((log) => {
+    if (log.address.toLowerCase() !== expectation.target.toLowerCase()) return false;
+    const event = parsedEvent(log, expectation.abi);
+    if (event?.name !== expectation.event) return false;
+    return Object.entries(expectation.arguments ?? {}).every(([key, value]) =>
+      String(event.args[key]).toLowerCase() === String(value).toLowerCase()
     );
-  if (receipt.status !== 1)
-    throw new Error(`Transaction ${hash} reverted on Polygon Amoy.`);
+  });
+}
+
+async function confirmTransaction(
+  signer: Signer,
+  transaction: SubmittedTransaction,
+  expectation?: TransactionExpectation,
+  preparedOperationId?: string
+) {
+  const provider = readProviderFor(signer);
+  const [network, account] = await Promise.all([provider.getNetwork(), signer.getAddress()]);
+  const expectedChain = import.meta.env.VITE_EXPECTED_CHAIN_ID
+    ? BigInt(import.meta.env.VITE_EXPECTED_CHAIN_ID)
+    : network.chainId;
+  if (network.chainId !== expectedChain)
+    throw new Error(`Wrong Polygon network. Expected chain ${expectedChain}, received ${network.chainId}.`);
+  if (!expectation) {
+    const receipt = await withAmoyReadRetry(() =>
+      provider.waitForTransaction(transaction.hash, network.chainId === 137n ? 2 : 1, 90_000)
+    , undefined, { timeoutMs: 95_000 });
+    if (!receipt) throw new Error("Transaction status unknown. Check the transaction before trying again.");
+    if (receipt.status !== 1) throw new Error(`Transaction ${transaction.hash} reverted on Polygon.`);
+    return receipt;
+  }
+  const submittedMetadata = {
+    account: getAddress(account),
+    chainId: network.chainId.toString(),
+    transactionHash: transaction.hash,
+    nonce: transaction.nonce,
+    action: expectation.action,
+    targetContract: getAddress(expectation.target),
+    expectedEvent: expectation.event,
+    expectedArguments: Object.fromEntries(
+      Object.entries(expectation.arguments ?? {}).map(([key, value]) => [key, String(value)])
+    ),
+  };
+  const operation = preparedOperationId
+    ? attachSubmittedTransaction(preparedOperationId, transaction.hash, transaction.nonce)
+    : recordSubmittedOperation(submittedMetadata);
+  if (!operation) throw new Error("The pending transaction record could not be recovered.");
+  updateRecoverableOperation(operation.operationId, "CONFIRMING");
+  let receipt;
+  try {
+    receipt = await withAmoyReadRetry(() =>
+      provider.waitForTransaction(transaction.hash, network.chainId === 137n ? 2 : 1, 90_000)
+    , undefined, { timeoutMs: 95_000 });
+  } catch (error) {
+    updateRecoverableOperation(operation.operationId, "OUTCOME_UNKNOWN", {
+      failureReason: error instanceof Error ? error.message : "Receipt lookup failed.",
+    });
+    throw new Error("Transaction status unknown. Check the transaction before trying again.", {
+      cause: error,
+    });
+  }
+  if (!receipt) {
+    updateRecoverableOperation(operation.operationId, "OUTCOME_UNKNOWN");
+    throw new Error("Transaction status unknown. Check the transaction before trying again.");
+  }
+  const sender = getAddress(receipt.from);
+  const target = receipt.to ? getAddress(receipt.to) : null;
+  if (sender !== getAddress(account) || target !== getAddress(expectation.target)) {
+    updateRecoverableOperation(operation.operationId, "FAILED", { failureReason: "Sender or target mismatch." });
+    throw new Error("The confirmed transaction did not match the reviewed sender and destination.");
+  }
+  if (receipt.status !== 1) {
+    updateRecoverableOperation(operation.operationId, "FAILED", { failureReason: "Receipt status is reverted." });
+    throw new Error(`Transaction ${transaction.hash} reverted on Polygon.`);
+  }
+  if (!operationEventMatches(receipt, expectation)) {
+    updateRecoverableOperation(operation.operationId, "OUTCOME_UNKNOWN", { failureReason: "Expected event was not found." });
+    throw new Error("Transaction status unknown. Check the transaction before trying again.");
+  }
+  updateRecoverableOperation(operation.operationId, "CONFIRMED");
   return receipt;
+}
+
+async function submitRecoverableTransaction(
+  signer: Signer,
+  expectation: TransactionExpectation,
+  submit: () => Promise<SubmittedTransaction>
+) {
+  const provider = readProviderFor(signer);
+  const [network, account] = await Promise.all([provider.getNetwork(), signer.getAddress()]);
+  const operation = recordAwaitingOperation({
+    account: getAddress(account),
+    chainId: network.chainId.toString(),
+    action: expectation.action,
+    targetContract: getAddress(expectation.target),
+    expectedEvent: expectation.event,
+    expectedArguments: Object.fromEntries(
+      Object.entries(expectation.arguments ?? {}).map(([key, value]) => [key, String(value)])
+    ),
+  });
+  let transaction: SubmittedTransaction;
+  try {
+    transaction = await submit();
+  } catch (error) {
+    const rejected = error instanceof Error
+      && (/rejected|denied|cancelled/i.test(error.message) || "code" in error && (error as Error & { code?: unknown }).code === 4001);
+    updateRecoverableOperation(operation.operationId, rejected ? "REJECTED" : "FAILED", {
+      failureReason: error instanceof Error ? error.message : "The wallet did not submit the transaction.",
+    });
+    throw error;
+  }
+  return confirmTransaction(signer, transaction, expectation, operation.operationId);
+}
+
+export async function recoverPendingTransactions(signer: Signer): Promise<RecoverableOperation[]> {
+  const provider = readProviderFor(signer);
+  const [network, account] = await Promise.all([provider.getNetwork(), signer.getAddress()]);
+  const operations = pendingOperationsFor(account, network.chainId);
+  for (const operation of operations) {
+    try {
+      const trackedHash = operation.replacementHash ?? operation.transactionHash;
+      if (!trackedHash) continue;
+      const receipt = await provider.getTransactionReceipt(trackedHash);
+      if (!receipt) {
+        const transaction = await provider.getTransaction(trackedHash);
+        if (transaction) {
+          updateRecoverableOperation(operation.operationId, "CONFIRMING");
+        } else if (operation.nonce !== undefined && await provider.getTransactionCount(account) > operation.nonce) {
+          let replacementHash: string | undefined;
+          const latestBlock = await provider.getBlockNumber();
+          for (let blockNumber = latestBlock; blockNumber >= Math.max(0, latestBlock - 96); blockNumber -= 1) {
+            const block = await provider.getBlock(blockNumber, true);
+            const replacement = block?.prefetchedTransactions.find((candidate) =>
+              candidate.from.toLowerCase() === account.toLowerCase() && candidate.nonce === operation.nonce
+            );
+            if (replacement) {
+              replacementHash = replacement.hash;
+              break;
+            }
+          }
+          updateRecoverableOperation(
+            operation.operationId,
+            replacementHash ? "REPLACED" : "OUTCOME_UNKNOWN",
+            replacementHash
+              ? { replacementHash, failureReason: "The wallet replaced the original transaction." }
+              : { failureReason: "The nonce was consumed but the replacement transaction could not be identified." }
+          );
+        } else if (Date.now() - new Date(operation.createdAt).getTime() > 30 * 60_000) {
+          updateRecoverableOperation(operation.operationId, "DROPPED", {
+            failureReason: "The transaction is no longer visible after thirty minutes.",
+          });
+        }
+        continue;
+      }
+      if (receipt.status !== 1) {
+        updateRecoverableOperation(operation.operationId, "FAILED", { failureReason: "Receipt status is reverted." });
+        continue;
+      }
+      const requiredConfirmations = network.chainId === 137n ? 2 : 1;
+      const confirmations = (await provider.getBlockNumber()) - receipt.blockNumber + 1;
+      if (confirmations < requiredConfirmations) {
+        updateRecoverableOperation(operation.operationId, "CONFIRMING");
+        continue;
+      }
+      if (getAddress(receipt.from) !== getAddress(operation.account)
+        || !receipt.to || getAddress(receipt.to) !== getAddress(operation.targetContract)) {
+        updateRecoverableOperation(operation.operationId, "FAILED", { failureReason: "Sender or target mismatch." });
+        continue;
+      }
+      // Event-specific verification is repeated by the operation helper on the
+      // active path. Reload recovery remains unknown if the persisted event
+      // cannot be decoded safely from the current protocol ABI.
+      const knownAbis = [factoryAbi, tokenAbi, vaultAbi, marketAbi];
+      const matched = knownAbis.some((abi) => operationEventMatches(receipt, {
+        action: operation.action,
+        target: operation.targetContract,
+        event: operation.expectedEvent,
+        abi,
+        arguments: operation.expectedArguments,
+      }));
+      updateRecoverableOperation(
+        operation.operationId,
+        matched ? "CONFIRMED" : "OUTCOME_UNKNOWN",
+        matched ? {} : { failureReason: "Expected event was not found." }
+      );
+    } catch (error) {
+      updateRecoverableOperation(operation.operationId, "OUTCOME_UNKNOWN", {
+        failureReason: error instanceof Error ? error.message : "Temporary RPC failure.",
+      });
+    }
+  }
+  return pendingOperationsFor(account, network.chainId);
 }
 
 export async function createVault(
@@ -1113,13 +1359,18 @@ export async function createVault(
     );
   }
   onStage?.("signature");
-  const transaction = await factory.getFunction(method)(
-    ...args,
-    { ...feeOverrides, gasLimit }
-  );
-
-  onStage?.("confirmation");
-  const receipt = await confirmTransaction(signer, transaction.hash);
+  const creationExpectation: TransactionExpectation = {
+    action: "VAULT_CREATION",
+    target: factoryAddress(),
+    event: "VaultCreated",
+    abi: factoryAbi,
+    arguments: { creator },
+  };
+  const receipt = await submitRecoverableTransaction(signer, creationExpectation, async () => {
+    const transaction = await factory.getFunction(method)(...args, { ...feeOverrides, gasLimit });
+    onStage?.("confirmation");
+    return transaction;
+  });
   for (const log of receipt.logs) {
     const event = parsedEvent(log, factoryAbi);
     if (event?.name === "VaultCreated")
@@ -1136,7 +1387,38 @@ export async function joinPublicGroup(
   targetValue: string,
   emergencyPercent: number
 ): Promise<bigint> {
-  const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
+  const address = getAddress(vaultAddress);
+  const connected = getAddress(await signer.getAddress());
+  const vault = new Contract(address, vaultAbi, signer);
+  const readVault = new Contract(address, vaultAbi, readProviderFor(signer));
+  const [openEnrollment, publicJoining, publicJoinClosed, lifecycle, enrollmentDeadline, memberCount, maxMemberCount] = await Promise.all([
+    readVault.getFunction("openEnrollment")(),
+    readVault.getFunction("publicJoining")(),
+    readVault.getFunction("publicJoinClosed")(),
+    readVault.getFunction("groupLifecycle")(),
+    readVault.getFunction("enrollmentDeadline")(),
+    readVault.getFunction("memberCount")(),
+    readVault.getFunction("maxMemberCount")(),
+  ]);
+  const members = await Promise.all(
+    Array.from({ length: Number(memberCount) }, (_, index) => readVault.getFunction("memberAt")(index))
+  );
+  const chainBlock = await readProviderFor(signer).getBlock("latest");
+  const chainTimestamp = BigInt(chainBlock?.timestamp ?? Math.floor(Date.now() / 1_000));
+  if (members.some((member) => getAddress(String(member)) === connected)) throw new Error("JoinAlreadyMember");
+  if (!publicJoining) throw new Error("JoinPrivateCircle");
+  if (!openEnrollment || publicJoinClosed || Number(lifecycle) !== 1 || chainTimestamp >= BigInt(enrollmentDeadline)) {
+    throw new Error("JoinEnrollmentClosed");
+  }
+  if (BigInt(memberCount) >= BigInt(maxMemberCount)) throw new Error("JoinCircleFull");
+  if (!Number.isFinite(Number(targetValue)) || Number(targetValue) <= 0 || emergencyPercent < 10 || emergencyPercent > 15) {
+    throw new Error("InvalidConfiguration");
+  }
+  await readVault.getFunction("joinPublicGroup").staticCall(
+    amount(targetValue),
+    emergencyPercent * 100,
+    { from: connected }
+  );
   const transaction = await vault.getFunction("joinPublicGroup")(
     amount(targetValue),
     emergencyPercent * 100,
@@ -1145,7 +1427,7 @@ export async function joinPublicGroup(
     gasLimit: 450_000n,
     }
   );
-  const receipt = await confirmTransaction(signer, transaction.hash);
+  const receipt = await confirmTransaction(signer, transaction);
   for (const log of receipt.logs) {
     const event = parsedEvent(log, vaultAbi);
     if (event?.name === "PublicGroupJoined") return BigInt(event.args.positionId);
@@ -1176,6 +1458,32 @@ export async function createSecureGroupInvitation(
   const invitation = { ...unsigned, commitment: groupInvitationCommitment(unsigned) };
   const contract = new Contract(vault, vaultAbi, signer);
   const readContract = new Contract(vault, vaultAbi, readProviderFor(signer));
+  const signerAddress = getAddress(await signer.getAddress());
+  const [creator, openEnrollment, publicJoining, publicJoinClosed, lifecycle, enrollmentDeadline, memberCount, maxMemberCount] = await Promise.all([
+    readContract.getFunction("groupCreator")(),
+    readContract.getFunction("openEnrollment")(),
+    readContract.getFunction("publicJoining")(),
+    readContract.getFunction("publicJoinClosed")(),
+    readContract.getFunction("groupLifecycle")(),
+    readContract.getFunction("enrollmentDeadline")(),
+    readContract.getFunction("memberCount")(),
+    readContract.getFunction("maxMemberCount")(),
+  ]);
+  const chainBlock = await readProviderFor(signer).getBlock("latest");
+  const chainTimestamp = BigInt(chainBlock?.timestamp ?? Math.floor(Date.now() / 1_000));
+  if (getAddress(String(creator)) !== signerAddress) throw new Error("InvitationCreatorOnly");
+  if (publicJoining) throw new Error("InvitationPublicCircle");
+  if (!openEnrollment || publicJoinClosed) throw new Error("InvitationEnrollmentClosed");
+  // SavingsVault.GroupLifecycle is { NotApplicable: 0, Pending: 1, Active: 2, ... }.
+  if (Number(lifecycle) !== 1) throw new Error("InvitationCircleNotPending");
+  if (BigInt(memberCount) >= BigInt(maxMemberCount)) throw new Error("CircleFull");
+  const members = await Promise.all(
+    Array.from({ length: Number(memberCount) }, (_, index) => readContract.getFunction("memberAt")(index))
+  );
+  if (members.some((member) => getAddress(String(member)) === invitee)) throw new Error("JoinAlreadyMember");
+  if (chainTimestamp >= BigInt(enrollmentDeadline)) throw new Error("InvitationEnrollmentClosed");
+  if (expiry <= chainTimestamp) throw new Error("InvitationExpiryPast");
+  if (expiry > BigInt(enrollmentDeadline)) throw new Error("InvitationExpiryAfterEnrollment");
   const existingCommitment = String(
     await readContract.getFunction("activeGroupInvitation")(invitee)
   );
@@ -1185,6 +1493,13 @@ export async function createSecureGroupInvitation(
     );
     if (existingStatus === 1) throw new Error("InvitationAlreadyAvailable");
   }
+  await readContract.getFunction("createGroupInvitation").staticCall(
+    invitee,
+    invitation.commitment,
+    expiry,
+    invitation.nonce,
+    { from: signerAddress }
+  );
   const transaction = await contract.getFunction("createGroupInvitation")(
     invitee,
     invitation.commitment,
@@ -1192,7 +1507,7 @@ export async function createSecureGroupInvitation(
     invitation.nonce,
     { ...(await transactionOverrides(signer)), gasLimit: 350_000n }
   );
-  await confirmTransaction(signer, transaction.hash);
+  await confirmTransaction(signer, transaction);
   return invitation;
 }
 
@@ -1206,7 +1521,7 @@ export async function revokeSecureGroupInvitation(
     commitment,
     { ...(await transactionOverrides(signer)), gasLimit: 220_000n }
   );
-  await confirmTransaction(signer, transaction.hash);
+  await confirmTransaction(signer, transaction);
 }
 
 export async function loadSecureGroupInvitation(
@@ -1256,6 +1571,43 @@ export async function joinInviteOnlyGroup(
   const { chainId } = await provider.getNetwork();
   if (chainId !== invitation.chainId) throw new Error("Wrong network.");
   const contract = new Contract(getAddress(invitation.vault), vaultAbi, signer);
+  const readContract = new Contract(getAddress(invitation.vault), vaultAbi, readProviderFor(signer));
+  const [status, openEnrollment, publicJoining, publicJoinClosed, lifecycle, enrollmentDeadline, memberCount, maxMemberCount] = await Promise.all([
+    readContract.getFunction("invitationStatus")(invitation.commitment),
+    readContract.getFunction("openEnrollment")(),
+    readContract.getFunction("publicJoining")(),
+    readContract.getFunction("publicJoinClosed")(),
+    readContract.getFunction("groupLifecycle")(),
+    readContract.getFunction("enrollmentDeadline")(),
+    readContract.getFunction("memberCount")(),
+    readContract.getFunction("maxMemberCount")(),
+  ]);
+  const chainBlock = await readProviderFor(signer).getBlock("latest");
+  const chainTimestamp = BigInt(chainBlock?.timestamp ?? Math.floor(Date.now() / 1_000));
+  if (Number(status) === 2) throw new Error("InvitationAlreadyUsed");
+  if (Number(status) === 3) throw new Error("InvitationRevoked");
+  if (Number(status) === 4 || chainTimestamp >= invitation.expiry) throw new Error("InvitationExpired");
+  if (Number(status) !== 1) throw new Error("InvitationInvalid");
+  if (!openEnrollment || publicJoining || publicJoinClosed || Number(lifecycle) !== 1) {
+    throw new Error("InvitationEnrollmentClosed");
+  }
+  if (chainTimestamp >= BigInt(enrollmentDeadline)) throw new Error("InvitationEnrollmentClosed");
+  if (BigInt(memberCount) >= BigInt(maxMemberCount)) throw new Error("CircleFull");
+  const members = await Promise.all(
+    Array.from({ length: Number(memberCount) }, (_, index) => readContract.getFunction("memberAt")(index))
+  );
+  if (members.some((member) => getAddress(String(member)) === connected)) throw new Error("JoinAlreadyMember");
+  if (!Number.isFinite(Number(targetValue)) || Number(targetValue) <= 0) throw new Error("InvalidConfiguration");
+  if (emergencyPercent < 10 || emergencyPercent > 15) throw new Error("InvalidConfiguration");
+  await readContract.getFunction("joinInviteOnlyGroup").staticCall(
+    invitation.invitee,
+    invitation.secret,
+    invitation.expiry,
+    invitation.nonce,
+    amount(targetValue),
+    emergencyPercent * 100,
+    { from: connected }
+  );
   const transaction = await contract.getFunction("joinInviteOnlyGroup")(
     invitation.invitee,
     invitation.secret,
@@ -1265,7 +1617,7 @@ export async function joinInviteOnlyGroup(
     emergencyPercent * 100,
     { ...(await transactionOverrides(signer)), gasLimit: 600_000n }
   );
-  const receipt = await confirmTransaction(signer, transaction.hash);
+  const receipt = await confirmTransaction(signer, transaction);
   for (const log of receipt.logs) {
     const event = parsedEvent(log, vaultAbi);
     if (event?.name === "GroupInvitationConsumed") return BigInt(event.args.positionId);
@@ -1282,7 +1634,7 @@ export async function activateGroup(
     ...(await transactionOverrides(signer)),
     gasLimit: 300_000n,
   });
-  await confirmTransaction(signer, transaction.hash);
+  await confirmTransaction(signer, transaction);
 }
 
 export async function loadVault(
@@ -1833,27 +2185,45 @@ export async function depositToVault(
   if (allowance !== parsed) {
     onStage?.("approval");
     if (allowance !== 0n) {
-      const reset = await token.getFunction("approve")(
+      const resetExpectation: TransactionExpectation = {
+        action: "USDT_APPROVAL",
+        target: tokenAddress,
+        event: "Approval",
+        abi: tokenAbi,
+        arguments: { owner, spender: vaultAddressResolved, value: 0n },
+      };
+      await submitRecoverableTransaction(signer, resetExpectation, async () => token.getFunction("approve")(
         vaultAddressResolved,
         0,
         { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
-      );
-      await confirmTransaction(signer, reset.hash);
+      ));
     }
-    const approval = await token.getFunction("approve")(
+    const approvalExpectation: TransactionExpectation = {
+      action: "USDT_APPROVAL",
+      target: tokenAddress,
+      event: "Approval",
+      abi: tokenAbi,
+      arguments: { owner, spender: vaultAddressResolved, value: parsed },
+    };
+    await submitRecoverableTransaction(signer, approvalExpectation, async () => token.getFunction("approve")(
       vaultAddressResolved,
       parsed,
       { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
-    );
-    await confirmTransaction(signer, approval.hash);
+    ));
   }
   onStage?.("execution");
-  const deposit = await vault.getFunction("deposit")(
+  const depositExpectation: TransactionExpectation = {
+    action: "DEPOSIT",
+    target: vaultAddressResolved,
+    event: "Deposited",
+    abi: vaultAbi,
+    arguments: { positionId, member: owner, amount: parsed },
+  };
+  await submitRecoverableTransaction(signer, depositExpectation, async () => vault.getFunction("deposit")(
     positionId,
     parsed,
     { ...(await transactionOverrides(signer)), gasLimit: 1_200_000n }
-  );
-  await confirmTransaction(signer, deposit.hash);
+  ));
 }
 
 export async function loadMockUsdtBalance(signer: Signer): Promise<string> {
@@ -1923,7 +2293,7 @@ export async function requestMockUsdt(
     amount(value),
     overrides
   );
-  await confirmTransaction(signer, transaction.hash);
+  await confirmTransaction(signer, transaction);
 }
 
 export async function withdrawEmergency(
@@ -1934,12 +2304,18 @@ export async function withdrawEmergency(
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
   const overrides = { ...(await transactionOverrides(signer)), gasLimit: 300_000n };
-  const transaction = await vault.getFunction("withdrawEmergency")(
+  const expectation: TransactionExpectation = {
+    action: "EMERGENCY_WITHDRAWAL",
+    target: getAddress(vaultAddress),
+    event: "EmergencyWithdrawn",
+    abi: vaultAbi,
+    arguments: { positionId, member: await signer.getAddress(), amount: amount(value) },
+  };
+  await submitRecoverableTransaction(signer, expectation, () => vault.getFunction("withdrawEmergency")(
     positionId,
     amount(value),
     overrides
-  );
-  await confirmTransaction(signer, transaction.hash);
+  ));
 }
 
 export async function withdrawLocked(
@@ -1976,11 +2352,17 @@ export async function withdrawLocked(
   }
   const vault = new Contract(address, vaultAbi, signer);
   const overrides = { ...feeOverrides, gasLimit };
-  const transaction = await vault.getFunction("withdrawLocked")(
+  const expectation: TransactionExpectation = {
+    action: "MATURED_CLAIM",
+    target: address,
+    event: "LockedWithdrawn",
+    abi: vaultAbi,
+    arguments: { positionId, owner: caller },
+  };
+  await submitRecoverableTransaction(signer, expectation, () => vault.getFunction("withdrawLocked")(
     positionId,
     overrides
-  );
-  await confirmTransaction(signer, transaction.hash);
+  ));
 }
 
 /** Loads each member's latest cooperative request directly from vault state. */
@@ -2053,11 +2435,30 @@ async function sendGroupExitTransaction(
 ): Promise<void> {
   const vault = new Contract(getAddress(vaultAddress), vaultAbi, signer);
   const overrides = { ...(await transactionOverrides(signer)), gasLimit: 500_000n };
-  const transaction =
-    requestId === undefined
-      ? await vault.getFunction(functionName)(overrides)
-      : await vault.getFunction(functionName)(requestId, overrides);
-  await confirmTransaction(signer, transaction.hash);
+  const eventByFunction: Record<string, string> = {
+    requestGroupExit: "GroupExitRequested",
+    approveGroupExit: "GroupExitApproved",
+    authorizeGroupExit: "GroupExitAuthorized",
+    revokeGroupExitApproval: "GroupExitApprovalRevoked",
+    cancelGroupExit: "GroupExitCancelled",
+    completeGroupExit: "GroupExitCompleted",
+  };
+  const event = eventByFunction[functionName];
+  const expectedArguments: Record<string, string | bigint> = requestId === undefined
+    ? { requester: await signer.getAddress() }
+    : { requestId };
+  const expectation = event ? {
+    action: "COOPERATIVE_EXIT",
+    target: getAddress(vaultAddress),
+    event,
+    abi: vaultAbi,
+    arguments: expectedArguments,
+  } satisfies TransactionExpectation : undefined;
+  const submit = () => requestId === undefined
+    ? vault.getFunction(functionName)(overrides)
+    : vault.getFunction(functionName)(requestId, overrides);
+  if (expectation) await submitRecoverableTransaction(signer, expectation, submit);
+  else await confirmTransaction(signer, await submit());
 }
 
 export async function requestGroupExit(
@@ -2170,16 +2571,18 @@ export async function loadExitPosition(
     const address = getAddress(vaultAddress);
     const signerAddress = getAddress(await signer.getAddress());
     const vault = new Contract(address, vaultAbi, readProviderFor(signer));
-    const [stored, owner, currentValue, isGroup, lifecycle] = await Promise.all([
+    const [stored, owner, currentValue, maturity, isGroup, lifecycle] = await Promise.all([
       vault.getFunction("position")(positionId),
       vault.getFunction("positionOwner")(positionId),
       vault.getFunction("positionValue")(positionId),
+      vault.getFunction("maturity")(),
       vault.getFunction("isGroup")(),
       vault.getFunction("groupLifecycle")(),
     ]);
     return {
       address,
       positionId,
+      maturity: new Date(Number(maturity) * 1_000),
       ownsLockedPosition: getAddress(String(owner)) === signerAddress,
       isOriginalMember: getAddress(String(stored.member)) === signerAddress,
       isGroup: Boolean(isGroup),
@@ -2369,13 +2772,22 @@ export async function loadAllExitListings(
 
 export async function createExitListing(
   signer: Signer,
-  vault: Pick<VaultSnapshot, "address" | "positionId">,
+  vault: Pick<ExitPositionSnapshot, "address" | "positionId" | "maturity" | "currentValue">,
   expiresAt: string,
   minimumPayout: string
 ): Promise<void> {
   const expirationMs = new Date(expiresAt).getTime();
   if (!Number.isFinite(expirationMs) || expirationMs <= Date.now()) {
     throw new Error("Choose a listing expiration in the future.");
+  }
+  if (Date.now() >= vault.maturity.getTime()) {
+    throw new Error("This savings position has matured. Withdraw the locked savings instead of listing it for an early exit.");
+  }
+  if (expirationMs > vault.maturity.getTime()) {
+    throw new Error("Choose a listing expiration no later than the savings maturity date.");
+  }
+  if (Number(vault.currentValue) <= 0) {
+    throw new Error("This savings position has no locked value available for an early exit.");
   }
   if (!Number.isFinite(Number(minimumPayout)) || Number(minimumPayout) <= 0) {
     throw new Error("Enter a minimum payout greater than zero.");
@@ -2384,7 +2796,15 @@ export async function createExitListing(
   const expiration = BigInt(Math.floor(expirationMs / 1_000));
   const payoutFloor = amount(minimumPayout);
   const overrides = await transactionOverrides(signer);
-  const transaction = await market.getFunction("createListing")(
+  const marketAddress = await market.getAddress();
+  const expectation: TransactionExpectation = {
+    action: "EXIT_LISTING",
+    target: marketAddress,
+    event: "ListingCreated",
+    abi: marketAbi,
+    arguments: { vault: vault.address, positionId: vault.positionId, seller: await signer.getAddress() },
+  };
+  await submitRecoverableTransaction(signer, expectation, () => market.getFunction("createListing")(
     vault.address,
     vault.positionId,
     expiration,
@@ -2395,8 +2815,7 @@ export async function createExitListing(
       // A bounded limit keeps the prompt responsive; unused gas is not charged.
       gasLimit: 750_000n,
     }
-  );
-  await confirmTransaction(signer, transaction.hash);
+  ));
 }
 
 // Funds the live system quote. The approval is deliberately exact, while the contract
@@ -2452,26 +2871,49 @@ export async function fundExitListing(
     // The ERC-20 approval remains exact and the market can only pull the
     // settlement amount calculated by the immutable contract.
     if (allowance !== 0n) {
-      const reset = await token.getFunction("approve")(
+      const resetExpectation: TransactionExpectation = {
+        action: "USDT_APPROVAL",
+        target: await token.getAddress(),
+        event: "Approval",
+        abi: tokenAbi,
+        arguments: { owner: buyer, spender: marketAddress, value: 0n },
+      };
+      await submitRecoverableTransaction(signer, resetExpectation, async () => token.getFunction("approve")(
         marketAddress,
         0,
         { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
-      );
-      await confirmTransaction(signer, reset.hash);
+      ));
     }
-    const approval = await token.getFunction("approve")(
+    const approvalExpectation: TransactionExpectation = {
+      action: "USDT_APPROVAL",
+      target: await token.getAddress(),
+      event: "Approval",
+      abi: tokenAbi,
+      arguments: { owner: buyer, spender: marketAddress, value: totalPayment },
+    };
+    await submitRecoverableTransaction(signer, approvalExpectation, async () => token.getFunction("approve")(
       marketAddress,
       totalPayment,
       { ...(await transactionOverrides(signer)), gasLimit: 120_000n }
-    );
-    await confirmTransaction(signer, approval.hash);
+    ));
   }
   onStage?.("execution");
-  const funding = await market.getFunction("fundListing")(
-    listingId,
-    { ...(await transactionOverrides(signer)), gasLimit: 650_000n }
-  );
-  const receipt = await confirmTransaction(signer, funding.hash);
+  const fundingExpectation: TransactionExpectation = {
+    action: "EXIT_PURCHASE",
+    target: marketAddress,
+    event: "ListingFunded",
+    abi: marketAbi,
+    arguments: { listingId, provider: buyer },
+  };
+  let fundingHash = "";
+  const receipt = await submitRecoverableTransaction(signer, fundingExpectation, async () => {
+    const funding = await market.getFunction("fundListing")(
+      listingId,
+      { ...(await transactionOverrides(signer)), gasLimit: 650_000n }
+    );
+    fundingHash = funding.hash;
+    return funding;
+  });
   const block = await readProvider.getBlock(receipt.blockNumber);
   return {
     listingId,
@@ -2487,7 +2929,7 @@ export async function fundExitListing(
     providerFee: formatUnits(providerFee, USDT_DECIMALS),
     totalProviderPaid: formatUnits(totalPayment, USDT_DECIMALS),
     blockNumber: receipt.blockNumber,
-    transactionHash: funding.hash,
+    transactionHash: fundingHash,
     timestamp: new Date(Number(block?.timestamp ?? Math.floor(Date.now() / 1_000)) * 1_000),
   };
 }
@@ -2498,11 +2940,17 @@ export async function cancelExitListing(
 ): Promise<void> {
   const market = await marketFor(signer);
   const overrides = { ...(await transactionOverrides(signer)), gasLimit: 180_000n };
-  const transaction = await market.getFunction("cancelListing")(
+  const expectation: TransactionExpectation = {
+    action: "LISTING_CANCELLATION",
+    target: await market.getAddress(),
+    event: "ListingCancelled",
+    abi: marketAbi,
+    arguments: { listingId },
+  };
+  await submitRecoverableTransaction(signer, expectation, () => market.getFunction("cancelListing")(
     listingId,
     overrides
-  );
-  await confirmTransaction(signer, transaction.hash);
+  ));
 }
 
 function parsedEvent(log: Log, abi: readonly string[]) {
@@ -3055,8 +3503,30 @@ export function describeContractError(error: unknown): string {
     return "This one-time invitation has already been used.";
   if (/invitationalreadyavailable/i.test(raw))
     return "This wallet already has an available invitation for the circle.";
+  if (/invitationcreatoronly/i.test(raw))
+    return "Only the wallet that created this circle can invite members.";
+  if (/invitationpubliccircle/i.test(raw))
+    return "This is a public circle. The recipient can join it directly without an invitation.";
+  if (/invitationenrollmentclosed/i.test(raw))
+    return "Invitations are closed because the circle's join window has ended or membership has been finalized.";
+  if (/invitationcirclenotpending/i.test(raw))
+    return "New invitations cannot be created after the circle has been activated, cancelled or expired.";
+  if (/invitationexpirypast/i.test(raw))
+    return "Choose an invitation expiration in the future.";
+  if (/invitationexpiryafterenrollment/i.test(raw))
+    return "The invitation must expire on or before the circle's join deadline.";
   if (/circlefull/i.test(raw))
     return "This savings circle is already full.";
+  if (/publicjoiningunavailable/i.test(raw))
+    return "This wallet cannot join because enrollment closed, the circle is full, or it has already joined.";
+  if (/joinalreadymember/i.test(raw))
+    return "This wallet has already joined the circle. Open it from My circles instead.";
+  if (/joinprivatecircle/i.test(raw))
+    return "This is an invite-only circle. Verify its six-character invitation code before joining.";
+  if (/joinenrollmentclosed/i.test(raw))
+    return "This circle's joining period has ended or its membership has already been finalized.";
+  if (/joincirclefull/i.test(raw))
+    return "This savings circle has reached its maximum number of members.";
   if (/invitationinvalid|invitationunavailable|invalid invitation code/i.test(raw))
     return "This invitation is invalid or no longer available.";
   if (/tokenaccountingmismatch/i.test(raw))
@@ -3090,5 +3560,5 @@ export function describeContractError(error: unknown): string {
   if (/execution reverted|call exception|custom error/i.test(raw))
     return "The savings contract declined this action. Refresh the vault details and check that the amount and current status are still valid.";
 
-  return "Your wallet did not provide a reason for this failure. Confirm Polygon Amoy is selected, keep enough POL for the network fee, reopen the wallet and try once more.";
+  return "Your wallet did not return the rejection reason. Refresh the position and try again; no transaction was submitted.";
 }

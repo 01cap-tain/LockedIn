@@ -106,6 +106,13 @@ describe("contract error copy", () => {
     );
   });
 
+  it("explains invitation eligibility failures precisely", () => {
+    expect(describeContractError(new Error("InvitationCreatorOnly"))).toMatch(/only the wallet that created/i);
+    expect(describeContractError(new Error("InvitationEnrollmentClosed"))).toMatch(/join window has ended/i);
+    expect(describeContractError(new Error("InvitationExpiryAfterEnrollment"))).toMatch(/on or before.*join deadline/i);
+    expect(describeContractError(new Error("InvitationPublicCircle"))).toMatch(/join it directly/i);
+  });
+
   it("explains invalid invitee wallet addresses", () => {
     expect(describeContractError(new Error("invalid address"))).toMatch(
       /valid Polygon wallet address/i
@@ -130,7 +137,8 @@ describe("contract error copy", () => {
 
   it("does not fall back to the old reasonless error copy", () => {
     const message = describeContractError({ unexpected: true });
-    expect(message).toMatch(/wallet did not provide a reason/i);
+    expect(message).toMatch(/wallet did not return the rejection reason/i);
+    expect(message).not.toMatch(/POL/i);
     expect(message).not.toMatch(/action could not be completed/i);
   });
 });

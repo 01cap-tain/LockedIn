@@ -10,6 +10,10 @@ interface IVaultFactoryView {
     function isVault(address vault) external view returns (bool);
 }
 
+interface IProtocolRewardPool {
+    function receiveProtocolRevenue(uint256 amount) external;
+}
+
 interface IMarketVault {
     function maturity() external view returns (uint64);
     function createdAt() external view returns (uint64);
@@ -40,6 +44,8 @@ contract EarlyExitMarket is ReentrancyGuard {
     uint16 public constant MIN_DISCOUNT_BPS = 450;
     uint16 public constant MAX_DISCOUNT_BPS = 800;
     uint16 public constant PROVIDER_FEE_BPS = 90;
+    uint16 public constant REWARD_POOL_SHARE_BPS = 6_000;
+    uint16 public constant RISK_RESERVE_SHARE_BPS = 2_000;
 
     // A 15% Aave liquidity rate maps to the full 75-basis-point liquidity-risk penalty.
     // This is a deterministic utilization proxy, not a prediction of future Aave performance.
@@ -86,6 +92,8 @@ contract EarlyExitMarket is ReentrancyGuard {
 
     IERC20 public immutable asset;
     address public immutable factory;
+    IProtocolRewardPool public immutable rewardPool;
+    address public immutable riskReserve;
     address public immutable maintenanceTreasury;
     SafetyController public immutable safetyController;
 
@@ -126,22 +134,39 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 providerFee,
         uint256 acquiredClaimValue
     );
+    event ProviderFeeDistributed(
+        uint256 indexed listingId,
+        uint256 totalFee,
+        uint256 rewardPoolAllocation,
+        uint256 riskReserveAllocation,
+        uint256 maintenanceAllocation
+    );
 
     constructor(
         IERC20 asset_,
         address factory_,
+        address rewardPool_,
+        address riskReserve_,
         address maintenanceTreasury_,
         SafetyController safetyController_
     ) {
         if (
             address(asset_) == address(0) || factory_ == address(0)
-                || maintenanceTreasury_ == address(0)
+                || rewardPool_ == address(0) || rewardPool_.code.length == 0
+                || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
+                || rewardPool_ == riskReserve_
+                || rewardPool_ == maintenanceTreasury_
+                || riskReserve_ == maintenanceTreasury_
+                || rewardPool_ == address(asset_) || riskReserve_ == address(asset_)
                 || maintenanceTreasury_ == address(this)
                 || maintenanceTreasury_ == address(asset_)
+                || rewardPool_ == factory_ || riskReserve_ == factory_
                 || maintenanceTreasury_ == factory_ || address(safetyController_) == address(0)
         ) revert InvalidAddress();
         asset = asset_;
         factory = factory_;
+        rewardPool = IProtocolRewardPool(rewardPool_);
+        riskReserve = riskReserve_;
         maintenanceTreasury = maintenanceTreasury_;
         safetyController = safetyController_;
     }
@@ -248,13 +273,21 @@ contract EarlyExitMarket is ReentrancyGuard {
         uint256 saverPayout = payoutFor(currentClaimValue, pricing.discountBps);
         if (saverPayout < listing.minimumPayout) revert MinimumPayoutNotMet();
         uint256 providerFee = feeFor(saverPayout);
+        (uint256 rewardAllocation, uint256 riskAllocation, uint256 maintenanceAllocation) =
+            feeAllocations(providerFee);
 
         // Effects precede token callbacks; any failed transfer reverts the full transition.
         positionSold[listing.vault][listing.positionId] = true;
         _closeListing(listing);
         _pullExact(msg.sender, saverPayout + providerFee);
         _transferOutExact(listing.seller, saverPayout);
-        _transferOutExact(maintenanceTreasury, providerFee);
+        if (rewardAllocation != 0) {
+            asset.forceApprove(address(rewardPool), rewardAllocation);
+            rewardPool.receiveProtocolRevenue(rewardAllocation);
+            asset.forceApprove(address(rewardPool), 0);
+        }
+        _transferOutExact(riskReserve, riskAllocation);
+        _transferOutExact(maintenanceTreasury, maintenanceAllocation);
         vault.transferPosition(listing.positionId, listing.seller, msg.sender);
 
         emit ListingFunded(
@@ -274,6 +307,13 @@ contract EarlyExitMarket is ReentrancyGuard {
             providerFee,
             currentClaimValue
         );
+        emit ProviderFeeDistributed(
+            listingId,
+            providerFee,
+            rewardAllocation,
+            riskAllocation,
+            maintenanceAllocation
+        );
     }
 
     function payoutFor(uint256 claimValue, uint16 discountBps) public pure returns (uint256) {
@@ -285,6 +325,17 @@ contract EarlyExitMarket is ReentrancyGuard {
 
     function feeFor(uint256 saverPayout) public pure returns (uint256) {
         return saverPayout * PROVIDER_FEE_BPS / 10_000;
+    }
+
+    /// @notice Splits a fee 60/20/20; indivisible remainder is assigned to maintenance.
+    function feeAllocations(uint256 providerFee)
+        public
+        pure
+        returns (uint256 rewardAllocation, uint256 riskAllocation, uint256 maintenanceAllocation)
+    {
+        rewardAllocation = providerFee * REWARD_POOL_SHARE_BPS / 10_000;
+        riskAllocation = providerFee * RISK_RESERVE_SHARE_BPS / 10_000;
+        maintenanceAllocation = providerFee - rewardAllocation - riskAllocation;
     }
 
     /// @notice Returns the deterministic pricing explanation for the current block.

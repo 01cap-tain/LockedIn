@@ -40,6 +40,7 @@ import {
   loadVault,
   loadVaultsForSigner,
   requestMockUsdt,
+  recoverPendingTransactions,
   requestGroupExit,
   revokeSecureGroupInvitation,
   revokeGroupExitApproval,
@@ -62,8 +63,9 @@ import {
   type DeploymentVerification,
 } from "./lib/contracts";
 import { copyText } from "./lib/clipboard";
-import { loadCreatorInvitations, registerShortInvitation, registerVerifiedUsername, resolveInvitationRecipient, resolveShortInvitation } from "./lib/invitation-api";
+import { loadCreatorInvitations, loadVerifiedUsername, registerShortInvitation, registerVerifiedUsername, resolveInvitationRecipient, resolveShortInvitation } from "./lib/invitation-api";
 import { loadNimBalance } from "./lib/nim-balance";
+import { activeSavingsBalance } from "./lib/portfolio-balance";
 import { NimSwapFlow } from "./components/NimSwapFlow";
 import { createConfiguredMockSwapAdapter } from "./swap/mock-swap-adapter";
 import { formatAssetAmount, parseAssetAmount } from "./swap/amounts";
@@ -77,6 +79,7 @@ import {
 import {
   connectNimiqWallet,
   describeWalletError,
+  getNimiqEnvironment,
   type WalletConnection,
 } from "./lib/nimiq";
 import { SavingsCalendar } from "./components/SavingsCalendar";
@@ -146,6 +149,7 @@ import {
   Plus,
   Plane,
   RefreshCw,
+  ShieldCheck,
   Target,
   TrendingUp,
   Trophy,
@@ -169,7 +173,8 @@ type EvmState =
   | { status: "error"; message: string };
 type TransactionState =
   | { status: "idle" }
-  | { status: "pending" | "success" | "error"; message: string };
+  | { status: "pending" | "success"; message: string }
+  | { status: "error"; message: string; transactionHash?: string; recoverable?: boolean };
 type CreatedVaultReceipt = {
   address: string;
   vaultType: "personal" | "group";
@@ -907,6 +912,21 @@ function FirstLoadGate({ stage, onUnlock }: { stage: EntryStage; onUnlock: () =>
   );
 }
 
+function NimiqPayRequiredScreen() {
+  const openUrl = `https://nimpay.app/miniapps/open/${window.location.host}`;
+  return (
+    <main className="nimiq-pay-required">
+      <section>
+        <ShieldCheck aria-hidden="true" size={28} strokeWidth={1.5} />
+        <span className="eyebrow">LockedIn Circle</span>
+        <h1>Open in Nimiq Pay</h1>
+        <p>LockedIn Circle uses Nimiq Pay's protected wallet providers for savings actions. Open this Mini App inside Nimiq Pay to continue.</p>
+        <a className="primary" href={openUrl}>Open in Nimiq Pay <ArrowUpRight size={20} strokeWidth={1.5} /></a>
+      </section>
+    </main>
+  );
+}
+
 export function App() {
   const [entryStage, setEntryStage] = useState<EntryStage>("locked");
   const networkName = import.meta.env.VITE_NETWORK_NAME ?? "Local Hardhat";
@@ -1094,11 +1114,15 @@ export function App() {
       ? mockSwapAdapter
       : null;
   const nimWithdrawalAvailable = Boolean(swapAdapter && nimiqWallet && evmSession);
+  useEffect(() => {
+    if (nimWithdrawalAvailable) return;
+    setDepositAsset("usdt");
+    setReceiveAsset("usdt");
+    setPurchaseAsset("usdt");
+  }, [nimWithdrawalAvailable]);
   const connectedAddress = evmSession?.address.toLowerCase();
   const portfolioTotalSaved = useMemo(
-    () => vaults
-      .filter((vault) => vault.isOriginalMember)
-      .reduce((sum, vault) => sum + Number(vault.deposited), 0),
+    () => activeSavingsBalance(vaults),
     [vaults]
   );
   const portfolioTotalTarget = useMemo(
@@ -1338,6 +1362,8 @@ export function App() {
     exitComposerPosition &&
       exitComposerPosition.ownsLockedPosition &&
       exitComposerPosition.isOriginalMember &&
+      Number(exitComposerPosition.currentValue) > 0 &&
+      exitComposerPosition.maturity.getTime() > Date.now() &&
       (!exitComposerPosition.isGroup || exitComposerPosition.groupLifecycle === "active") &&
       (!selectedListing ||
         (!selectedListing.active &&
@@ -1529,7 +1555,10 @@ export function App() {
       const deadline = snapshot.enrollmentDeadline.getTime();
       const selectedExpiry = new Date(inviteExpiry).getTime();
       if (!Number.isFinite(selectedExpiry) || selectedExpiry >= deadline) {
-        setInviteExpiry(localDateTimeInput(new Date(Math.max(Date.now() + 60_000, deadline - 5 * 60_000))));
+        // Use the latest valid minute so the recipient gets the full remaining
+        // join window. The previous deadline-minus-five-minutes default could
+        // leave only seconds on short test circles.
+        setInviteExpiry(localDateTimeInput(snapshot.enrollmentDeadline));
       }
     }
     if (snapshot.groupLifecycle !== "pending") {
@@ -1572,6 +1601,20 @@ export function App() {
     setProfileUsernameDraft(username);
     setEditingProfileUsername(false);
   }, [profileWalletAddress]);
+
+  useEffect(() => {
+    if (!evmSession || !profileOpen) return;
+    let cancelled = false;
+    void loadVerifiedUsername(evmSession.signer)
+      .then((username) => {
+        if (cancelled || !username) return;
+        const saved = saveLocalUsername(evmSession.address, username);
+        setProfileUsername(saved);
+        setProfileUsernameDraft(saved);
+      })
+      .catch((error) => console.warn("Verified profile sync deferred", error));
+    return () => { cancelled = true; };
+  }, [evmSession?.address, evmSession?.chainId, profileOpen]);
 
   useEffect(() => {
     if (!evmSession || deployment.status !== "valid") return;
@@ -1771,6 +1814,19 @@ export function App() {
     // succeeded; a transient RPC failure must not erase the wallet session.
     if (!evmSession || !deploymentReady || deployment.status !== "valid")
       return;
+    void recoverPendingTransactions(evmSession.signer).then((operations) => {
+      const uncertain = operations.find((operation) =>
+        operation.state === "OUTCOME_UNKNOWN" || operation.state === "REPLACED"
+      );
+      if (uncertain) {
+        setTransaction({
+          status: "error",
+          message: "Transaction status unknown. Check the transaction before trying again.",
+          transactionHash: uncertain.replacementHash ?? uncertain.transactionHash,
+          recoverable: true,
+        });
+      }
+    }).catch((error) => console.warn("Pending transaction recovery deferred", error));
     void refreshPortfolio(evmSession).catch((error) =>
       setTransaction({ status: "error", message: describeContractError(error) })
     );
@@ -1780,6 +1836,24 @@ export function App() {
         .catch(() => setDevelopmentAccounts([]));
     }
   }, [evmSession?.address, evmSession?.chainId, deployment.status]);
+
+  async function checkPendingTransactions(): Promise<void> {
+    if (!evmSession) return;
+    const remaining = await recoverPendingTransactions(evmSession.signer);
+    const uncertain = remaining.find((operation) => operation.state === "OUTCOME_UNKNOWN")
+      ?? remaining[0];
+    if (uncertain) {
+      setTransaction({
+        status: "error",
+        message: "Transaction status unknown. Check the transaction before trying again.",
+        transactionHash: uncertain.replacementHash ?? uncertain.transactionHash,
+        recoverable: true,
+      });
+      return;
+    }
+    setTransaction({ status: "success", message: "The transaction status has been confirmed." });
+    await refreshPortfolio(evmSession);
+  }
 
   function clearPortfolio() {
     setVaults([]);
@@ -2225,6 +2299,22 @@ export function App() {
 
   async function createPrivateInvitation(): Promise<void> {
     if (!snapshot || !evmSession) return;
+    const selectedExpiry = new Date(inviteExpiry).getTime();
+    const minimumAcceptanceWindow = 5 * 60_000;
+    if (snapshot.enrollmentDeadline && snapshot.enrollmentDeadline.getTime() <= Date.now() + minimumAcceptanceWindow) {
+      setTransaction({
+        status: "error",
+        message: "Less than five minutes remain before this circle's join deadline. Create a new circle with a longer joining period so members have time to configure and accept.",
+      });
+      return;
+    }
+    if (!Number.isFinite(selectedExpiry) || selectedExpiry <= Date.now() + minimumAcceptanceWindow) {
+      setTransaction({
+        status: "error",
+        message: "Give the recipient at least five minutes to configure and accept the invitation.",
+      });
+      return;
+    }
     let recipient = resolvedInvitee;
     const recipientStillMatches = recipient && (recipient.username
       ? recipient.username.toLowerCase() === inviteeAddress.replace(/^@/, "").toLowerCase()
@@ -2492,6 +2582,7 @@ export function App() {
       : {
           address: vault.address,
           positionId: vault.positionId,
+          maturity: vault.maturity,
           ownsLockedPosition: vault.access === "owner",
           isOriginalMember: vault.isOriginalMember,
           isGroup: false,
@@ -2499,6 +2590,7 @@ export function App() {
           currentValue: vault.currentValue,
         };
     setExitDraft(immediatePosition);
+    setExitExpiration(localDateTimeInput(vault.maturity));
     setExitState(null);
     setExitDraftLoading(vault.isGroup);
     if (immediatePosition) {
@@ -2831,6 +2923,10 @@ export function App() {
               ? "Loading savings circles…"
               : "Checking the deployment…";
 
+  if (import.meta.env.PROD && !getNimiqEnvironment().isNimiqPay) {
+    return <NimiqPayRequiredScreen />;
+  }
+
   if (entryStage !== "ready") {
     return <FirstLoadGate stage={entryStage} onUnlock={() => setEntryStage("locking")} />;
   }
@@ -2847,6 +2943,7 @@ export function App() {
           <Menu aria-hidden="true" size={20} strokeWidth={2} />
         </button>
         <button className="wordmark" onClick={() => navigate("discover")} type="button">
+          <img className="header-brand-mark" src="/brand/lockedin-circle-mark.png" alt="" aria-hidden="true" />
           <span>LockedIn</span><strong>Circle</strong>
         </button>
         <div className="account-menu-anchor">
@@ -3006,7 +3103,7 @@ export function App() {
                   <span className="onboarding-kicker">If plans change</span>
                   <h2 id="onboarding-title">Request an early savings exit.</h2>
                   <p>The contract calculates the discount. You set a minimum payout, and the first funder to complete it receives the locked position.</p>
-                  <div className="onboarding-testnet"><AlertTriangle aria-hidden="true" size={17} /><span>This alpha uses MockUSDT on Polygon Amoy. It has no real value, and POL is needed only for testnet fees.</span></div>
+                  {!import.meta.env.PROD && <div className="onboarding-testnet"><AlertTriangle aria-hidden="true" size={17} /><span>This alpha uses MockUSDT on Polygon Amoy. It has no real value, and POL is needed only for testnet fees.</span></div>}
                 </>
               )}
             </div>
@@ -3027,7 +3124,7 @@ export function App() {
           <button aria-label="Close navigation" className="overlay-backdrop" onClick={() => setMenuOpen(false)} type="button" />
           <aside className="side-drawer" aria-label="Primary navigation">
             <div className="drawer-heading">
-              <img className="drawer-brand-mark" src="/lockedin-mark.png" alt="LockedIn Circle" />
+              <img className="drawer-brand-mark" src="/brand/lockedin-circle-mark.png" alt="LockedIn Circle" />
               <button aria-label="Close navigation" className="icon-button" onClick={() => setMenuOpen(false)} type="button"><X aria-hidden="true" size={18} /></button>
             </div>
             <nav className="drawer-nav">
@@ -3476,10 +3573,10 @@ export function App() {
             />
           </div>}
           <div className="discover-section-heading">
-            <div><h2>Group savings circles</h2><p>Live from the current testnet deployment.</p></div>
+            <div><h2>Group savings circles</h2><p>{import.meta.env.PROD ? "Save toward shared goals with your circle." : "Live from the current testnet deployment."}</p></div>
             <button aria-label="Refresh circles" className="icon-button" onClick={() => void refreshPublicGroups()} type="button" title="Refresh circles"><RefreshCw aria-hidden="true" size={17} /></button>
           </div>
-          {!publicGroupsSupported && deployment.status === "valid" && (
+          {!import.meta.env.PROD && !publicGroupsSupported && deployment.status === "valid" && (
             <details className="technical-details discovery-compatibility"><summary>Why some circles may be unavailable</summary><p>This test deployment predates open group joining. Existing invite-only circles can still appear, while public creation requires the updated contracts.</p></details>
           )}
           {publicGroupsError && publicGroupsStatus === "ready" && (
@@ -3795,7 +3892,7 @@ export function App() {
                   </button>
                 </section>
               )}
-              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>{quickTestMaturity ? "Quick-test maturity" : "Estimated maturity"}</span><strong>{quickTestMaturity ? new Date(maturity).toLocaleString() : estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? (quickTestMaturity ? "Test configuration · rebased immediately before wallet confirmation." : `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Testnet range: ${minimumMaturitySeconds / 60} minutes to 5 years.`)}</small></div></div>
+              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>{quickTestMaturity ? "Quick-test maturity" : "Estimated maturity"}</span><strong>{quickTestMaturity ? new Date(maturity).toLocaleString() : estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? (quickTestMaturity ? "Test configuration · rebased immediately before wallet confirmation." : `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`)}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -3946,6 +4043,39 @@ export function App() {
                         plan.preferredDays
                       )
                     : "Flexible contributions";
+                  if (!vault.isOriginalMember) {
+                    return (
+                      <button
+                        className={`purchased-claim-card ${vault.isGroup ? "group" : "personal"}`}
+                        key={`purchased-${vault.address}-${vault.positionId.toString()}`}
+                        onClick={() => {
+                          setVaultDetailTab("overview");
+                          setSnapshot(null);
+                          void openVault(vault.address, vault.positionId).catch((error) =>
+                            setTransaction({ status: "error", message: describeContractError(error) })
+                          );
+                        }}
+                        type="button"
+                      >
+                        <span className="purchased-claim-heading">
+                          <em>{vaultType(vault.isGroup)}</em>
+                          <strong>Purchased</strong>
+                          <code>#{vault.positionId.toString()}</code>
+                        </span>
+                        <span className="purchased-claim-icon" aria-hidden="true">
+                          <Wallet size={22} strokeWidth={1.5} />
+                        </span>
+                        <span className="purchased-claim-value">
+                          <small>Locked claim</small>
+                          <b>{Number(vault.currentValue).toFixed(2)}</b>
+                          <em>mUSDT</em>
+                        </span>
+                        <span className="purchased-claim-meta">
+                          {plan?.vaultName || (vault.isGroup ? "Group savings claim" : "Personal savings claim")} · matures {vault.maturity.toLocaleDateString()}
+                        </span>
+                      </button>
+                    );
+                  }
                   return (
                   <button
                     className={
@@ -4009,7 +4139,7 @@ export function App() {
                 <div className="sheet-grabber" />
                 <LoadingAnimation />
                 <strong>Opening your savings</strong>
-                <small>Reading the latest balance and position status from Polygon Amoy.</small>
+                <small>Reading the latest balance and position status from Polygon.</small>
                 <span className="skeleton-line wide" />
                 <span className="skeleton-line" />
                 <div className="skeleton-metrics"><i /><i /><i /><i /></div>
@@ -4037,6 +4167,11 @@ export function App() {
                           : "Earn · Aave V3"
                         : "Safe · no yield"}
                     </span>
+                    {snapshot.isGroup && (
+                      <span className={`tag circle-visibility ${snapshot.publicJoining ? "public" : "invite-only"}`}>
+                        {snapshot.publicJoining ? "Public" : "Invite only"}
+                      </span>
+                    )}
                     {!snapshot.isOriginalMember && snapshot.ownsLockedPosition && (
                       <span className="tag purchased">Purchased position</span>
                     )}
@@ -4133,12 +4268,20 @@ export function App() {
                     {snapshot.circleState === "ready" && <button className="primary" disabled={riskActionsDisabled} onClick={() => void transactAndRefresh("Activating circle…", () => activateGroup(requireSession().signer, snapshot.address), "Circle activated. Membership is now permanently fixed.")} type="button">Activate and freeze membership</button>}
                   </section>
                 )}
+                {snapshot.isGroup && snapshot.openEnrollment && snapshot.publicJoining && vaultDetailTab === "circle" && snapshot.groupLifecycle === "pending" && (
+                  <section className="circle-invitations-panel public-circle-panel">
+                    <div className="section-title"><div><span className="eyebrow">Public circle</span><h3>Members join directly</h3><p>This circle does not use private invitations. Other wallets can find it under Join circle and choose their own savings target before the join deadline.</p></div></div>
+                    {snapshot.enrollmentDeadline && snapshot.enrollmentDeadline.getTime() <= Date.now() && (
+                      <p className="field-error" role="status">The join deadline has passed, so this circle cannot accept more members.</p>
+                    )}
+                  </section>
+                )}
                 {snapshot.isGroup && snapshot.openEnrollment && !snapshot.publicJoining && vaultDetailTab === "circle" && snapshot.groupLifecycle === "pending" && evmSession?.address.toLowerCase() === snapshot.groupCreator.toLowerCase() && deployment.status === "valid" && supportsSecureInvitations(deployment.value.protocolVersion) && (
                   <section className="circle-invitations-panel">
                     <div className="section-title"><div><span className="eyebrow">Private circle</span><h3>Invitations</h3><p>Create a wallet-bound one-time invitation. Deposits remain disabled until the circle activates.</p></div></div>
                     <div className="invitation-create-grid">
                       <label><span>Username or Polygon wallet</span><input autoCapitalize="none" autoCorrect="off" onChange={(event) => { setInviteeAddress(event.target.value.trim()); setResolvedInvitee(null); }} placeholder="@username or 0x…" spellCheck={false} value={inviteeAddress} /></label>
-                      <label><span>Invitation expires</span><input max={snapshot.enrollmentDeadline?.toISOString().slice(0, 16)} min={futureInput(0)} onChange={(event) => setInviteExpiry(event.target.value)} type="datetime-local" value={inviteExpiry} /></label>
+                      <label><span>Invitation expires</span><input max={snapshot.enrollmentDeadline ? localDateTimeInput(snapshot.enrollmentDeadline) : undefined} min={futureInput(0)} onChange={(event) => setInviteExpiry(event.target.value)} type="datetime-local" value={inviteExpiry} /></label>
                     </div>
                     {resolvedInvitee && <div className="invitation-recipient-confirm"><strong>{resolvedInvitee.username ? `Inviting @${resolvedInvitee.username}` : "Inviting wallet"}</strong><span>{short(resolvedInvitee.walletAddress)}</span></div>}
                     <button className="primary compact" disabled={riskActionsDisabled || !inviteeAddress || !inviteExpiry} onClick={() => void createPrivateInvitation()} type="button">{resolvedInvitee ? "Create invitation" : "Verify recipient"}</button>
@@ -4311,7 +4454,7 @@ export function App() {
                   <div className="notice">
                     <strong>
                       {usesMockYieldAdapter
-                        ? "Simulated testnet yield position"
+                        ? (import.meta.env.PROD ? "Legacy yield position" : "Simulated testnet yield position")
                         : "Variable Aave position"}
                     </strong>
                     <span>
@@ -4471,8 +4614,18 @@ export function App() {
                       <div className="funding-action">
                         <div className="deposit-currency-heading">
                           <div><strong>Make a contribution</strong><small>Choose how you want to fund this savings goal.</small></div>
-                          <CurrencyToggle value={depositAsset} onChange={setDepositAsset} />
+                          <CurrencyToggle
+                            value={depositAsset}
+                            onChange={setDepositAsset}
+                            nimDisabled={!nimWithdrawalAvailable}
+                          />
                         </div>
+                        {!nimWithdrawalAvailable && (
+                          <div className="nim-coming-soon" role="note">
+                            <strong>Save with NIM</strong>
+                            <span>Coming soon. Native NIM-to-Polygon USDT conversion is not yet available.</span>
+                          </div>
+                        )}
                         {depositAsset === "usdt" ? (
                           <form
                     onSubmit={(event) => {
@@ -5348,10 +5501,11 @@ export function App() {
                 <div className="segmented" aria-label="Claim payment asset">
                   <button
                     className={purchaseAsset === "nim" ? "active" : ""}
+                    disabled={!nimWithdrawalAvailable}
                     onClick={() => setPurchaseAsset("nim")}
                     type="button"
                   >
-                    Pay with NIM
+                    Pay with NIM{!nimWithdrawalAvailable && " (coming soon)"}
                   </button>
                   <button
                     className={purchaseAsset === "usdt" ? "active" : ""}
@@ -5802,6 +5956,18 @@ export function App() {
             </span>
             <p>{transaction.message}</p>
           </div>
+          {transaction.status === "error" && transaction.recoverable && transaction.transactionHash && (
+            <div className="transaction-recovery-actions">
+              <button className="outline-action compact" onClick={() => void checkPendingTransactions()} type="button">
+                Check again
+              </button>
+              {explorerBaseUrl && (
+                <a className="outline-action compact" href={`${explorerBaseUrl}/tx/${transaction.transactionHash}`} rel="noreferrer" target="_blank">
+                  View on PolygonScan
+                </a>
+              )}
+            </div>
+          )}
           {transaction.status === "error" && evmSession && deployment.status === "valid" && errorCanRefreshData(transaction.message) && (
             <button
               className="outline-action compact"
@@ -5887,14 +6053,14 @@ export function App() {
           {createMenuOpen ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
         </button>
       </nav>
-      <aside className="testnet-banner" aria-label="Test deployment status">
+      {!import.meta.env.PROD && <aside className="testnet-banner" aria-label="Test deployment status">
         <span className="testnet-dot" aria-hidden="true" />
         <strong>Polygon Amoy</strong>
         <span>Mock USDT</span>
         <span>Simulated yield</span>
         <span>Unaudited test deployment</span>
         {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <span>10-minute test maturity</span>}
-      </aside>
+      </aside>}
     </main>
   );
 }
@@ -6449,7 +6615,7 @@ function ListingComposer({
   onExpiration,
   onSubmit,
 }: {
-  snapshot: Pick<VaultSnapshot, "isGroup">;
+  snapshot: Pick<ExitPositionSnapshot, "isGroup" | "maturity">;
   exitState: ExitListingSnapshot | null;
   expiration: string;
   claim: number;
@@ -6464,6 +6630,10 @@ function ListingComposer({
   const payoutValue = Number(minimumPayout);
   const formError = !Number.isFinite(expirationTime) || expirationTime <= Date.now()
     ? "Choose a listing expiration in the future."
+    : Date.now() >= snapshot.maturity.getTime()
+      ? "This savings position has matured. Withdraw the locked savings instead."
+      : expirationTime > snapshot.maturity.getTime()
+        ? "Choose an expiration no later than the savings maturity date."
     : !Number.isFinite(payoutValue) || payoutValue <= 0
       ? "Enter a minimum payout greater than zero."
       : payoutValue > claim

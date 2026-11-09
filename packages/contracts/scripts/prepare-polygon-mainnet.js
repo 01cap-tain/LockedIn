@@ -13,7 +13,7 @@ const required = (name) => {
   return value;
 };
 const rpcUrl = required("POLYGON_RPC_URL");
-const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS ?? 86_400);
+const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS ?? 25_200);
 assertProductionMaturityConfiguration({ chainId: 137, profile: "polygon-mainnet-production", minimumMaturityDuration });
 const safetyCouncil = getAddress(required("POLYGON_SAFETY_COUNCIL_ADDRESS"));
 const riskReserve = getAddress(required("POLYGON_RISK_RESERVE_ADDRESS"));

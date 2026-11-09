@@ -189,13 +189,18 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await market.positionSold(await vault.getAddress(), 0)).to.equal(false)
   })
 
-  it('fuzzes the 0.9% fee calculation while assigning the whole fee to maintenance', async function () {
+  it('fuzzes the 0.9% fee calculation and exact 60/20/20 allocation', async function () {
     const values = [1n, 2n, 10n, 111n, 112n, 999n, UNIT, 17n * UNIT, 999_999n * UNIT]
     for (let discount = 450; discount <= 800; discount += 7) {
       for (const positionValue of values) {
         const receipt = await market.payoutFor(positionValue, discount)
         const fee = await market.feeFor(receipt)
         expect(fee).to.equal(receipt * 90n / 10_000n)
+        const allocation = await market.feeAllocations(fee)
+        expect(allocation.rewardAllocation + allocation.riskAllocation + allocation.maintenanceAllocation)
+          .to.equal(fee)
+        expect(allocation.rewardAllocation).to.equal(fee * 6_000n / 10_000n)
+        expect(allocation.riskAllocation).to.equal(fee * 2_000n / 10_000n)
       }
     }
   })

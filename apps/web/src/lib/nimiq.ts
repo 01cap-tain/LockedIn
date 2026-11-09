@@ -29,8 +29,16 @@ export class WalletConnectionError extends Error {
 }
 
 export function getNimiqEnvironment(): NimiqEnvironment {
-  const network = getHostNetwork() ?? null
-  return { isNimiqPay: network !== null, network }
+  let network: string | null = null
+  try {
+    network = getHostNetwork() ?? null
+  } catch {
+    // Outside the host the SDK can be unavailable before provider injection.
+  }
+  const injected = typeof window !== 'undefined'
+    && Boolean((window as Window & { nimiq?: unknown }).nimiq)
+    && Boolean((window as Window & { ethereum?: unknown }).ethereum)
+  return { isNimiqPay: network !== null || injected, network }
 }
 
 export function describeWalletError(error: unknown): WalletConnectionError {

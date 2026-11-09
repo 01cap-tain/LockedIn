@@ -42,7 +42,7 @@ if (Number(networkIdentity.chainId) !== CHAIN_ID) throw new Error('The configure
 const feeData = await ethers.provider.getFeeData()
 const deploymentGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice
 if (!deploymentGasPrice) throw new Error('The Amoy RPC did not return a usable gas price.')
-const graphGasCeiling = 1_500_000n + 6_500_000n + 4_500_000n
+const graphGasCeiling = 1_500_000n + 6_500_000n + 2_500_000n + 4_500_000n
 const requiredBalance = graphGasCeiling * deploymentGasPrice
 const deployerBalance = await ethers.provider.getBalance(await deployer.getAddress())
 if (deployerBalance < requiredBalance) {
@@ -54,6 +54,7 @@ if (deployerBalance < requiredBalance) {
 }
 
 const maintenanceTreasury = requiredAddress(ethers, 'AMOY_MAINTENANCE_TREASURY_ADDRESS')
+const riskReserve = requiredAddress(ethers, 'AMOY_RISK_RESERVE_ADDRESS')
 const prerequisite = JSON.parse(await readFile(path.resolve(scriptDirectory, '../deployments/amoy-prerequisites.json'), 'utf8'))
 const tokenRecord = prerequisite.contracts.mockUsdt
 const token = await ethers.getContractAt('MockUSDT', tokenRecord.address)
@@ -67,6 +68,7 @@ const deployment = await deploySafeV1Graph({
   ethers,
   deployer,
   asset: tokenRecord.address,
+  riskReserve,
   maintenanceTreasury,
   safetyCouncil: await deployer.getAddress(), // testnet only
   chainId: CHAIN_ID,
@@ -100,7 +102,9 @@ const manifest = {
     rewardsEnabled: false,
     minimumMaturitySeconds: 600,
     testConfiguration: true,
-    feeDistribution: { maintenanceTreasuryBps: 10_000, rewardPoolBps: 0, riskReserveBps: 0 },
+    feeDistribution: { maintenanceTreasuryBps: 2_000, rewardPoolBps: 6_000, riskReserveBps: 2_000 },
+    rewardPool: deployment.records.rewardPool.address,
+    riskReserve,
     maintenanceTreasury,
     safety: {
       authority: await deployer.getAddress(),

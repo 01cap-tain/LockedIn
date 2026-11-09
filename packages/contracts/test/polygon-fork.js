@@ -33,12 +33,13 @@ forkDescribe('Polygon Aave configuration (optional fork)', function () {
 forkDescribe('Safe-only V1 against Polygon production USDT (optional fork)', function () {
   it('accepts the official six-decimal token and immutably disables Earn', async function () {
     const { ethers } = await network.create('polygonFork')
-    const [deployer, maintenance] = await ethers.getSigners()
+    const [deployer, riskReserve, maintenance] = await ethers.getSigners()
     const unit = 10n ** 6n
     const deployment = await deploySafeV1Graph({
       ethers,
       deployer,
       asset: polygonAaveConfig.usdt,
+      riskReserve: await riskReserve.getAddress(),
       maintenanceTreasury: await maintenance.getAddress(),
       safetyCouncil: await deployer.getAddress(),
       chainId: 137,
@@ -49,7 +50,7 @@ forkDescribe('Safe-only V1 against Polygon production USDT (optional fork)', fun
       minimumMaturityDuration: 24 * 60 * 60,
     })
     expect(await deployment.factory.asset()).to.equal(polygonAaveConfig.usdt)
-    expect(await deployment.factory.PROTOCOL_VERSION()).to.equal('lockedin-circle/1.3.0-safe')
+    expect(await deployment.factory.PROTOCOL_VERSION()).to.equal('lockedin-circle/1.4.0-safe')
     const latest = await ethers.provider.getBlock('latest')
     await expect(deployment.factory.createPersonalVault(
       100n * unit,

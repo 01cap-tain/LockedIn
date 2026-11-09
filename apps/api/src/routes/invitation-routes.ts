@@ -42,19 +42,42 @@ export async function registerInvitationRoutes(
 ): Promise<void> {
   const provider = new JsonRpcProvider(config.rpcUrl, config.manifest.chainId, { staticNetwork: true })
 
+  app.get('/api/profile', async (request) => {
+    const address = await wallet(request, auth)
+    const result = await pool.query(
+      'SELECT wallet_address, username FROM verified_wallet_profiles WHERE wallet_address = $1',
+      [address],
+    )
+    return result.rows[0] ?? { wallet_address: address, username: null }
+  })
+
   app.put('/api/profile/username', async (request) => {
     const address = await wallet(request, auth)
-    const body = z.object({ username: z.string().trim().min(3).max(24).regex(/^[A-Za-z0-9_]+$/) }).parse(request.body)
+    const body = z.object({ username: z.string().trim().max(24).refine(
+      (value) => value === '' || (value.length >= 3 && /^[A-Za-z0-9_]+$/.test(value)),
+      'Use 3-24 letters, numbers or underscores.',
+    ) }).parse(request.body)
+    if (body.username === '') {
+      await pool.query('DELETE FROM verified_wallet_profiles WHERE wallet_address = $1', [address])
+      return { wallet_address: address, username: '' }
+    }
     const normalized = body.username.toLowerCase()
-    const result = await pool.query(
-      `INSERT INTO verified_wallet_profiles (wallet_address, username, username_normalized)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (wallet_address) DO UPDATE SET username = EXCLUDED.username,
-         username_normalized = EXCLUDED.username_normalized, updated_at = now()
-       RETURNING wallet_address, username`,
-      [address, body.username, normalized],
-    )
-    return result.rows[0]
+    try {
+      const result = await pool.query(
+        `INSERT INTO verified_wallet_profiles (wallet_address, username, username_normalized)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (wallet_address) DO UPDATE SET username = EXCLUDED.username,
+           username_normalized = EXCLUDED.username_normalized, updated_at = now()
+         RETURNING wallet_address, username`,
+        [address, body.username, normalized],
+      )
+      return result.rows[0]
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+        throw Object.assign(new Error('That username is already registered to another wallet.'), { statusCode: 409 })
+      }
+      throw error
+    }
   })
 
   app.get('/api/profiles/resolve/:username', async (request) => {

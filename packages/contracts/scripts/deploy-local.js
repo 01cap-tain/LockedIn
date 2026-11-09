@@ -6,7 +6,7 @@ import { network } from 'hardhat'
 import { deploySafeV1Graph } from './deploy-safe-v1-graph.js'
 
 const { ethers } = await network.create('localhost')
-const [deployer, maintenanceTreasury] = await ethers.getSigners()
+const [deployer, riskReserve, maintenanceTreasury] = await ethers.getSigners()
 const token = await ethers.deployContract('MockUSDT')
 await token.waitForDeployment()
 const tokenTransaction = token.deploymentTransaction()
@@ -21,6 +21,7 @@ const deployment = await deploySafeV1Graph({
   ethers,
   deployer,
   asset: tokenRecord.address,
+  riskReserve: await riskReserve.getAddress(),
   maintenanceTreasury: await maintenanceTreasury.getAddress(),
   safetyCouncil: await deployer.getAddress(),
   chainId: 31_337,
@@ -50,7 +51,9 @@ const manifest = {
     vaultMode: 'Safe-only', earnEnabled: false, rewardsEnabled: false,
     minimumMaturitySeconds: 600, testConfiguration: true,
     maintenanceTreasury: await maintenanceTreasury.getAddress(),
-    feeDistribution: { maintenanceTreasuryBps: 10_000, rewardPoolBps: 0, riskReserveBps: 0 },
+    riskReserve: await riskReserve.getAddress(),
+    rewardPool: deployment.records.rewardPool.address,
+    feeDistribution: { maintenanceTreasuryBps: 2_000, rewardPoolBps: 6_000, riskReserveBps: 2_000 },
   },
 }
 const outputDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../deployments/local')
