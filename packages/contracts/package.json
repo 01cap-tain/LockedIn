@@ -19,7 +19,7 @@
     "deploy:amoy": "hardhat run scripts/deploy-amoy-v1.js --network amoy --no-compile",
     "verify:amoy": "hardhat run scripts/verify-amoy.js --network amoy --no-compile",
     "inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile",
-    "prepare:polygon": "node scripts/prepare-polygon-mainnet.js",
+    "prepare:polygon": "node scripts/prepare-polygon-safe-v1.js",
     "prepare:polygon:v1": "node scripts/prepare-polygon-safe-v1.js",
     "deploy:polygon:v1": "hardhat run scripts/deploy-polygon-v1.js --network polygon --no-compile"
   },

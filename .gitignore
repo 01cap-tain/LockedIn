@@ -4,9 +4,6 @@ coverage/
 .env
 .env.local
 .env.*
-!.env.example
-!.env.amoy.example
-!.env.polygon.example
 *.log
 .DS_Store
 .vite/
