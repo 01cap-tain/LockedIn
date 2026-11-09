@@ -41,7 +41,7 @@ const caps = {
   protocol: positive('POLYGON_MAX_PROTOCOL_PRINCIPAL'),
 }
 if (!(caps.position <= caps.vault && caps.vault <= caps.protocol)) throw new Error('Production caps are inconsistent.')
-if (caps.position > 1_000n * 10n ** 6n || caps.vault > 10_000n * 10n ** 6n || caps.protocol > 50_000n * 10n ** 6n) {
+if (caps.position > 5_000n * 10n ** 6n || caps.vault > 25_000n * 10n ** 6n || caps.protocol > 50_000n * 10n ** 6n) {
   throw new Error('Safe-only V1 caps exceed the reviewed launch ceilings.')
 }
 const token = new Contract(polygonAaveConfig.usdt, ['function decimals() view returns (uint8)'], provider)
