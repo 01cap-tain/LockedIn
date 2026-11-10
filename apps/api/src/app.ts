@@ -30,6 +30,14 @@ export async function buildApp(
     if (origin && config.corsOrigins.includes(origin)) {
       reply.header('Access-Control-Allow-Origin', origin)
       reply.header('Vary', 'Origin')
+      reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+      reply.header('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, OPTIONS')
+      reply.header('Access-Control-Max-Age', '600')
+    }
+    // Browser wallet authentication and profile updates use JSON plus an
+    // Authorization header, so they are preceded by an OPTIONS preflight.
+    if (request.method === 'OPTIONS') {
+      return reply.code(204).send()
     }
   })
 

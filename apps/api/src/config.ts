@@ -42,8 +42,12 @@ export interface DeploymentManifest {
     earlyExitMarket: { address: string; blockNumber: number }
     rewardPool?: { address: string; blockNumber: number }
     safetyController?: { address: string; blockNumber: number }
-    mockUsdt?: { address: string; blockNumber: number }
-    asset?: { address: string; blockNumber: number }
+    // Test deployments create their asset and include its deployment block.
+    // Production uses Polygon's existing USDT contract, which has no protocol
+    // deployment block in the LockedIn manifest.
+    mockUsdt?: { address: string; blockNumber?: number }
+    asset?: { address: string; blockNumber?: number }
+    usdt?: { address: string; blockNumber?: number }
   }
 }
 
@@ -88,9 +92,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     .map((value) => resolveManifestPath(value.trim()))
   const deployments = manifestPaths.map((manifestPath, index) => {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as DeploymentManifest
-    const asset = manifest.contracts.asset ?? manifest.contracts.mockUsdt
+    const asset = manifest.contracts.asset ?? manifest.contracts.usdt ?? manifest.contracts.mockUsdt
     if (!asset) throw new Error('Deployment manifest does not identify its asset contract.')
-    const required = [manifest.contracts.vaultFactory, manifest.contracts.earlyExitMarket, asset]
+    const required = [manifest.contracts.vaultFactory, manifest.contracts.earlyExitMarket]
     if (manifest.contracts.rewardPool) required.push(manifest.contracts.rewardPool)
     if (!Number.isSafeInteger(manifest.chainId) || manifest.chainId <= 0 || !manifest.deploymentId || !manifest.protocolVersion || !Number.isSafeInteger(manifest.deploymentBlock) || manifest.deploymentBlock < 0) {
       throw new Error('Deployment manifest has an invalid immutable identity.')
@@ -98,6 +102,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     for (const contract of required) {
       getAddress(contract.address)
       if (!Number.isSafeInteger(contract.blockNumber) || contract.blockNumber < 0) throw new Error('Deployment manifest has an invalid deployment block.')
+    }
+    getAddress(asset.address)
+    if (asset.blockNumber !== undefined && (!Number.isSafeInteger(asset.blockNumber) || asset.blockNumber < 0)) {
+      throw new Error('Deployment manifest has an invalid asset deployment block.')
     }
     return { manifestPath, manifest, deploymentBlock: manifest.deploymentBlock, active: index === manifestPaths.length - 1 }
   })
