@@ -21,6 +21,7 @@
     "inspect:amoy": "hardhat run scripts/inspect-deployment.js --network amoy --no-compile",
     "prepare:polygon": "node --env-file-if-exists=../../.env.polygon scripts/prepare-polygon-safe-v1.js",
     "prepare:polygon:v1": "node --env-file-if-exists=../../.env.polygon scripts/prepare-polygon-safe-v1.js",
+    "verify:polygon:v1": "node --env-file-if-exists=../../.env.polygon scripts/verify-polygon-deployment.js",
     "deploy:polygon:v1": "hardhat run scripts/deploy-polygon-v1.js --network polygon --no-compile"
   },
   "dependencies": {

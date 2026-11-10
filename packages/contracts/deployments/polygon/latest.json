@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 6,
+  "profile": "safe-only-v1",
+  "network": "polygon",
+  "chainId": 137,
+  "protocolVersion": "lockedin-circle/1.5.0-safe",
+  "deploymentId": "0xf4ad70b83fc30f14b76697488b85c7a2486ba0c4be631cb8c5cef0387cee76f4",
+  "deploymentBlock": 97068820,
+  "explorer": "https://polygonscan.com",
+  "gitCommit": "842b9585650f1ef66c86ee9a2f497d038e3ba159",
+  "deploymentTimestamp": "2026-11-10T11:04:50.683Z",
+  "tokenDecimals": 6,
+  "contracts": {
+    "usdt": {
+      "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+    },
+    "safetyController": {
+      "address": "0xC27daCfD0e08a3cB23845231f21fa30967EB1790",
+      "transactionHash": "0x520202e7df1e0a66efe0274b4db0028e0c0910be3eecf189b5f7c0fcbc6622fc",
+      "blockNumber": 97068813
+    },
+    "savingsVaultDeployer": {
+      "address": "0x4543eAce7ebB9343044fE94C493d27af1076dcCb",
+      "transactionHash": "0x3f8431731db97ff8da88c3989f04d04ff5f7ca81c406edbdd930a9b381458d9b",
+      "blockNumber": 97068816
+    },
+    "rewardPool": {
+      "address": "0xe9002BcAC27F07Cf79Cbd84D9cD5d00dB85EF18C",
+      "transactionHash": "0x91d7585238883fdf080d64da5d9f0f1aa96dc111eeefd18ced405b59e9afda3d",
+      "blockNumber": 97068818
+    },
+    "vaultFactory": {
+      "address": "0x3D0f94dD59dD085f1E22Cd82e4bD4f4677291dFE",
+      "transactionHash": "0x4a966872ff8882ab6a37a52a12ea03ee55c01c68fab4b3ca23b5b3317403f75b",
+      "blockNumber": 97068820
+    },
+    "earlyExitMarket": {
+      "address": "0x2141eD01031eE3aD32EaA0154Df2096238954064",
+      "transactionHash": "0x4a966872ff8882ab6a37a52a12ea03ee55c01c68fab4b3ca23b5b3317403f75b",
+      "blockNumber": 97068820
+    }
+  },
+  "constructorArguments": {
+    "safety": [
+      "0x3D0f94dD59dD085f1E22Cd82e4bD4f4677291dFE",
+      "0xC89bEa2d0229e8C4A00Cb126a1743e9B88b28b0f",
+      86400,
+      "5000000000",
+      "25000000000",
+      "50000000000"
+    ],
+    "vaultDeployer": [
+      "0x3D0f94dD59dD085f1E22Cd82e4bD4f4677291dFE"
+    ],
+    "rewardPool": [
+      "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+      "0x3D0f94dD59dD085f1E22Cd82e4bD4f4677291dFE",
+      2592000,
+      259200,
+      "10000000",
+      25200
+    ],
+    "factory": [
+      "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+      "0xe9002BcAC27F07Cf79Cbd84D9cD5d00dB85EF18C",
+      "0x9A7552135dF13b38C6AB70e5b539d61D2E0673a5",
+      "0x9A7552135dF13b38C6AB70e5b539d61D2E0673a5",
+      137,
+      "0x4543eAce7ebB9343044fE94C493d27af1076dcCb",
+      "0xC27daCfD0e08a3cB23845231f21fa30967EB1790",
+      25200
+    ]
+  },
+  "factoryConfiguration": {
+    "savingsVaultDeployment": "non-upgradeable-per-vault",
+    "vaultMode": "Safe-only",
+    "earnEnabled": false,
+    "rewardsEnabled": false,
+    "minimumMaturitySeconds": 25200,
+    "testConfiguration": false,
+    "feeDistribution": {
+      "rewardPoolBps": 0,
+      "riskReserveBps": 0,
+      "maintenanceTreasuryBps": 10000
+    },
+    "rewardPool": "0xe9002BcAC27F07Cf79Cbd84D9cD5d00dB85EF18C",
+    "riskReserve": "0x9A7552135dF13b38C6AB70e5b539d61D2E0673a5",
+    "maintenanceTreasury": "0x9A7552135dF13b38C6AB70e5b539d61D2E0673a5",
+    "safety": {
+      "authority": "0xC89bEa2d0229e8C4A00Cb126a1743e9B88b28b0f",
+      "authorityType": "reviewed-production-authority",
+      "timelockSeconds": 86400,
+      "maxPositionPrincipal": "5000000000",
+      "maxVaultPrincipal": "25000000000",
+      "maxProtocolPrincipal": "50000000000"
+    }
+  }
+}
