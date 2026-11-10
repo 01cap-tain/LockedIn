@@ -3440,7 +3440,7 @@ export function App() {
       {/* Home and the public Exit Market remain useful before wallet connection. */}
       {(route === "discover" || route === "explore-circles") && (
         <section className={`route-page discover-page ${route === "explore-circles" ? "available-circles-page" : ""}`}>
-          {walletAccessReady && route === "discover" ? (
+          {route === "discover" ? (
             <div className="savings-home">
               <section
                 aria-label="Savings summary"
