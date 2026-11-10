@@ -88,6 +88,15 @@ import { LoadingAnimation } from "./components/LoadingAnimation";
 import { WheelDatePicker } from "./components/WheelDatePicker";
 import { SavingsLockAnimation } from "./components/SavingsLockAnimation";
 import {
+  allocationAmounts,
+  EmergencyAllocationSlider,
+  nextPersonalCreationStep,
+  personalCreationStepReady,
+  PersonalVaultReview,
+  VaultModePreview,
+  WizardProgressRing,
+} from "./components/PersonalVaultWizardControls";
+import {
   calculatePlanProjection,
   calculateSavingsPace,
   estimatePlanMaturity,
@@ -465,6 +474,21 @@ function amountLabel(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatPlanDate(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "Choose a schedule";
+  const datePart = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+  const timePart = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `${datePart} · ${timePart}`;
+}
+
 function displayBalance(value: string | null, maximumFractionDigits = 2): string {
   if (value === null) return "—";
   const numeric = Number(value);
@@ -674,35 +698,20 @@ function WalletIdenticon({ address }: { address: string }) {
   );
 }
 
-function TrustSummary({ earn = false }: { earn?: boolean }) {
+function TrustSummary({ earn = false, creation = false }: { earn?: boolean; creation?: boolean }) {
   return (
     <aside className="trust-summary" aria-label="How your savings are protected">
       <LockKeyhole aria-hidden="true" size={17} />
       <div>
-        <strong>Your funds follow the rules you choose.</strong>
+        <strong>{creation ? "LockedIn cannot take your savings." : "Your funds follow the rules you choose."}</strong>
         <span>
-          LockedIn cannot take your savings. Your emergency amount stays available.
+          {creation
+            ? "Your emergency portion remains available. The rest stays locked until maturity or an early exit."
+            : "LockedIn cannot take your savings. Your emergency amount stays available."}
           {earn ? " Earn returns can change and are not guaranteed." : ""}
         </span>
       </div>
     </aside>
-  );
-}
-
-/** Keeps the V2 mode visible without exposing an executable Earn path in V1. */
-function VaultModePreview() {
-  return (
-    <fieldset className="mode-picker embedded vault-mode-preview">
-      <legend>How should locked savings be held?</legend>
-      <button aria-pressed="true" className="active" type="button">
-        <strong>Safe</strong>
-        <span>No yield. Locked savings remain in the vault.</span>
-      </button>
-      <button aria-disabled="true" className="coming-soon-mode" disabled type="button">
-        <strong>Earn <small>Coming soon</small></strong>
-        <span>A future V2 option. It cannot be selected or created today.</span>
-      </button>
-    </fieldset>
   );
 }
 
@@ -962,6 +971,7 @@ export function App() {
   });
   const [mode, setMode] = useState<"personal" | "group">("personal");
   const [creationStep, setCreationStep] = useState(0);
+  const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
   const yieldMode = "safe" as const;
   const [createdVaultReceipt, setCreatedVaultReceipt] =
     useState<CreatedVaultReceipt | null>(null);
@@ -1267,11 +1277,15 @@ export function App() {
       if (creationStep === 3) return Boolean(estimatedMaturity) && !maturityValidationError;
       return true;
     }
-    if (creationStep === 1) return Number(planContribution) > 0;
-    if (creationStep === 2) return Boolean(estimatedMaturity) && !maturityValidationError;
-    if (creationStep === 3) return true;
-    return true;
+    return personalCreationStepReady({
+      step: creationStep,
+      target: Number(target),
+      contribution: Number(planContribution),
+      hasEstimatedMaturity: Boolean(estimatedMaturity),
+      maturityError: maturityValidationError,
+    });
   })();
+  const personalAllocation = allocationAmounts(Number(target), emergencyPercent);
   const joinPlanProjection = useMemo(
     () => calculatePlanProjection({
       target: Number(joinTarget),
@@ -3754,11 +3768,13 @@ export function App() {
                 <MoveLeft aria-hidden="true" size={21} />
               </button>
               <div>
-                <h2>{creationStepTitles[creationStep]}</h2>
+                <h2>{mode === "personal" && creationStep === 4 ? "Review your vault" : creationStepTitles[creationStep] ?? "Review"}</h2>
               </div>
-              <div className="wizard-progress" aria-label={`Step ${creationStep + 1} of ${creationStepTitles.length}`}>
-                {creationStepTitles.map((title, index) => <i className={index === creationStep ? "active" : ""} key={title} />)}
-              </div>
+              <WizardProgressRing
+                step={creationStep}
+                stepTitle={creationStepTitles[creationStep] ?? "Review"}
+                totalSteps={creationStepTitles.length}
+              />
             </div>
             <form className="form-grid creation-step-frame" key={`${mode}-${creationStep}`} onSubmit={createVaultSubmit}>
               {creationStep === 0 && <fieldset className="creation-section full-width">
@@ -3874,7 +3890,7 @@ export function App() {
                   <option value="monthly">Once a month</option>
                   <option value="custom">Flexible days</option>
                 </select>
-                <small>For weekly plans, the contribution amount applies on every chosen day.</small>
+                {planFrequency === "weekly" && <small>For weekly plans, the contribution amount applies on every chosen day.</small>}
               </label>
                 </div>
               {(planFrequency === "weekly" || planFrequency === "custom") && (
@@ -3907,9 +3923,9 @@ export function App() {
                 </fieldset>
               )}
               <p className="frequency-explainer full-width">
-                {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
+                {amountLabel(Number(planContribution) || 0)} USDT {planFrequency === "daily" ? "daily" : planFrequency === "monthly" ? "monthly" : planFrequency === "weekly" ? "on each chosen day" : "on your chosen days"} · {planProjection.contributionsNeeded ?? 0} contributions
               </p>
-              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`}</small></div></div>
+              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Target date</span><strong>{estimatedMaturity ? formatPlanDate(estimatedMaturity) : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
@@ -3919,19 +3935,10 @@ export function App() {
                   </div>
                 </div>
                 <dl>
-                  <div><dt>Planned total</dt><dd>{hasContributionPlan ? `${amountLabel(planProjection.plannedTotal)} mUSDT` : "Add an amount"}</dd></div>
-                  <div><dt>Required each period</dt><dd>{amountLabel(planProjection.requiredPerPeriod)} mUSDT</dd></div>
-                  <div><dt>Estimated completion</dt><dd>{planProjection.estimatedCompletionDate ? planProjection.estimatedCompletionDate.toLocaleDateString() : "Not reached by maturity"}</dd></div>
+                  <div><dt>Planned total</dt><dd>{hasContributionPlan ? `${amountLabel(planProjection.plannedTotal)} USDT` : "Add an amount"}</dd></div>
+                  <div><dt>Each contribution</dt><dd>{hasContributionPlan ? `${amountLabel(Number(planContribution))} USDT` : "Add an amount"}</dd></div>
+                  <div><dt>Target date</dt><dd>{estimatedMaturity ? formatPlanDate(estimatedMaturity) : "Not available"}</dd></div>
                 </dl>
-                {hasContributionPlan && (
-                  <small className="plan-calculation-note">
-                    {planProjection.contributionsNeeded === null
-                      ? `${planProjection.plannedPeriods} contribution dates are available before maturity.`
-                      : `${planProjection.contributionsNeeded} contributions reach the goal; ${planProjection.plannedPeriods} contribution dates are available before maturity.`}
-                    {planProjection.scheduledCapacity > planProjection.plannedTotal &&
-                      ` The schedule could hold ${amountLabel(planProjection.scheduledCapacity)} mUSDT, but planned savings stop at your ${amountLabel(planProjection.plannedTotal)} mUSDT goal.`}
-                  </small>
-                )}
                 {hasContributionPlan && !planProjection.sufficient && (
                   <p>
                     This plan may not reach the target in time. Increase the contribution amount or frequency; you can still save whenever possible.
@@ -3943,8 +3950,8 @@ export function App() {
               {creationStep === (mode === "group" ? 4 : 3) && <fieldset className="creation-section full-width progressive-section">
                 <legend>{mode === "group" ? <CircleCheckBig aria-hidden="true" size={15} /> : <LockKeyhole aria-hidden="true" size={15} />}{mode === "group" ? "Review and create" : "Vault protection"}</legend>
                 {mode === "personal" && <VaultModePreview />}
-                {mode === "personal" && <label className="range-field"><span>Emergency allocation <strong>{emergencyPercent}%</strong></span><input max="15" min="10" onChange={(event) => setEmergencyPercent(Number(event.target.value))} type="range" value={emergencyPercent} /><small>This portion remains available anytime. The remainder is locked until maturity or transferred through an early exit.</small></label>}
-                <TrustSummary />
+                {mode === "personal" && <EmergencyAllocationSlider goal={Number(target)} value={emergencyPercent} onChange={setEmergencyPercent} formatAmount={amountLabel} />}
+                <TrustSummary creation={mode === "personal"} />
                 {mode === "group" && <dl className="creation-review">
                   <div><dt>Circle</dt><dd>{vaultName || "Name required"} · {groupVisibility}</dd></div>
                   <div><dt>Shared rules</dt><dd>Safe · matures {new Date(maturity).toLocaleString()} · max {maxParticipants}</dd></div>
@@ -3954,15 +3961,20 @@ export function App() {
                 </dl>}
               </fieldset>}
               {mode === "personal" && creationStep === 4 && <fieldset className="creation-section full-width progressive-section">
-                <legend><CircleCheckBig aria-hidden="true" size={15} />Review</legend>
-                <dl className="creation-review">
-                  <div><dt>Goal</dt><dd>{target} mUSDT{vaultName ? ` for ${vaultName}` : ""}</dd></div>
-                  <div><dt>Schedule</dt><dd>{planContribution || "Flexible"} mUSDT · {planFrequency}</dd></div>
-                  <div><dt>Maturity</dt><dd>{new Date(maturity).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</dd></div>
-                  <div><dt>Emergency allocation</dt><dd>{emergencyPercent}% emergency · {100 - emergencyPercent}% locked</dd></div>
-                  <div><dt>Mode</dt><dd>Safe · no yield or reward campaign</dd></div>
-                  <div><dt>Estimated outcome</dt><dd>{planProjection.sufficient ? `Target by ${planProjection.estimatedCompletionDate?.toLocaleDateString() ?? "maturity"}` : "Plan is currently below the required pace"}</dd></div>
-                </dl>
+                <legend><CircleCheckBig aria-hidden="true" size={15} />Final details</legend>
+                <PersonalVaultReview
+                  onEdit={(step) => {
+                    setReturnToReviewAfterEdit(true);
+                    setCreationStep(step);
+                  }}
+                  rows={[
+                    { label: "Goal", value: `${vaultName || "Personal savings"} · ${amountLabel(Number(target))} USDT`, step: 0 },
+                    { label: "Schedule", value: `${amountLabel(Number(planContribution))} USDT · ${planFrequency}`, step: 1 },
+                    { label: "Target date", value: formatPlanDate(maturity), step: 2 },
+                    { label: "Allocation", value: `${amountLabel(personalAllocation.emergencyAmount)} USDT available · ${amountLabel(personalAllocation.lockedAmount)} USDT locked`, step: 3 },
+                    { label: "Protection", value: "Safe vault", step: 3 },
+                  ]}
+                />
               </fieldset>}
               {creationStep === 4 && mode === "group" && groupCreationBlockReason && (
                 <div className="notice warning-notice full-width" role="status">
@@ -3972,10 +3984,17 @@ export function App() {
               )}
               {creationStep < 4 && <div className="wizard-next-row full-width">
                 <button
-                  aria-label="Continue to next step"
+                  aria-label={returnToReviewAfterEdit ? "Continue to Review" : `Continue to ${creationStepTitles[creationStep + 1] ?? "Review"}`}
                   className="wizard-next"
                   disabled={!creationStepReady}
-                  onClick={() => setCreationStep((step) => Math.min(4, step + 1))}
+                  onClick={() => {
+                    if (returnToReviewAfterEdit) {
+                      setCreationStep(4);
+                      setReturnToReviewAfterEdit(false);
+                      return;
+                    }
+                    setCreationStep((step) => nextPersonalCreationStep(step, false));
+                  }}
                   type="button"
                 >
                   <MoveRight aria-hidden="true" size={23} />

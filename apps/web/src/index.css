@@ -13569,6 +13569,292 @@ svg.lucide {
   line-height: 1.15 !important;
 }
 
+/* Personal-vault creation refinement. Financial calculations and submission
+   remain in the existing wizard; these styles only improve its controls. */
+.wizard-progress-ring {
+  width: 40px;
+  height: 40px;
+  justify-self: end;
+}
+
+.wizard-progress-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.wizard-progress-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+
+.wizard-progress-ring-track { stroke: #3d423d; }
+
+.wizard-progress-ring-value {
+  stroke: #f4c84a;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 280ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.creation-wizard .creation-section > legend {
+  max-width: calc(100% - 16px);
+  color: #d1cbbd;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.creation-wizard .vault-mode-preview {
+  gap: 9px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.creation-wizard .vault-mode-preview button {
+  min-height: 88px;
+  border: 1px solid #44483f;
+  border-radius: 16px;
+  padding: 13px;
+  text-align: left;
+  background: #171a17;
+}
+
+.creation-wizard .vault-mode-preview button strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #f5f2e9;
+  font-size: 14px;
+}
+
+.creation-wizard .vault-mode-preview button span {
+  color: #bdb8aa;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.creation-wizard .vault-mode-preview button.active {
+  border-color: #d6a944;
+  color: #f5f2e9;
+  background: linear-gradient(145deg, rgba(214, 169, 68, .13), rgba(30, 31, 25, .94));
+  box-shadow: 0 0 0 3px rgba(214, 169, 68, .07);
+}
+
+.creation-wizard .vault-mode-preview button.active span { color: #c8c3b4; }
+.creation-wizard .vault-mode-preview button.active svg { color: #f4c84a; }
+
+.creation-wizard .vault-mode-preview .coming-soon-mode {
+  cursor: not-allowed;
+  border-color: #3b403b;
+  opacity: 1;
+  background: #141714;
+}
+
+.creation-wizard .vault-mode-preview .coming-soon-mode strong { color: #d8d4ca; }
+.creation-wizard .vault-mode-preview .coming-soon-mode span { color: #a9aea8; }
+.creation-wizard .vault-mode-preview .coming-soon-mode small {
+  border-radius: 999px;
+  padding: 3px 6px;
+  color: #b9bcb5;
+  background: #2a2e2a;
+  font-size: 8px;
+  letter-spacing: .06em;
+}
+
+.allocation-control {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  border-top: 1px solid rgba(245, 242, 233, .08);
+  padding-top: 16px;
+}
+
+.allocation-control-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #c8c3b4;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.allocation-control-heading strong { color: #f4c84a; font-size: 14px; }
+
+.allocation-slider {
+  position: relative;
+  display: flex;
+  height: 58px;
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+}
+
+.allocation-slider-track {
+  position: relative;
+  height: 5px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #30342f;
+}
+
+.allocation-slider-range { position: absolute; height: 100%; background: #d6a944; }
+
+.allocation-slider-thumb {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  outline: none;
+}
+
+.allocation-slider-thumb::after {
+  width: 22px;
+  height: 22px;
+  border: 2px solid #d6a944;
+  border-radius: 50%;
+  background: #f5f2e9;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .38);
+  content: "";
+}
+
+.allocation-slider-thumb:focus-visible::after {
+  box-shadow: 0 0 0 5px rgba(244, 200, 74, .18), 0 0 18px rgba(244, 200, 74, .26);
+}
+
+.allocation-slider-value {
+  position: absolute;
+  bottom: calc(100% - 5px);
+  left: 50%;
+  border: 1px solid rgba(214, 169, 68, .38);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: #f5f2e9;
+  background: #29271d;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.allocation-slider-endpoints,
+.allocation-amounts {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.allocation-slider-endpoints {
+  margin-top: -12px;
+  color: #9fa49e;
+  font-size: 10px;
+}
+
+.allocation-amounts {
+  margin-top: 6px;
+  border-radius: 14px;
+  padding: 11px 12px;
+  color: #b8b7af;
+  background: rgba(245, 242, 233, .045);
+  font-size: 11px;
+}
+
+.allocation-amounts span { display: grid; gap: 2px; }
+.allocation-amounts span:last-child { text-align: right; }
+.allocation-amounts strong { color: #f5f2e9; font-size: 12px; }
+
+.creation-wizard .estimated-date {
+  min-height: 96px;
+  border-radius: 20px;
+  padding: 15px;
+}
+
+.creation-wizard .estimated-date strong {
+  overflow-wrap: anywhere;
+  font-size: 15px !important;
+}
+
+.creation-wizard .plan-preview { gap: 9px; padding: 12px 14px; }
+.creation-wizard .plan-preview dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.creation-wizard .plan-preview dl > div {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid rgba(245, 242, 233, .07);
+  border-radius: 0;
+  padding: 9px 0;
+  background: transparent;
+}
+.creation-wizard .plan-preview dl > div:last-child { border-bottom: 0; }
+.creation-wizard .plan-preview dd { max-width: 62%; text-align: right; overflow-wrap: anywhere; }
+
+.personal-review { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.personal-review > div {
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(245, 242, 233, .08);
+  border-radius: 0;
+  padding: 12px 0;
+  background: transparent;
+}
+.personal-review > div:last-child { border-bottom: 0; }
+.personal-review dd { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
+.personal-review dd span { min-width: 0; overflow-wrap: anywhere; }
+.personal-review button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  padding: 0 6px;
+  color: #f4c84a;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.review-trust {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 10px 0 0;
+  color: #c8c3b4;
+  font-size: 11px;
+}
+.review-trust svg { flex: 0 0 auto; color: #f4c84a; }
+
+.creation-wizard .wizard-next-row {
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 4;
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+.creation-wizard .creation-step-frame {
+  padding-bottom: calc(108px + env(safe-area-inset-bottom));
+  overflow-x: clip;
+}
+
+@media (max-width: 430px) {
+  .creation-wizard .creation-section { padding: 16px; }
+  .creation-wizard .vault-mode-preview { grid-template-columns: minmax(0, 1fr); }
+  .creation-wizard .vault-mode-preview button { min-height: 76px; }
+  .allocation-amounts { align-items: flex-start; flex-direction: column; }
+  .allocation-amounts span:last-child { text-align: left; }
+  .personal-review > div { grid-template-columns: 72px minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-progress-ring-value { transition: none; }
+}
+
 /* Completed exits use a single compact receipt surface. The exact canonical
    values remain available in the native disclosure below the summary. */
 .trade-receipt.saver-receipt,
