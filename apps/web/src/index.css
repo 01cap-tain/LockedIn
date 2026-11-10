@@ -9450,30 +9450,6 @@ select:disabled {
   color: #9ba19b;
 }
 
-.nimiq-pay-required {
-  display: grid;
-  min-height: 100dvh;
-  padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
-  place-items: center;
-  color: #f5f2e9;
-  background: #111411;
-}
-
-.nimiq-pay-required section {
-  display: grid;
-  width: min(100%, 390px);
-  gap: 14px;
-  padding: 26px;
-  border: 1px solid rgba(244, 200, 74, .24);
-  border-radius: 24px;
-  background: linear-gradient(145deg, #1a1e1b, #24251b);
-}
-
-.nimiq-pay-required section > svg { color: #f4c84a; }
-.nimiq-pay-required h1 { margin: 0; color: #f5f2e9; font-size: clamp(28px, 8vw, 38px); }
-.nimiq-pay-required p { margin: 0; color: #c8c3b4; line-height: 1.55; }
-.nimiq-pay-required a.primary { display: flex; min-height: 48px; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
-
 .transaction-recovery-actions {
   display: flex;
   flex-wrap: wrap;
@@ -12132,6 +12108,61 @@ svg.lucide {
   border-color: rgba(40, 122, 83, .42) !important;
   color: #111411 !important;
   background: rgba(213, 240, 224, .72) !important;
+}
+
+.nimiq-pay-handoff {
+  display: grid;
+  gap: 12px;
+}
+
+.nimiq-pay-handoff > a.primary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #111411 !important;
+  text-decoration: none;
+}
+
+.nimiq-pay-install-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.nimiq-pay-install-links > a {
+  display: grid;
+  min-height: 52px;
+  align-content: center;
+  padding: 8px 12px;
+  border: 1px solid rgba(17, 20, 17, .24);
+  border-radius: 13px;
+  color: #111411;
+  background: rgba(255, 253, 247, .6);
+  text-decoration: none;
+}
+
+.nimiq-pay-install-links > a:hover {
+  border-color: rgba(17, 20, 17, .48);
+  background: rgba(255, 253, 247, .8);
+}
+
+.nimiq-pay-install-links span {
+  color: #4b4f49;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.nimiq-pay-install-links strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+@media (max-width: 340px) {
+  .nimiq-pay-install-links {
+    grid-template-columns: 1fr;
+  }
 }
 
 .connection-sheet .connection-row > span {
@@ -15093,4 +15124,27 @@ svg.lucide {
 
 @media (prefers-reduced-motion: reduce) {
   .savings-home .home-summary.interactive-tilt { transition: none; }
+}
+
+/* Make the global savings action easy to find without changing its behaviour. */
+.bottom-nav > .bottom-create-button,
+.bottom-create-button,
+.bottom-nav > .bottom-create-button:hover:not(:disabled),
+.bottom-create-button:hover:not(:disabled) {
+  width: 64px !important;
+  min-width: 64px !important;
+  height: 64px !important;
+  border: 2px solid rgba(255, 240, 171, .88) !important;
+  color: #17160d !important;
+  background: #f4c84a !important;
+  background-color: #f4c84a !important;
+  box-shadow: 0 0 0 6px rgba(244, 200, 74, .14), 0 16px 40px rgba(0, 0, 0, .48) !important;
+}
+
+.bottom-create-button svg,
+.bottom-nav > .bottom-create-button svg {
+  width: 28px !important;
+  height: 28px !important;
+  color: #17160d !important;
+  stroke-width: 2.6 !important;
 }

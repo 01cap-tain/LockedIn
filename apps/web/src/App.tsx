@@ -165,7 +165,6 @@ import {
   Plus,
   Plane,
   RefreshCw,
-  ShieldCheck,
   Target,
   TrendingUp,
   Trophy,
@@ -924,21 +923,6 @@ function FirstLoadGate({ stage, onUnlock }: { stage: EntryStage; onUnlock: () =>
   );
 }
 
-function NimiqPayRequiredScreen() {
-  const openUrl = `https://nimpay.app/miniapps/open/${window.location.host}`;
-  return (
-    <main className="nimiq-pay-required">
-      <section>
-        <ShieldCheck aria-hidden="true" size={28} strokeWidth={1.5} />
-        <span className="eyebrow">LockedIn Circle</span>
-        <h1>Open in Nimiq Pay</h1>
-        <p>LockedIn Circle uses Nimiq Pay's protected wallet providers for savings actions. Open this Mini App inside Nimiq Pay to continue.</p>
-        <a className="primary" href={openUrl}>Open in Nimiq Pay <ArrowUpRight size={20} strokeWidth={1.5} /></a>
-      </section>
-    </main>
-  );
-}
-
 export function App() {
   const [entryStage, setEntryStage] = useState<EntryStage>("locked");
   const networkName = import.meta.env.VITE_NETWORK_NAME ?? "Local Hardhat";
@@ -954,6 +938,9 @@ export function App() {
   const developmentFallbackEnabled =
     import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === "true";
   const deploymentReady = import.meta.env.VITE_DEPLOYMENT_READY !== "false";
+  const isNimiqPayEnvironment = getNimiqEnvironment().isNimiqPay;
+  const requiresNimiqPayHandoff = import.meta.env.PROD && !isNimiqPayEnvironment;
+  const openInNimiqPayUrl = `https://nimpay.app/miniapps/open/${window.location.host}`;
   // Production access requires both identities: Nimiq for the Mini App user
   // and Polygon for ownership and contract signatures.
   const nimiqConnectionRequired = true;
@@ -1135,10 +1122,10 @@ export function App() {
   }
 
   useEffect(() => {
-    if (entryStage === "ready" && !walletAccessReady) {
+    if (entryStage === "ready" && !walletAccessReady && isNimiqPayEnvironment) {
       setConnectionSheetOpen(true);
     }
-  }, [entryStage, walletAccessReady]);
+  }, [entryStage, isNimiqPayEnvironment, walletAccessReady]);
   const polygonSwapNetwork = evmSession?.chainId === "0x13882"
     ? "polygon-amoy" as const
     : evmSession?.chainId === "0x7a69"
@@ -2959,10 +2946,6 @@ export function App() {
               ? "Loading savings circles…"
               : "Checking the deployment…";
 
-  if (import.meta.env.PROD && !getNimiqEnvironment().isNimiqPay) {
-    return <NimiqPayRequiredScreen />;
-  }
-
   if (entryStage !== "ready") {
     return <FirstLoadGate stage={entryStage} onUnlock={() => setEntryStage("locking")} />;
   }
@@ -3283,19 +3266,38 @@ export function App() {
           <section className="connection-sheet" role="dialog" aria-modal="true" aria-label="Connect wallets">
             <div className="sheet-grabber" />
             <span className="eyebrow">Wallet</span>
-            <h2>Connect to continue</h2>
-            <p>Connect both wallets. Nimiq identifies you in the Mini App, while Polygon holds and signs for your savings.</p>
-            <button className={evmSession ? "connection-row complete" : "connection-row"} disabled={evm.status === "connecting" || Boolean(evmSession)} onClick={() => void connectEvm()} type="button">
-              <span><WalletCards aria-hidden="true" size={17} /></span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
-            </button>
-            <button className={nimiqWallet ? "connection-row complete optional" : "connection-row optional"} disabled={nimiq.status === "connecting" || Boolean(nimiqWallet)} onClick={() => void connectNimiq()} type="button">
-              <span><CircleDollarSign aria-hidden="true" size={17} /></span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Required to continue"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
-            </button>
-            {developmentFallbackEnabled && !evmSession && (
-              <button className="secondary full-width" disabled={evm.status === "connecting"} onClick={() => void connectEvm(0)} type="button">
-                Use local test account
-              </button>
-            )}
+            <h2>{requiresNimiqPayHandoff ? "Continue in Nimiq Pay" : "Connect to continue"}</h2>
+            <p>{requiresNimiqPayHandoff
+              ? "You can explore LockedIn Circle in this browser. To connect wallets or make a savings transaction, open this Mini App in Nimiq Pay."
+              : "Connect both wallets. Nimiq identifies you in the Mini App, while Polygon holds and signs for your savings."}</p>
+            {requiresNimiqPayHandoff ? (
+              <div className="nimiq-pay-handoff">
+                <a className="primary full-width" href={openInNimiqPayUrl}>
+                  Open in Nimiq Pay <ArrowUpRight aria-hidden="true" size={20} strokeWidth={1.5} />
+                </a>
+                <div className="nimiq-pay-install-links" aria-label="Download Nimiq Pay">
+                  <a href="https://apps.apple.com/us/app/nimiq-pay/id6471844738" rel="noreferrer" target="_blank">
+                    <span>Download on</span><strong>App Store</strong>
+                  </a>
+                  <a href="https://play.google.com/store/apps/details?id=com.nimiq.pay" rel="noreferrer" target="_blank">
+                    <span>Get it on</span><strong>Google Play</strong>
+                  </a>
+                </div>
+                <small className="connection-note">Already installed? Use "Open in Nimiq Pay" to return to this Mini App.</small>
+              </div>
+            ) : (
+              <>
+                <button className={evmSession ? "connection-row complete" : "connection-row"} disabled={evm.status === "connecting" || Boolean(evmSession)} onClick={() => void connectEvm()} type="button">
+                  <span><WalletCards aria-hidden="true" size={17} /></span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+                </button>
+                <button className={nimiqWallet ? "connection-row complete optional" : "connection-row optional"} disabled={nimiq.status === "connecting" || Boolean(nimiqWallet)} onClick={() => void connectNimiq()} type="button">
+                  <span><CircleDollarSign aria-hidden="true" size={17} /></span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Required to continue"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+                </button>
+                {developmentFallbackEnabled && !evmSession && (
+                  <button className="secondary full-width" disabled={evm.status === "connecting"} onClick={() => void connectEvm(0)} type="button">
+                    Use local test account
+                  </button>
+                )}
             {pendingGroup && !pendingGroup.publicJoining && !secureInvitation && (
               <section className="private-invite-entry">
                 <strong>Enter invite code</strong>
@@ -3349,6 +3351,8 @@ export function App() {
                     : "Continue"}
             </button>
             {pendingGroup && !pendingGroup.publicJoining && <small className="connection-note">The contract verifies the circle, invited wallet, expiry and one-time code before admitting membership.</small>}
+              </>
+            )}
           </section>
         </div>
       )}
@@ -6038,7 +6042,9 @@ export function App() {
           <button className={route === "market" ? "active" : ""} onClick={() => navigate("market")} type="button"><ArrowUpDown aria-hidden="true" strokeWidth={1.6} />Exits</button>
         </div>
         <button aria-expanded={createMenuOpen} aria-label={createMenuOpen ? "Close create menu" : "Create savings"} className="bottom-create-button" onClick={() => setCreateMenuOpen((open) => !open)} type="button">
-          {createMenuOpen ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+          {createMenuOpen
+            ? <X aria-hidden="true" size={28} strokeWidth={2.6} />
+            : <Plus aria-hidden="true" size={28} strokeWidth={2.6} />}
         </button>
       </nav>
       {!import.meta.env.PROD && <aside className="testnet-banner" aria-label="Test deployment status">
