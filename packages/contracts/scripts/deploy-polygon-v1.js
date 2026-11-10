@@ -70,32 +70,39 @@ const usdt = await ethers.getContractAt(['function decimals() view returns (uint
 if (await ethers.provider.getCode(polygonAaveConfig.usdt) === '0x' || Number(await usdt.decimals()) !== 6) {
   throw new Error('Official Polygon USDT failed the live bytecode or decimal check.')
 }
-const feeData = await ethers.provider.getFeeData()
-const deploymentGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice
-if (!deploymentGasPrice) throw new Error('The Polygon RPC did not return a usable gas price.')
-const estimatedCeiling = GRAPH_GAS_CEILING * deploymentGasPrice
 const approvedMaximum = positive('POLYGON_MAX_DEPLOYMENT_COST_WEI')
-if (estimatedCeiling > approvedMaximum) {
-  throw new Error(`Current deployment ceiling ${estimatedCeiling} wei exceeds the approved maximum ${approvedMaximum} wei.`)
-}
+const deploymentMaxFeePerGas = approvedMaximum / GRAPH_GAS_CEILING
+if (deploymentMaxFeePerGas === 0n) throw new Error('The approved deployment maximum is too low.')
+const estimatedCeiling = GRAPH_GAS_CEILING * deploymentMaxFeePerGas
 if (await ethers.provider.getBalance(deployerAddress) < estimatedCeiling) {
   throw new Error('The deployer POL balance is below the approved deployment ceiling.')
 }
 
-// Resolve the encrypted signer only after every read-only deployment guard has
-// passed. This prevents a gas-price change before password entry from turning
-// the password prompt into a guaranteed failure. The captured fee values are
-// applied to every deployment transaction, so the approved total remains a
-// hard upper bound even if Polygon fees rise while the graph is deploying.
+// Hardhat resolves the encrypted keystore while creating the network, before
+// this script can run its read-only checks. Derive an immutable per-gas ceiling
+// from the owner-approved graph total instead of accepting a second, mutable
+// RPC quote after the password prompt. The sum of all transaction gas limits
+// multiplied by this value can never exceed approvedMaximum.
 const [deployer] = await ethers.getSigners()
 if (ethers.getAddress(await deployer.getAddress()) !== deployerAddress) {
   throw new Error('The configured signer does not match POLYGON_DEPLOYER_ADDRESS.')
 }
-const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 0n
+const feeData = await ethers.provider.getFeeData()
+const latestBlock = await ethers.provider.getBlock('latest')
+if (latestBlock?.baseFeePerGas && latestBlock.baseFeePerGas > deploymentMaxFeePerGas) {
+  throw new Error(
+    `Polygon base fee ${latestBlock.baseFeePerGas} wei exceeds the approved per-gas ceiling ${deploymentMaxFeePerGas} wei. Retry later without increasing the approved total.`,
+  )
+}
+const priorityFeeLimit = 50_000_000_000n
+const suggestedPriorityFee = feeData.maxPriorityFeePerGas ?? 30_000_000_000n
+const maxPriorityFeePerGas = suggestedPriorityFee > priorityFeeLimit
+  ? priorityFeeLimit
+  : suggestedPriorityFee
 const transactionOverrides = {
-  maxFeePerGas: deploymentGasPrice,
-  maxPriorityFeePerGas: maxPriorityFeePerGas > deploymentGasPrice
-    ? deploymentGasPrice
+  maxFeePerGas: deploymentMaxFeePerGas,
+  maxPriorityFeePerGas: maxPriorityFeePerGas > deploymentMaxFeePerGas
+    ? deploymentMaxFeePerGas
     : maxPriorityFeePerGas,
 }
 
