@@ -69,7 +69,10 @@ export async function buildApp(
         indexer.status(),
       ])
       const degraded = status.lastError !== null
-      return reply.code(degraded ? 503 : 200).send({
+      // A temporary Polygon RPC/indexing error must not make Render replace a
+      // healthy API process. The response still exposes the degraded state for
+      // monitoring; database or server failures continue to return HTTP 503.
+      return reply.code(200).send({
         status: degraded ? 'degraded' : 'ok',
         databaseTime: database.rows[0]?.now,
         indexer: status,
