@@ -39,11 +39,7 @@ if (process.env.POLYGON_DEPLOYMENT_APPROVED !== APPROVAL_PHRASE) {
 }
 const commit = cleanCommit()
 const { ethers } = await network.create('polygon')
-const [deployer] = await ethers.getSigners()
-const deployerAddress = ethers.getAddress(await deployer.getAddress())
-if (deployerAddress !== ethers.getAddress(required('POLYGON_DEPLOYER_ADDRESS'))) {
-  throw new Error('The configured signer does not match POLYGON_DEPLOYER_ADDRESS.')
-}
+const deployerAddress = ethers.getAddress(required('POLYGON_DEPLOYER_ADDRESS'))
 const identity = await ethers.provider.getNetwork()
 if (Number(identity.chainId) !== CHAIN_ID) throw new Error('The configured RPC is not Polygon mainnet chain 137.')
 const approvedNonce = Number(required('POLYGON_APPROVED_DEPLOYER_NONCE'))
@@ -86,6 +82,23 @@ if (await ethers.provider.getBalance(deployerAddress) < estimatedCeiling) {
   throw new Error('The deployer POL balance is below the approved deployment ceiling.')
 }
 
+// Resolve the encrypted signer only after every read-only deployment guard has
+// passed. This prevents a gas-price change before password entry from turning
+// the password prompt into a guaranteed failure. The captured fee values are
+// applied to every deployment transaction, so the approved total remains a
+// hard upper bound even if Polygon fees rise while the graph is deploying.
+const [deployer] = await ethers.getSigners()
+if (ethers.getAddress(await deployer.getAddress()) !== deployerAddress) {
+  throw new Error('The configured signer does not match POLYGON_DEPLOYER_ADDRESS.')
+}
+const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 0n
+const transactionOverrides = {
+  maxFeePerGas: deploymentGasPrice,
+  maxPriorityFeePerGas: maxPriorityFeePerGas > deploymentGasPrice
+    ? deploymentGasPrice
+    : maxPriorityFeePerGas,
+}
+
 const deployment = await deploySafeV1Graph({
   ethers,
   deployer,
@@ -99,6 +112,7 @@ const deployment = await deploySafeV1Graph({
   maxVaultPrincipal: caps.vault,
   maxProtocolPrincipal: caps.protocol,
   minimumMaturityDuration,
+  transactionOverrides,
 })
 for (const [name, record] of Object.entries(deployment.records)) {
   if (await ethers.provider.getCode(record.address) === '0x') throw new Error(`${name} has no deployed bytecode.`)

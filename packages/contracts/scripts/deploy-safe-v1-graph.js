@@ -15,6 +15,7 @@ export async function deploySafeV1Graph({
   rewardRegistrationGrace = 3 * 24 * 60 * 60,
   minimumRewardTarget = 10n * 10n ** 6n,
   minimumRewardSavingDuration = 7 * 60 * 60,
+  transactionOverrides = {},
 }) {
   if (!Number.isSafeInteger(minimumMaturityDuration) || minimumMaturityDuration < 25_200) {
     throw new Error('minimumMaturityDuration must be at least 25,200 seconds.')
@@ -39,10 +40,10 @@ export async function deploySafeV1Graph({
   // Public Amoy providers have repeatedly failed estimation for creation code
   // even though measured execution is comfortably below the block limit.
   // These ceilings are above the local measured costs without being unbounded.
-  const safety = await safetyFactory.deploy(...safetyArguments, { gasLimit: 1_500_000n })
+  const safety = await safetyFactory.deploy(...safetyArguments, { ...transactionOverrides, gasLimit: 1_500_000n })
   await safety.waitForDeployment()
   console.log(`SafetyController confirmed at ${await safety.getAddress()}.`)
-  const vaultDeployer = await vaultDeployerFactory.deploy(predictedFactory, { gasLimit: 6_500_000n })
+  const vaultDeployer = await vaultDeployerFactory.deploy(predictedFactory, { ...transactionOverrides, gasLimit: 6_500_000n })
   await vaultDeployer.waitForDeployment()
   console.log(`SavingsVaultDeployer confirmed at ${await vaultDeployer.getAddress()}.`)
   const rewardPoolArguments = [
@@ -53,7 +54,7 @@ export async function deploySafeV1Graph({
     minimumRewardTarget,
     minimumRewardSavingDuration,
   ]
-  const rewardPool = await rewardPoolFactory.deploy(...rewardPoolArguments, { gasLimit: 2_500_000n })
+  const rewardPool = await rewardPoolFactory.deploy(...rewardPoolArguments, { ...transactionOverrides, gasLimit: 2_500_000n })
   await rewardPool.waitForDeployment()
   console.log(`RewardPool confirmed at ${await rewardPool.getAddress()}.`)
   const factoryArguments = [
@@ -66,7 +67,7 @@ export async function deploySafeV1Graph({
     await safety.getAddress(),
     minimumMaturityDuration,
   ]
-  const factory = await factoryFactory.deploy(...factoryArguments, { gasLimit: 4_500_000n })
+  const factory = await factoryFactory.deploy(...factoryArguments, { ...transactionOverrides, gasLimit: 4_500_000n })
   await factory.waitForDeployment()
   console.log(`VaultFactory confirmed at ${await factory.getAddress()}.`)
   if ((await factory.getAddress()).toLowerCase() !== predictedFactory.toLowerCase()) {
