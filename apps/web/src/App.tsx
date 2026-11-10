@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import {
   acceptGroupInvitation,
@@ -131,6 +131,7 @@ import {
   ClockAlert,
   Compass,
   Copy,
+  Eye,
   Gift,
   GraduationCap,
   HandCoins,
@@ -942,16 +943,17 @@ export function App() {
   const developmentFallbackEnabled =
     import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK === "true";
   const deploymentReady = import.meta.env.VITE_DEPLOYMENT_READY !== "false";
-  // Temporary product switch: Polygon ownership is sufficient for app access.
-  // Set VITE_REQUIRE_NIMIQ_CONNECTION=true to restore the dual-wallet gate.
-  const nimiqConnectionRequired =
-    import.meta.env.VITE_REQUIRE_NIMIQ_CONNECTION === "true";
+  // Production access requires both identities: Nimiq for the Mini App user
+  // and Polygon for ownership and contract signatures.
+  const nimiqConnectionRequired = true;
 
   // Nimiq identity and EVM ownership are intentionally separate. Nimiq Pay
   // identifies the Mini App user, while only the EVM signer can own or move
   // an on-chain savings position.
   const [route, setRoute] = useState<AppRoute>(routeFromHash);
   const [summaryCurrency, setSummaryCurrency] = useState<"usdt" | "nim">("usdt");
+  const [summaryRevealed, setSummaryRevealed] = useState(false);
+  const [summaryTouch, setSummaryTouch] = useState({ x: 24, y: 24, id: 0 });
   const [nimiq, setNimiq] = useState<NimiqState>({ status: "idle" });
   const [evm, setEvm] = useState<EvmState>({ status: "idle" });
   const [transaction, setTransaction] = useState<TransactionState>({
@@ -1921,18 +1923,29 @@ export function App() {
 
   async function verifyConnectedDeployment(
     session = requireSession()
-  ): Promise<void> {
+  ): Promise<boolean> {
     setDeployment({ status: "checking" });
     try {
       const verified = await verifyDeployment(session.signer);
       setDeployment({ status: "valid", value: verified });
+      return true;
     } catch (error) {
       console.error("LockedIn deployment verification failed", error);
       setDeployment({
         status: "error",
         message: describeContractError(error),
       });
+      return false;
     }
+  }
+
+  async function continueWalletConnection(): Promise<void> {
+    if (!evmSession || !nimiqWallet || deployment.status === "checking") return;
+    const verified = deployment.status === "valid"
+      || await verifyConnectedDeployment(evmSession);
+    if (!verified) return;
+    if (pendingGroup) continueToInvitedGroup();
+    else setConnectionSheetOpen(false);
   }
 
   function requireSession(): EvmWalletSession {
@@ -3023,40 +3036,40 @@ export function App() {
               {onboardingStep === 0 && (
                 <>
                   <div className="onboarding-visual goal-visual" aria-hidden="true">
-                    <span><Target size={25} /></span>
-                    <div><small>New laptop</small><strong>Your goal, your pace</strong><i><b /></i></div>
-                    <CircleCheckBig size={20} />
+                    <span><Eye size={25} /></span>
+                    <div><small>Your savings</small><strong>Reveal totals and progress</strong><i><b /></i></div>
+                    <House size={20} />
                   </div>
-                  <span className="onboarding-kicker">Start with a goal</span>
-                  <h2 id="onboarding-title">Choose what you want to save for.</h2>
-                  <p>Create a personal goal or a savings circle. You choose the target and saving pace; the Polygon contract keeps the financial record.</p>
-                  <div className="onboarding-example"><Target aria-hidden="true" size={16} /><span>Name the goal, choose a saving habit, and follow your progress.</span></div>
+                  <span className="onboarding-kicker">Home</span>
+                  <h2 id="onboarding-title">See your savings at a glance.</h2>
+                  <p>Tap the eye on the savings card to reveal your total, combined goal, progress and next maturity.</p>
+                  <div className="onboarding-location"><House aria-hidden="true" size={17} /><span><strong>Home tab</strong><small>Your overview and next contribution</small></span><MoveRight aria-hidden="true" size={17} /></div>
                 </>
               )}
               {onboardingStep === 1 && (
                 <>
                   <div className="onboarding-visual split-visual" aria-hidden="true">
-                    <span><CircleDollarSign size={24} /></span>
+                    <span><Plus size={24} /></span>
                     <i />
-                    <div><small>Available</small><LockKeyhole size={18} /></div>
-                    <div><small>Locked goal</small><Vault size={18} /></div>
+                    <div><small>Add savings</small><CirclePlus size={18} /></div>
+                    <div><small>Create goal</small><Target size={18} /></div>
                   </div>
-                  <span className="onboarding-kicker">Your protection</span>
-                  <h2 id="onboarding-title">Part stays available. Part stays locked.</h2>
-                  <p>Each contribution is split automatically. Your 10%–15% emergency amount remains available, while the rest follows your maturity date.</p>
-                  <div className="onboarding-example"><LockKeyhole aria-hidden="true" size={16} /><span>Safe-only V1 keeps locked savings inside the vault and does not offer yield or reward campaigns.</span></div>
+                  <span className="onboarding-kicker">Quick actions</span>
+                  <h2 id="onboarding-title">Use Plus for your main actions.</h2>
+                  <p>Add savings, withdraw emergency funds, create a personal goal or start a savings circle from one compact menu.</p>
+                  <div className="onboarding-location"><Plus aria-hidden="true" size={17} /><span><strong>Plus button</strong><small>At the bottom-right of every main page</small></span><MoveRight aria-hidden="true" size={17} /></div>
                 </>
               )}
               {onboardingStep === 2 && (
                 <>
                   <div className="onboarding-visual circle-visual" aria-hidden="true">
-                    <span>EA</span><span>KA</span><span>YOU</span><span>TM</span>
-                    <div><UsersRound size={25} /></div>
+                    <span><Target size={17} /></span><span><UsersRound size={17} /></span><span><Wallet size={17} /></span><span><BadgeCheck size={17} /></span>
+                    <div><Vault size={25} /></div>
                   </div>
-                  <span className="onboarding-kicker">Save together</span>
-                  <h2 id="onboarding-title">A circle shares the journey—not your balance.</h2>
-                  <p>Every member joins with their own wallet, target and emergency amount. A circle activates after at least four members are ready.</p>
-                  <div className="onboarding-example"><UsersRound aria-hidden="true" size={16} /><span>Members encourage one another while every balance and target stays independent.</span></div>
+                  <span className="onboarding-kicker">Vaults</span>
+                  <h2 id="onboarding-title">Open a vault to manage it.</h2>
+                  <p>Personal goals, circles and purchased positions appear together. Open one to add savings, check maturity or withdraw available emergency funds.</p>
+                  <div className="onboarding-location"><Wallet aria-hidden="true" size={17} /><span><strong>Vaults tab</strong><small>Your active, completed and purchased positions</small></span><MoveRight aria-hidden="true" size={17} /></div>
                 </>
               )}
               {onboardingStep === 3 && (
@@ -3069,6 +3082,7 @@ export function App() {
                   <span className="onboarding-kicker">If plans change</span>
                   <h2 id="onboarding-title">Request an early savings exit.</h2>
                   <p>The contract calculates the discount. You set a minimum payout, and the first funder to complete it receives the locked position.</p>
+                  <div className="onboarding-location"><ArrowUpDown aria-hidden="true" size={17} /><span><strong>Exits tab</strong><small>Request an exit or fund an available request</small></span><MoveRight aria-hidden="true" size={17} /></div>
                   {!import.meta.env.PROD && <div className="onboarding-testnet"><AlertTriangle aria-hidden="true" size={17} /><span>This alpha uses MockUSDT on Polygon Amoy. It has no real value, and POL is needed only for testnet fees.</span></div>}
                 </>
               )}
@@ -3302,12 +3316,12 @@ export function App() {
             <div className="sheet-grabber" />
             <span className="eyebrow">Wallet</span>
             <h2>Connect to continue</h2>
-            <p>Your Polygon wallet keeps your savings. Nimiq Pay is optional and is only needed when you use NIM.</p>
+            <p>Connect both wallets. Nimiq identifies you in the Mini App, while Polygon holds and signs for your savings.</p>
             <button className={evmSession ? "connection-row complete" : "connection-row"} disabled={evm.status === "connecting" || Boolean(evmSession)} onClick={() => void connectEvm()} type="button">
               <span><WalletCards aria-hidden="true" size={17} /></span><div><strong>{evmSession ? "Polygon wallet connected" : "Connect Polygon wallet"}</strong><small>{evmSession ? short(evmSession.address) : "Needed to save and withdraw"}</small></div><b>{evmSession ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
             </button>
             <button className={nimiqWallet ? "connection-row complete optional" : "connection-row optional"} disabled={nimiq.status === "connecting" || Boolean(nimiqWallet)} onClick={() => void connectNimiq()} type="button">
-              <span><CircleDollarSign aria-hidden="true" size={17} /></span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay (optional)"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Only needed for NIM payments and swaps"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
+              <span><CircleDollarSign aria-hidden="true" size={17} /></span><div><strong>{nimiqWallet ? "Nimiq connected" : "Connect Nimiq Pay"}</strong><small>{nimiqWallet ? short(nimiqWallet.address) : "Required to continue"}</small></div><b>{nimiqWallet ? <Check aria-hidden="true" size={17} /> : <ArrowRight aria-hidden="true" size={17} />}</b>
             </button>
             {developmentFallbackEnabled && !evmSession && (
               <button className="secondary full-width" disabled={evm.status === "connecting"} onClick={() => void connectEvm(0)} type="button">
@@ -3350,8 +3364,15 @@ export function App() {
                 )}
               </section>
             )}
-            <button className="primary full-width" disabled={!walletAccessReady || Boolean(pendingGroup && (!pendingGroup.joiningOpen || Number(joinTarget) <= 0 || (!pendingGroup.publicJoining && (!secureInvitation || !inviteRulesConfirmed))))} onClick={() => pendingGroup ? continueToInvitedGroup() : setConnectionSheetOpen(false)} type="button">
-              {pendingGroup?.publicJoining && pendingGroup.joiningOpen
+            {evmSession && nimiqWallet && deployment.status === "error" && (
+              <p className="connection-check-error">The contract check needs another attempt. Continue will retry it without reconnecting either wallet.</p>
+            )}
+            <button className="primary full-width" disabled={!evmSession || !nimiqWallet || deployment.status === "checking" || Boolean(pendingGroup && (!pendingGroup.joiningOpen || Number(joinTarget) <= 0 || (!pendingGroup.publicJoining && (!secureInvitation || !inviteRulesConfirmed))))} onClick={() => void continueWalletConnection()} type="button">
+              {deployment.status === "checking"
+                ? "Checking contracts…"
+                : deployment.status === "error" && evmSession && nimiqWallet
+                  ? "Retry and continue"
+                  : pendingGroup?.publicJoining && pendingGroup.joiningOpen
                 ? "Join public circle"
                 : pendingGroup && secureInvitation
                   ? "Accept invitation and join"
@@ -3455,17 +3476,41 @@ export function App() {
             <div className="wallet-entry-blank" aria-hidden="true" />
           ) : walletAccessReady && route === "discover" ? (
             <div className="savings-home">
-              <section className="home-summary" aria-labelledby="savings-summary-title">
-                <div className="home-section-heading">
-                  <div><span className="eyebrow">Your savings</span><h1 id="savings-summary-title">Let’s keep building</h1></div>
-                </div>
+              <section
+                aria-label="Savings summary"
+                className={`home-summary ${summaryRevealed ? "revealed" : "concealed"}`}
+                onPointerDown={(event) => {
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  setSummaryTouch({
+                    x: event.clientX - bounds.left,
+                    y: event.clientY - bounds.top,
+                    id: Date.now(),
+                  });
+                }}
+                style={{
+                  "--summary-touch-x": `${summaryTouch.x}px`,
+                  "--summary-touch-y": `${summaryTouch.y}px`,
+                } as CSSProperties}
+              >
+                {summaryTouch.id > 0 && <i aria-hidden="true" className="summary-touch-effect" key={summaryTouch.id} />}
+                <button
+                  aria-label={summaryRevealed ? "Hide savings summary" : "Reveal savings summary"}
+                  aria-pressed={summaryRevealed}
+                  className="summary-visibility-toggle"
+                  onClick={() => setSummaryRevealed((visible) => !visible)}
+                  type="button"
+                >
+                  <Eye aria-hidden="true" size={19} strokeWidth={1.5} />
+                </button>
+                <div className="summary-private-content">
+                <span className="eyebrow">Your savings</span>
                 <div className="summary-balance-row">
                   <span className="summary-vault-logo"><Wallet aria-hidden="true" size={24} strokeWidth={1.6} /></span>
                   <div className="home-summary-amount">
                     <span className="summary-label">Total saved</span>
                     <strong>{summaryCurrency === "usdt" ? amountLabel(portfolioTotalSaved) : portfolioTotalNim === null ? "—" : amountLabel(portfolioTotalNim)} {summaryCurrency.toUpperCase()}</strong>
                     <small>{summaryCurrency === "usdt"
-                      ? portfolioTotalNim === null ? "NIM estimate unavailable" : `≈ ${amountLabel(portfolioTotalNim)} NIM on Amoy`
+                      ? portfolioTotalNim === null ? "NIM estimate unavailable" : `≈ ${amountLabel(portfolioTotalNim)} NIM estimate`
                       : `≈ ${amountLabel(portfolioTotalSaved)} USDT`}</small>
                   </div>
                   <button
@@ -3481,6 +3526,7 @@ export function App() {
                 <div className="home-progress" aria-label={`${portfolioProgressLabel}% of combined savings goals reached`}><i><span style={{ width: `${portfolioProgress}%` }} /></i><b>{portfolioProgressLabel}%</b></div>
                 <div className="home-summary-meta"><span><Target aria-hidden="true" size={15} />Goal {amountLabel(portfolioTotalTarget)} USDT</span><span><CalendarDays aria-hidden="true" size={15} />{nearestMaturity ? `Next goal ${nearestMaturity.toLocaleDateString()}` : "No maturity scheduled"}</span></div>
                 <button className="home-add-savings" onClick={() => startQuickVaultAction("save")} type="button"><CirclePlus aria-hidden="true" size={18} strokeWidth={1.6} />Add savings</button>
+                </div>
               </section>
 
               <section className="home-quick-actions" aria-label="Savings shortcuts">
@@ -5955,7 +6001,6 @@ export function App() {
         <div className="create-action-layer" role="dialog" aria-modal="true" aria-label="Create savings">
           <button aria-label="Close create menu" className="create-action-backdrop" onClick={() => setCreateMenuOpen(false)} type="button" />
           <div className="create-action-stack">
-            <h2 className="create-action-title">What would you like to do?</h2>
             <button className="save-action" onClick={() => startQuickVaultAction("save")} type="button">
               <span><CirclePlus aria-hidden="true" size={20} strokeWidth={1.5} /></span>
               <strong>Add savings</strong>
