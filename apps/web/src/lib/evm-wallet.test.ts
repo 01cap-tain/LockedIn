@@ -136,6 +136,40 @@ describe("EVM wallet connection", () => {
     );
   });
 
+  it("offers to add Polygon mainnet when the injected wallet does not know the chain", async () => {
+    const address = "0x0000000000000000000000000000000000000001";
+    let chainId = "0x1";
+    const provider = providerWith((method) => {
+      if (method === "eth_requestAccounts" || method === "eth_accounts")
+        return [address];
+      if (method === "eth_chainId") return chainId;
+      if (method === "wallet_switchEthereumChain") {
+        throw Object.assign(new Error("Unknown chain"), { code: 4902 });
+      }
+      if (method === "wallet_addEthereumChain") {
+        chainId = "0x89";
+        return null;
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    });
+
+    await expect(
+      connectEvmWallet({ provider, expectedChainId: "0x89" })
+    ).resolves.toMatchObject({ address, chainId: "0x89" });
+    expect(provider.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "wallet_addEthereumChain",
+        params: [
+          expect.objectContaining({
+            chainId: "0x89",
+            chainName: "Polygon",
+            blockExplorerUrls: ["https://polygonscan.com/"],
+          }),
+        ],
+      })
+    );
+  });
+
   it("connects the EVM account exposed by an EIP-1193 provider", async () => {
     const address = "0x0000000000000000000000000000000000000001";
     const provider = providerWith((method) => {

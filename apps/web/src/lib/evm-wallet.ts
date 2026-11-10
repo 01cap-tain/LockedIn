@@ -58,15 +58,28 @@ interface AddEthereumChainParameter {
 }
 
 const POLYGON_AMOY_CHAIN_ID = "0x13882";
+const POLYGON_MAINNET_CHAIN_ID = "0x89";
 
 /**
  * Returns public metadata that an injected wallet can use to add a missing
- * test network. Application RPC credentials are deliberately not used here:
- * values passed to `wallet_addEthereumChain` are visible to the wallet/user.
+ * Polygon network. Values passed to `wallet_addEthereumChain` are visible to
+ * the wallet/user, so the configured public client RPC is safe to expose here.
  */
 function addChainParameter(
   chainId: string
 ): AddEthereumChainParameter | undefined {
+  if (chainId === POLYGON_MAINNET_CHAIN_ID) {
+    return {
+      chainId: POLYGON_MAINNET_CHAIN_ID,
+      chainName: "Polygon",
+      nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
+      rpcUrls: [
+        import.meta.env.VITE_PUBLIC_RPC_URL ?? "https://polygon-rpc.com",
+      ],
+      blockExplorerUrls: ["https://polygonscan.com/"],
+    };
+  }
+
   if (chainId !== POLYGON_AMOY_CHAIN_ID) return undefined;
 
   return {
