@@ -968,7 +968,6 @@ export function App() {
   const [withdrawalNeedsRetry, setWithdrawalNeedsRetry] = useState(false);
   const [target, setTarget] = useState("");
   const [maturity, setMaturity] = useState(() => futureInput(30));
-  const [quickTestMaturity, setQuickTestMaturity] = useState(false);
   const [vaultName, setVaultName] = useState("");
   const [vaultPurpose, setVaultPurpose] = useState("");
   const [vaultIcon, setVaultIcon] = useState<VaultGoalIcon>("target");
@@ -1185,7 +1184,7 @@ export function App() {
     [planContribution, planFrequency, planStartDate, preferredDays, target]
   );
   useEffect(() => {
-    if (!estimatedMaturity || quickTestMaturity) return;
+    if (!estimatedMaturity) return;
     const nextMaturity = localDateTimeInput(estimatedMaturity);
     setMaturity(nextMaturity);
     const timeUntilMaturity = Math.max(0, estimatedMaturity.getTime() - Date.now());
@@ -1194,7 +1193,7 @@ export function App() {
     if (new Date(enrollmentDeadline).getTime() >= estimatedMaturity.getTime()) {
       setEnrollmentDeadline(localDateTimeInput(latestEnrollment));
     }
-  }, [estimatedMaturity, enrollmentDeadline, quickTestMaturity]);
+  }, [estimatedMaturity, enrollmentDeadline]);
   const progress = snapshot
     ? Math.min(
         100,
@@ -1241,11 +1240,11 @@ export function App() {
       if (creationStep === 1) return true;
       if (creationStep === 2)
         return Number(target) > 0 && Number(planContribution) > 0;
-      if (creationStep === 3) return (Boolean(estimatedMaturity) || quickTestMaturity) && !maturityValidationError;
+      if (creationStep === 3) return Boolean(estimatedMaturity) && !maturityValidationError;
       return true;
     }
     if (creationStep === 1) return Number(planContribution) > 0;
-    if (creationStep === 2) return (Boolean(estimatedMaturity) || quickTestMaturity) && !maturityValidationError;
+    if (creationStep === 2) return Boolean(estimatedMaturity) && !maturityValidationError;
     if (creationStep === 3) return true;
     return true;
   })();
@@ -2164,35 +2163,9 @@ export function App() {
     if (nextMode === "group") setMaxParticipants(4);
     setVaultIcon(nextMode === "group" ? "circle" : "target");
     setCreationStep(0);
-    const useQuickTest = import.meta.env.VITE_TEST_CONFIGURATION === "true";
-    setQuickTestMaturity(useQuickTest);
-    if (useQuickTest) {
-      const now = Date.now();
-      setMaturity(localDateTimeInput(new Date(now + (minimumMaturitySeconds + 75) * 1_000)));
-      if (nextMode === "group") {
-        setEnrollmentDeadline(localDateTimeInput(new Date(
-          now + Math.max(120, minimumMaturitySeconds - 120) * 1_000
-        )));
-      }
-    }
     setCreatedVaultReceipt(null);
     setCreateMenuOpen(false);
     navigate("vaults");
-  }
-
-  function toggleQuickTestMaturity(): void {
-    if (quickTestMaturity) {
-      setQuickTestMaturity(false);
-      return;
-    }
-    const now = Date.now();
-    setQuickTestMaturity(true);
-    setMaturity(localDateTimeInput(new Date(now + (minimumMaturitySeconds + 75) * 1_000)));
-    if (mode === "group") {
-      setEnrollmentDeadline(localDateTimeInput(new Date(
-        now + Math.max(120, minimumMaturitySeconds - 120) * 1_000
-      )));
-    }
   }
 
   function startQuickVaultAction(action: QuickVaultAction): void {
@@ -2749,27 +2722,17 @@ export function App() {
         status: "pending",
         message: "Checking vault settings and estimating the network fee…",
       });
-      // Rebase the test timestamp immediately before simulation/signing so a
-      // creation form left open for several minutes cannot submit a stale date.
-      const quickMaturityDate = new Date(Date.now() + (minimumMaturitySeconds + 75) * 1_000);
-      const submittedMaturity = quickTestMaturity ? quickMaturityDate.toISOString() : maturity;
-      const quickEnrollmentDate = new Date(
-        Date.now() + Math.max(120, minimumMaturitySeconds - 120) * 1_000
-      );
-      const submittedEnrollmentDeadline = quickTestMaturity
-        ? quickEnrollmentDate.toISOString()
-        : enrollmentDeadline;
       const input: CreateVaultInput = {
         groupMode: mode,
         yieldMode,
         target,
-        maturity: submittedMaturity,
+        maturity,
         emergencyPercent,
         additionalMembers: [],
         maxParticipants,
         groupName: mode === "group" ? vaultName.trim() : undefined,
         groupVisibility: mode === "group" ? groupVisibility : undefined,
-        enrollmentDeadline: mode === "group" ? submittedEnrollmentDeadline : undefined,
+        enrollmentDeadline: mode === "group" ? enrollmentDeadline : undefined,
       };
       const created = await createVault(session.signer, input, (stage) =>
         setTransaction({
@@ -2791,7 +2754,7 @@ export function App() {
         frequency: planFrequency,
         preferredDays,
         startDate: planStartDate,
-        maturityDate: submittedMaturity,
+        maturityDate: maturity,
         savedAt: new Date().toISOString(),
       };
       setVaultPlans((current) =>
@@ -3893,19 +3856,7 @@ export function App() {
               <p className="frequency-explainer full-width">
                 {contributionPlanText(Number(planContribution), planFrequency, preferredDays)}.
               </p>
-              {import.meta.env.VITE_TEST_CONFIGURATION === "true" && (
-                <section className={`quick-test-maturity full-width ${quickTestMaturity ? "active" : ""}`}>
-                  <ClockAlert aria-hidden="true" size={19} strokeWidth={1.5} />
-                  <div>
-                    <strong>Quick maturity test</strong>
-                    <span>Use the configured {minimumMaturityLabel} minimum instead of the schedule estimate. A short confirmation buffer is added so the transaction remains valid while you sign.</span>
-                  </div>
-                  <button aria-pressed={quickTestMaturity} className="secondary compact" onClick={toggleQuickTestMaturity} type="button">
-                    {quickTestMaturity ? "Use schedule" : "Use quick test"}
-                  </button>
-                </section>
-              )}
-              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>{quickTestMaturity ? "Quick-test maturity" : "Estimated maturity"}</span><strong>{quickTestMaturity ? new Date(maturity).toLocaleString() : estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? (quickTestMaturity ? "Test configuration · rebased immediately before wallet confirmation." : `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`)}</small></div></div>
+              <div className="estimated-date full-width"><i className="estimated-date-pattern" aria-hidden="true" /><CalendarDays aria-hidden="true" size={18} /><div><span>Estimated maturity</span><strong>{estimatedMaturity ? estimatedMaturity.toLocaleString() : "Choose a contribution schedule"}</strong><small>{maturityValidationError ?? `Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`}</small></div></div>
               <aside className={`plan-preview full-width ${!hasContributionPlan ? "unconfigured" : planProjection.sufficient ? "sufficient" : "insufficient"}`}>
                 <div className="plan-preview-heading">
                   <Target aria-hidden="true" size={18} />
