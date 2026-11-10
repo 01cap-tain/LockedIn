@@ -76,7 +76,7 @@ const deployment = await deploySafeV1Graph({
   maxPositionPrincipal: 1_000_000n * UNIT,
   maxVaultPrincipal: 10_000_000n * UNIT,
   maxProtocolPrincipal: 100_000_000n * UNIT,
-  minimumMaturityDuration: 10 * 60,
+  minimumMaturityDuration: 7 * 60 * 60,
 })
 const protocolVersion = await deployment.factory.PROTOCOL_VERSION()
 const deploymentId = await deployment.factory.deploymentId()
@@ -100,9 +100,9 @@ const manifest = {
     vaultMode: 'Safe-only',
     earnEnabled: false,
     rewardsEnabled: false,
-    minimumMaturitySeconds: 600,
+    minimumMaturitySeconds: 25_200,
     testConfiguration: true,
-    feeDistribution: { maintenanceTreasuryBps: 2_000, rewardPoolBps: 6_000, riskReserveBps: 2_000 },
+    feeDistribution: { maintenanceTreasuryBps: 10_000, rewardPoolBps: 0, riskReserveBps: 0 },
     rewardPool: deployment.records.rewardPool.address,
     riskReserve,
     maintenanceTreasury,

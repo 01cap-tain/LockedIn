@@ -23,13 +23,23 @@ const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS 
 assertProductionMaturityConfiguration({ chainId: 137, profile: 'safe-only-v1-production', minimumMaturityDuration })
 const provider = new JsonRpcProvider(required('POLYGON_RPC_URL'), 137, { staticNetwork: true })
 if (Number((await provider.getNetwork()).chainId) !== 137) throw new Error('Expected Polygon chain 137.')
-const safetyCouncil = getAddress(required('POLYGON_SAFETY_COUNCIL_ADDRESS'))
 const riskReserve = getAddress(required('POLYGON_RISK_RESERVE_ADDRESS'))
 const maintenanceTreasury = getAddress(required('POLYGON_MAINTENANCE_TREASURY_ADDRESS'))
 const deployer = getAddress(required('POLYGON_DEPLOYER_ADDRESS'))
-if (new Set([safetyCouncil, riskReserve, maintenanceTreasury].map((value) => value.toLowerCase())).size !== 3) {
-  throw new Error('Safety, risk-reserve and maintenance destinations must be distinct.')
+let safetyCouncil = null
+try {
+  const configuredSafetyCouncil = process.env.POLYGON_SAFETY_COUNCIL_ADDRESS?.trim()
+  if (configuredSafetyCouncil) safetyCouncil = getAddress(configuredSafetyCouncil)
+} catch {
+  safetyCouncil = null
 }
+if (safetyCouncil && (
+  safetyCouncil.toLowerCase() === riskReserve.toLowerCase()
+  || safetyCouncil.toLowerCase() === maintenanceTreasury.toLowerCase()
+)) {
+  safetyCouncil = null
+}
+const missingConfiguration = safetyCouncil ? [] : ['POLYGON_SAFETY_COUNCIL_ADDRESS']
 const [confirmedNonce, pendingNonce] = await Promise.all([
   provider.getTransactionCount(deployer, 'latest'),
   provider.getTransactionCount(deployer, 'pending'),
@@ -53,9 +63,9 @@ if (!deploymentGasPrice) throw new Error('The Polygon RPC did not return a usabl
 const gasCeilings = { safetyController: 1_500_000n, savingsVaultDeployer: 6_500_000n, rewardPool: 2_500_000n, vaultFactory: 4_500_000n }
 const maximumDeploymentCostWei = Object.values(gasCeilings).reduce((total, gas) => total + gas, 0n) * deploymentGasPrice
 const deployerBalanceWei = await provider.getBalance(deployer)
-if (deployerBalanceWei < maximumDeploymentCostWei) throw new Error('The deployer balance is below the current deployment-cost ceiling.')
+const deployerFundingSufficient = deployerBalanceWei >= maximumDeploymentCostWei
 const authorityKinds = Object.fromEntries(await Promise.all(
-  Object.entries({ safetyCouncil, riskReserve, maintenanceTreasury }).map(async ([name, address]) => [
+  Object.entries({ ...(safetyCouncil ? { safetyCouncil } : {}), riskReserve, maintenanceTreasury }).map(async ([name, address]) => [
     name,
     await provider.getCode(address) === '0x' ? 'EOA' : 'CONTRACT',
   ])
@@ -78,14 +88,17 @@ const predicted = {
   rewardPool: getCreateAddress({ from: deployer, nonce: nonce + 2 }),
   vaultFactory: getCreateAddress({ from: deployer, nonce: nonce + 3 }),
 }
+predicted.earlyExitMarket = getCreateAddress({ from: predicted.vaultFactory, nonce: 1 })
 const constructorArguments = {
-  safetyController: [predicted.vaultFactory, safetyCouncil, 86_400, caps.position.toString(), caps.vault.toString(), caps.protocol.toString()],
+  safetyController: [predicted.vaultFactory, safetyCouncil ?? 'POLYGON_SAFETY_COUNCIL_ADDRESS_REQUIRED', 86_400, caps.position.toString(), caps.vault.toString(), caps.protocol.toString()],
   savingsVaultDeployer: [predicted.vaultFactory],
   rewardPool: [polygonAaveConfig.usdt, predicted.vaultFactory, 2_592_000, 259_200, '10000000', 25_200],
   vaultFactory: [polygonAaveConfig.usdt, predicted.rewardPool, riskReserve, maintenanceTreasury, 137, predicted.savingsVaultDeployer, predicted.safetyController, minimumMaturityDuration],
 }
 console.log(JSON.stringify({
-  status: 'READ_ONLY_SAFE_V1_DEPLOYMENT_PLAN',
+  status: missingConfiguration.length === 0
+    ? 'READ_ONLY_SAFE_V1_DEPLOYMENT_PLAN'
+    : 'BLOCKED_ONLY_BY_SAFETY_COUNCIL_ADDRESS',
   gitCommit,
   workingTreeClean,
   chainId: 137,
@@ -93,8 +106,10 @@ console.log(JSON.stringify({
   asset: { address: polygonAaveConfig.usdt, decimals: Number(decimals) },
   features: { earn: false, rewards: false, upgradeability: false },
   minimumMaturityDuration,
-  feeDistribution: { maintenanceTreasuryBps: 2_000, rewardPoolBps: 6_000, riskReserveBps: 2_000 },
+  feeDistribution: { maintenanceTreasuryBps: 10_000, rewardPoolBps: 0, riskReserveBps: 0 },
+  deployer,
   governance: { safetyCouncil, riskReserve, maintenanceTreasury, authorityKinds },
+  missingConfiguration,
   caps: Object.fromEntries(Object.entries(caps).map(([key, value]) => [key, value.toString()])),
   predicted,
   deploymentOrder: ['SafetyController', 'SavingsVaultDeployer', 'RewardPool', 'VaultFactory (creates EarlyExitMarket)'],
@@ -103,7 +118,9 @@ console.log(JSON.stringify({
   gasCeilings: Object.fromEntries(Object.entries(gasCeilings).map(([name, value]) => [name, value.toString()])),
   deploymentGasPriceWei: deploymentGasPrice.toString(),
   maximumDeploymentCostWei: maximumDeploymentCostWei.toString(),
+  approvedMaximumDeploymentCostWei: process.env.POLYGON_MAX_DEPLOYMENT_COST_WEI ?? null,
   deployerBalanceWei: deployerBalanceWei.toString(),
+  deployerFundingSufficient,
   deployerNonces: { confirmed: confirmedNonce, pending: pendingNonce },
   constructorArguments,
   verificationCommands: [

@@ -17,7 +17,7 @@ Polygon documents Amoy chain ID 80002 and the Amoy PolygonScan explorer. Aave do
 
 ## Configure
 
-Copy `.env.amoy.example` to `.env.amoy` and fill its blank values. The file is ignored by Git. The deployer is the only required private key. Risk-reserve and maintenance addresses are public recipient addresses; they must be non-zero and distinct.
+Provide the ignored Amoy environment values locally. The deployer is the only required private key. Risk-reserve and maintenance addresses are public recipient addresses; they must be nonzero and may match because the inactive risk allocation is zero.
 
 Use a dedicated Amoy endpoint such as `https://polygon-amoy.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY`. The formerly documented `rpc-amoy.polygon.technology` host may fail DNS resolution, while shared demo endpoints can return rate-limit errors during deployment.
 
@@ -47,7 +47,7 @@ npm run contracts:inspect:amoy
 npm run dev:amoy
 ```
 
-When the optional Wallet A/B keys are configured, the automated flow creates Safe and Earn vaults with two wallets, deposits MockUSDT, settles an early exit, checks the 0.9% fee split and funds mock yield. The persistence command starts a fresh process and re-queries ownership and listing state. When testing with MetaMask instead, perform those actions in the UI; restarting Vite cannot erase Amoy state because the contracts retain it on Amoy.
+When optional Wallet A/B keys are configured, the automated flow creates vaults with two wallets, deposits MockUSDT, settles an early exit, checks the 0.9% fee routing and re-queries ownership and listing state. When testing with MetaMask instead, perform those actions in the UI; restarting Vite cannot erase Amoy state because the contracts retain it on Amoy.
 
 For PolygonScan verification, configure `POLYGONSCAN_API_KEY` and run:
 

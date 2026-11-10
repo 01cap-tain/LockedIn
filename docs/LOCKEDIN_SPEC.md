@@ -67,7 +67,7 @@ Nimiq Pay supplies the connected Nimiq identity. Its separately injected EIP-119
 
 ### Protocol-revenue epochs
 
-Sponsored vault funding and protocol-wide early-exit revenue are independent ledgers. Sponsored funding keeps the existing vault-specific activation path. The 60% RewardPool share of each early-exit fee is assigned automatically to `revenueEpoch = floor(block.timestamp / epochDuration)` when received.
+Sponsored vault funding and protocol-wide early-exit revenue are independent ledgers. Sponsored funding keeps the existing vault-specific activation path. Safe-only V1 assigns no early-exit revenue to RewardPool; the full provider fee is routed to maintenance while rewards are unavailable.
 
 Production epochs are 30 days. The duration is immutable and may be shorter only in an explicitly labelled local or Amoy deployment. Each deployment also fixes a registration grace period, minimum per-member reward target and minimum saving duration; production minimums remain unset pending audit and economic review.
 
@@ -169,10 +169,10 @@ Personal and group listings use identical settlement rules. Clients derive the c
 ### Market fee
 
 - Provider fee: `saverPayout * 90 / 10_000` (0.9%), paid on top of the payout.
-- Reward pool: `fee * 60 / 100`.
-- Risk reserve: `fee * 20 / 100`.
-- Maintenance treasury: all remaining fee units, preserving integer rounding dust.
-- Destinations are immutable. RewardPool records its share as protocol revenue; no developer allocates it.
+- Reward pool: `0` while rewards are unavailable.
+- Risk reserve: `0` in Safe-only V1.
+- Maintenance treasury: the complete provider fee.
+- Destinations are immutable. Every charged fee unit is accounted for atomically.
 
 ### System discount v1
 

@@ -19,7 +19,7 @@ Production graph under consideration:
 - `SavingsVault`: separate emergency/locked accounting, membership, maturity, claims and cooperative exit.
 - `EarlyExitMarket`: deterministic listing and first-successful funding settlement.
 - `SafetyController`: delayed pause and exposure caps; it cannot transfer saver principal.
-- `RewardPool`: immutable receiver for the 60% protocol-revenue allocation. V1 reward activation and claims remain disabled, so received revenue accumulates without being represented as an available user reward.
+- `RewardPool`: retained for protocol-graph compatibility. Safe-only V1 routes no early-exit fee to it, and reward activation and claims remain disabled.
 
 Present in source but disabled in the Safe-only V1 graph:
 
@@ -30,13 +30,13 @@ There is no proxy or upgrade mechanism. A changed immutable rule requires a vers
 
 ## Network and asset identity
 
-Production configuration is pinned to Polygon chain `137` (`0x89`) and Polygon USDT `0xc2132D05D31c914a87C6611c10748AEb04B58e8F`, using six decimals. The production build accepts this identity only from a schema-v6-or-newer manifest with protocol `lockedin-circle/1.4.0-safe`, `testConfiguration: false`, minimum maturity at least `25200`, and complete factory/market/safety identities.
+Production configuration is pinned to Polygon chain `137` (`0x89`) and Polygon USDT `0xc2132D05D31c914a87C6611c10748AEb04B58e8F`, using six decimals. The production build accepts this identity only from a schema-v6-or-newer manifest with protocol `lockedin-circle/1.5.0-safe`, `testConfiguration: false`, minimum maturity at least `25200`, and complete factory/market/safety identities.
 
 The read-only preflight scripts require explicit RPC, governance, cap, deployer-address and nonce inputs. They validate chain, bytecode and decimals and hold no signer. The separate Aave preflight resolves addresses from the maintained Aave address-book package and validates live Pool/reserve/aToken relationships; Aave is not enabled in the Safe-only launch graph.
 
 ## Seven-hour production maturity
 
-`VaultFactory` now has a chain-specific invariant: when its immutable deployment chain is `137`, `minimumMaturityDuration` cannot be less than seven hours. The shared factory minimum is used by both personal and group creation. Testnets retain their explicitly configured testing minimum. This changes factory bytecode, so it belongs in the first mainnet deployment or a new versioned deployment; it cannot alter already deployed factories.
+Protocol 1.5 enforces a seven-hour minimum maturity for every newly deployed factory, including testnets. The shared minimum is used by both personal and group creation. Existing testnet factories retain their immutable historical minimums, but the ten-minute capability is absent from the new contract source. This changes factory bytecode and cannot alter already deployed factories.
 
 ## Dashboard current-savings formula
 
@@ -50,7 +50,7 @@ Tests cover deposits/reconstruction, emergency withdrawal, sale, purchase, matur
 
 ## Exit-fee distribution
 
-The immutable market charges the existing 0.9% provider fee and atomically allocates 60% to `RewardPool`, 20% to the Risk Reserve and the remaining 20% plus any indivisible rounding remainder to the Maintenance Treasury. Allocation floors and the deterministic remainder rule ensure the allocations always equal the charged fee exactly. Factory construction rejects zero or duplicate destinations. Settlement emits the total fee and all three allocations, and any failed transfer reverts the entire settlement.
+The immutable market charges the existing 0.9% provider fee and atomically allocates 100% to the Maintenance Treasury. RewardPool and Risk Reserve allocations are zero while rewards are unavailable. Factory construction still requires nonzero compatibility destinations, but permits the inactive Risk Reserve address to equal maintenance. Settlement emits the total fee and all three allocations, and any failed transfer reverts the entire settlement.
 
 ## Nimiq Pay and NIM boundary
 

@@ -362,13 +362,15 @@ export function supportsOpenEnrollmentProtocol(protocolVersion: string): boolean
     protocolVersion === "lockedin-circle/1.1.0-safe" ||
     protocolVersion === "lockedin-circle/1.2.0-safe" ||
     protocolVersion === "lockedin-circle/1.3.0-safe" ||
-    protocolVersion === "lockedin-circle/1.4.0-safe";
+    protocolVersion === "lockedin-circle/1.4.0-safe" ||
+    protocolVersion === "lockedin-circle/1.5.0-safe";
 }
 
 export function supportsSecureInvitations(protocolVersion: string): boolean {
   return protocolVersion === "lockedin-circle/1.2.0-safe" ||
     protocolVersion === "lockedin-circle/1.3.0-safe" ||
-    protocolVersion === "lockedin-circle/1.4.0-safe";
+    protocolVersion === "lockedin-circle/1.4.0-safe" ||
+    protocolVersion === "lockedin-circle/1.5.0-safe";
 }
 
 export interface VaultSnapshot {
@@ -795,7 +797,8 @@ async function verifyDeploymentOnce(
       factory.getFunction("earlyExitMarket")(),
       factory.getFunction("safetyController")(),
     ]);
-  const productionRoles = String(protocolVersion) === "lockedin-circle/1.4.0-safe"
+  const productionRoles = String(protocolVersion) === "lockedin-circle/1.4.0-safe" ||
+    String(protocolVersion) === "lockedin-circle/1.5.0-safe"
     ? await Promise.all([
         factory.getFunction("rewardPool")(),
         factory.getFunction("riskReserve")(),

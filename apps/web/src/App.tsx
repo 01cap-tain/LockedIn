@@ -1215,13 +1215,16 @@ export function App() {
   );
   const hasContributionPlan = Number(planContribution) > 0;
   const maturityTime = new Date(maturity).getTime();
-  const minimumMaturitySeconds = Number(import.meta.env.VITE_MIN_MATURITY_SECONDS ?? 3_600);
+  const minimumMaturitySeconds = Number(import.meta.env.VITE_MIN_MATURITY_SECONDS ?? 25_200);
+  const minimumMaturityLabel = minimumMaturitySeconds % 3_600 === 0
+    ? `${minimumMaturitySeconds / 3_600} hours`
+    : `${minimumMaturitySeconds / 60} minutes`;
   const minimumMaturityTime = Date.now() + minimumMaturitySeconds * 1_000;
   const maximumMaturityTime = Date.now() + 5 * 365 * 86_400_000;
   const maturityValidationError = !Number.isFinite(maturityTime)
     ? "Choose a valid maturity date."
     : maturityTime < minimumMaturityTime
-      ? `The plan must run for at least ${minimumMaturitySeconds / 60} minutes.`
+      ? `The plan must run for at least ${minimumMaturityLabel}.`
       : maturityTime > maximumMaturityTime
         ? "The plan cannot run for more than 5 years."
         : null;
@@ -3138,10 +3141,20 @@ export function App() {
               )})}
             </nav>
             <div className="drawer-network-note">
-              <span>Test network</span>
-              <strong>Polygon Amoy</strong>
-              <small>Mock assets only. No real funds.</small>
-              {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <small>Test configuration · 10-minute minimum maturity</small>}
+              {import.meta.env.PROD ? (
+                <>
+                  <span>Network</span>
+                  <strong>{networkName}</strong>
+                  <small>USDT savings settled on Polygon.</small>
+                </>
+              ) : (
+                <>
+                  <span>Test network</span>
+                  <strong>Polygon Amoy</strong>
+                  <small>Mock assets only. No real funds.</small>
+                  {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <small>Test configuration · {minimumMaturityLabel} minimum maturity</small>}
+                </>
+              )}
             </div>
           </aside>
         </div>
@@ -3885,7 +3898,7 @@ export function App() {
                   <ClockAlert aria-hidden="true" size={19} strokeWidth={1.5} />
                   <div>
                     <strong>Quick maturity test</strong>
-                    <span>Use the Amoy 10-minute minimum instead of the schedule estimate. A short confirmation buffer is added so the transaction remains valid while you sign.</span>
+                    <span>Use the configured {minimumMaturityLabel} minimum instead of the schedule estimate. A short confirmation buffer is added so the transaction remains valid while you sign.</span>
                   </div>
                   <button aria-pressed={quickTestMaturity} className="secondary compact" onClick={toggleQuickTestMaturity} type="button">
                     {quickTestMaturity ? "Use schedule" : "Use quick test"}
@@ -6059,7 +6072,7 @@ export function App() {
         <span>Mock USDT</span>
         <span>Simulated yield</span>
         <span>Unaudited test deployment</span>
-        {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <span>10-minute test maturity</span>}
+        {import.meta.env.VITE_TEST_CONFIGURATION === "true" && <span>{minimumMaturityLabel} test maturity</span>}
       </aside>}
     </main>
   );
@@ -6216,7 +6229,7 @@ function TradeReceiptCard({
         <dl>
           <div><dt>Listing ID</dt><dd>#{trade.listingId.toString()}</dd></div>
           <div><dt>Position ID</dt><dd>#{trade.positionId.toString()}</dd></div>
-          <div><dt>Network</dt><dd>Polygon Amoy</dd></div>
+          <div><dt>Network</dt><dd>{import.meta.env.VITE_NETWORK_NAME ?? "Polygon"}</dd></div>
           <div><dt>Your role</dt><dd>{isSaver ? "Saver" : "Exit funder"}</dd></div>
           <div><dt>Position type</dt><dd>{vaultType(trade.isGroup)}</dd></div>
           <div><dt>Completed</dt><dd>{trade.timestamp.toLocaleString()}</dd></div>

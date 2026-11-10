@@ -55,8 +55,9 @@ const safetyCouncil = ethers.getAddress(required('POLYGON_SAFETY_COUNCIL_ADDRESS
 const riskReserve = ethers.getAddress(required('POLYGON_RISK_RESERVE_ADDRESS'))
 const maintenanceTreasury = ethers.getAddress(required('POLYGON_MAINTENANCE_TREASURY_ADDRESS'))
 if ([safetyCouncil, riskReserve, maintenanceTreasury].some((address) => address === ethers.ZeroAddress)
-  || new Set([safetyCouncil, riskReserve, maintenanceTreasury].map((address) => address.toLowerCase())).size !== 3) {
-  throw new Error('Safety, risk-reserve and maintenance destinations must be nonzero and distinct.')
+  || safetyCouncil.toLowerCase() === riskReserve.toLowerCase()
+  || safetyCouncil.toLowerCase() === maintenanceTreasury.toLowerCase()) {
+  throw new Error('Safety, risk-reserve and maintenance destinations must be nonzero, and the Safety Council must be distinct from the fee destination.')
 }
 const minimumMaturityDuration = Number(process.env.POLYGON_MIN_MATURITY_SECONDS ?? 25_200)
 assertProductionMaturityConfiguration({ chainId: CHAIN_ID, profile: 'safe-only-v1-production', minimumMaturityDuration })
@@ -126,7 +127,7 @@ const manifest = {
     rewardsEnabled: false,
     minimumMaturitySeconds: minimumMaturityDuration,
     testConfiguration: false,
-    feeDistribution: { rewardPoolBps: 6_000, riskReserveBps: 2_000, maintenanceTreasuryBps: 2_000 },
+    feeDistribution: { rewardPoolBps: 0, riskReserveBps: 0, maintenanceTreasuryBps: 10_000 },
     rewardPool: deployment.records.rewardPool.address,
     riskReserve,
     maintenanceTreasury,

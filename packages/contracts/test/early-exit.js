@@ -142,7 +142,7 @@ describe('EarlyExitMarket deterministic pricing', function () {
       .to.be.revertedWithCustomError(factory, 'EarnDisabled')
   })
 
-  it('splits the 0.9% fee 60/20/20 and emits an exact allocation receipt', async function () {
+  it('routes the complete 0.9% fee to maintenance and emits an exact allocation receipt', async function () {
     const quote = await createListing()
     await fundProvider(providerOne, quote.saverPayout, quote.providerFee)
     const providerBefore = await token.balanceOf(await providerOne.getAddress())
@@ -182,18 +182,19 @@ describe('EarlyExitMarket deterministic pricing', function () {
       .to.equal(allocations.maintenanceAllocation)
     expect(allocations.rewardAllocation + allocations.riskAllocation + allocations.maintenanceAllocation)
       .to.equal(quote.providerFee)
+    expect(allocations.rewardAllocation).to.equal(0n)
+    expect(allocations.riskAllocation).to.equal(0n)
+    expect(allocations.maintenanceAllocation).to.equal(quote.providerFee)
     expect(await rewardPool.protocolRevenue()).to.equal(allocations.rewardAllocation)
     expect(await token.balanceOf(await market.getAddress())).to.equal(0n)
   })
 
-  it('assigns every indivisible fee remainder to maintenance', async function () {
+  it('assigns every fee unit to maintenance', async function () {
     for (const fee of [0n, 1n, 2n, 3n, 4n, 5n, 7n, 11n, 101n, 1_000_003n]) {
       const allocation = await market.feeAllocations(fee)
-      expect(allocation.rewardAllocation).to.equal(fee * 6_000n / 10_000n)
-      expect(allocation.riskAllocation).to.equal(fee * 2_000n / 10_000n)
-      expect(allocation.maintenanceAllocation).to.equal(
-        fee - allocation.rewardAllocation - allocation.riskAllocation,
-      )
+      expect(allocation.rewardAllocation).to.equal(0n)
+      expect(allocation.riskAllocation).to.equal(0n)
+      expect(allocation.maintenanceAllocation).to.equal(fee)
     }
   })
 

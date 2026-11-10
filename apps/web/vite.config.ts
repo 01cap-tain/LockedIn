@@ -41,11 +41,22 @@ const POLYGON_USDT = "0xc2132D05D31c914a87C6611c10748AEb04B58e8F";
 
 function polygonProductionDefinition(mode: string): Record<string, string> {
   if (mode !== "production") return {};
+  const productionRuntime = {
+    "import.meta.env.VITE_EVM_CHAIN_ID": JSON.stringify("0x89"),
+    "import.meta.env.VITE_NETWORK_NAME": JSON.stringify("Polygon"),
+    "import.meta.env.VITE_BLOCK_EXPLORER_URL": JSON.stringify("https://polygonscan.com"),
+    "import.meta.env.VITE_ENABLE_HARDHAT_FALLBACK": JSON.stringify("false"),
+    "import.meta.env.VITE_ENABLE_MOCK_TOKEN_FAUCET": JSON.stringify("false"),
+    "import.meta.env.VITE_ENABLE_MOCK_SWAPS": JSON.stringify("false"),
+    "import.meta.env.VITE_SWAP_ENVIRONMENT": JSON.stringify("production"),
+    "import.meta.env.VITE_SWAP_NIMIQ_NETWORK": JSON.stringify("mainnet"),
+  };
   const manifestPath = path.resolve(
     import.meta.dirname,
     "../../packages/contracts/deployments/polygon/latest.json"
   );
   const blocked = (reason: string) => ({
+    ...productionRuntime,
     "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("false"),
     "import.meta.env.VITE_DEPLOYMENT_BLOCK_REASON": JSON.stringify(reason),
   });
@@ -61,7 +72,7 @@ function polygonProductionDefinition(mode: string): Record<string, string> {
   const minimumMaturity = manifest.factoryConfiguration?.minimumMaturitySeconds ?? 0;
   const productionValid = manifest.schemaVersion >= 6
     && manifest.chainId === 137
-    && manifest.protocolVersion === "lockedin-circle/1.4.0-safe"
+    && manifest.protocolVersion === "lockedin-circle/1.5.0-safe"
     && Boolean(manifest.deploymentId && manifest.deploymentBlock)
     && manifest.contracts?.usdt?.address?.toLowerCase() === POLYGON_USDT.toLowerCase()
     && Boolean(manifest.contracts?.rewardPool?.address)
@@ -70,15 +81,16 @@ function polygonProductionDefinition(mode: string): Record<string, string> {
     && Boolean(manifest.contracts?.safetyController?.address)
     && Boolean(manifest.factoryConfiguration?.riskReserve)
     && Boolean(manifest.factoryConfiguration?.maintenanceTreasury)
-    && manifest.factoryConfiguration?.feeDistribution?.rewardPoolBps === 6_000
-    && manifest.factoryConfiguration?.feeDistribution?.riskReserveBps === 2_000
-    && manifest.factoryConfiguration?.feeDistribution?.maintenanceTreasuryBps === 2_000
+    && manifest.factoryConfiguration?.feeDistribution?.rewardPoolBps === 0
+    && manifest.factoryConfiguration?.feeDistribution?.riskReserveBps === 0
+    && manifest.factoryConfiguration?.feeDistribution?.maintenanceTreasuryBps === 10_000
     && minimumMaturity >= 25_200
     && manifest.factoryConfiguration?.testConfiguration === false;
   if (!productionValid) {
     return blocked("The Polygon mainnet manifest failed production identity, asset, version, or maturity validation.");
   }
   return {
+    ...productionRuntime,
     "import.meta.env.VITE_DEPLOYMENT_READY": JSON.stringify("true"),
     "import.meta.env.VITE_FACTORY_ADDRESS": JSON.stringify(manifest.contracts.vaultFactory.address),
     "import.meta.env.VITE_CONTRACT_START_BLOCK": JSON.stringify(String(manifest.contracts.vaultFactory.blockNumber)),
@@ -180,8 +192,9 @@ function amoyFactoryDefinition(mode: string): Record<string, string> {
   };
 }
 
-export default defineConfig(({ mode }) => ({
-  plugins: [
+export default defineConfig(({ mode }) => {
+  return {
+    plugins: [
     react(),
     ...(mode === "production" ? [{
       name: "production-facing-copy",
@@ -197,10 +210,10 @@ export default defineConfig(({ mode }) => ({
           .replace(/test deployment/gi, "deployment");
       },
     }] : []),
-  ],
-  envDir: "../../",
-  define: { ...amoyFactoryDefinition(mode), ...polygonProductionDefinition(mode) },
-  server: {
+    ],
+    envDir: "../../",
+    define: { ...amoyFactoryDefinition(mode), ...polygonProductionDefinition(mode) },
+    server: {
     host: true,
     port: 5173,
     // Never hide a stale build by silently opening 5174/5175. The developer
@@ -215,8 +228,8 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: false,
       },
     },
-  },
-  build: {
+    },
+    build: {
     rollupOptions: {
       output: {
         // Wallet and chain libraries change independently from application UI.
@@ -229,5 +242,6 @@ export default defineConfig(({ mode }) => ({
         },
       },
     },
-  },
-}));
+    },
+  };
+});

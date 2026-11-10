@@ -50,7 +50,7 @@ forkDescribe('Safe-only V1 against Polygon production USDT (optional fork)', fun
       minimumMaturityDuration: 24 * 60 * 60,
     })
     expect(await deployment.factory.asset()).to.equal(polygonAaveConfig.usdt)
-    expect(await deployment.factory.PROTOCOL_VERSION()).to.equal('lockedin-circle/1.4.0-safe')
+    expect(await deployment.factory.PROTOCOL_VERSION()).to.equal('lockedin-circle/1.5.0-safe')
     const latest = await ethers.provider.getBlock('latest')
     await expect(deployment.factory.createPersonalVault(
       100n * unit,

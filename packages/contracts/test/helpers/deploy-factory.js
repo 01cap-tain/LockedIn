@@ -32,7 +32,7 @@ export async function deployFactory(
     maxPositionPrincipal = 1_000_000n * UNIT,
     maxVaultPrincipal = 10_000_000n * UNIT,
     maxProtocolPrincipal = 100_000_000n * UNIT,
-    minimumMaturityDuration = 10 * 60,
+    minimumMaturityDuration = 7 * 60 * 60,
     epochDuration = 30 * 24 * 60 * 60,
     registrationGrace = 3 * 24 * 60 * 60,
     minimumRewardTarget = 10n * UNIT,

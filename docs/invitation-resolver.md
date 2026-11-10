@@ -8,4 +8,4 @@ PostgreSQL availability is required to resolve a short code. Loss or downtime ca
 
 Verified usernames are a signed-wallet profile index. They resolve only to the wallet that registered the name through a current signed session. The resolved Polygon address is shown for confirmation and remains the identity passed to the contract.
 
-Amoy protocol 1.3 deployments use an immutable 600-second minimum maturity. Production preparation rejects development profiles, non-Polygon-mainnet chain IDs and any minimum below 86,400 seconds. Existing vault timestamps and previously deployed factories are not changed.
+Historical Amoy protocol 1.3 deployments use an immutable 600-second minimum maturity. Protocol 1.5 factories require at least 25,200 seconds on every chain, and production preparation also rejects development profiles or non-Polygon-mainnet chain IDs. Existing vault timestamps and previously deployed factories are not changed.

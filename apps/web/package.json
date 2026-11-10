@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && node scripts/build-production.js",
     "build:amoy": "tsc -b && vite build --mode amoy",
     "dev": "vite",
     "dev:amoy": "vite --mode amoy",

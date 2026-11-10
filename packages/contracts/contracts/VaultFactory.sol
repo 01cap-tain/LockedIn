@@ -13,12 +13,12 @@ import {RewardPool} from "./RewardPool.sol";
 /// @dev The factory creates infrastructure but receives no authority over member principal.
 contract VaultFactory {
     /// @notice Human-readable release family included in the immutable deployment fingerprint.
-    string public constant PROTOCOL_VERSION = "lockedin-circle/1.4.0-safe";
+    string public constant PROTOCOL_VERSION = "lockedin-circle/1.5.0-safe";
     uint256 public constant POLYGON_MAINNET_CHAIN_ID = 137;
     uint64 public constant POLYGON_MAINNET_MINIMUM_MATURITY_DURATION = 7 hours;
     uint256 public constant MIN_GROUP_MEMBERS = 4;
     uint256 public constant MAX_GROUP_MEMBERS = 50;
-    uint64 public constant MIN_CONFIGURABLE_MATURITY_DURATION = 10 minutes;
+    uint64 public constant MIN_CONFIGURABLE_MATURITY_DURATION = 7 hours;
     uint64 public constant MAX_CONFIGURABLE_MATURITY_DURATION = 5 * 365 days;
 
     error InvalidConfiguration();
@@ -67,7 +67,6 @@ contract VaultFactory {
             address(rewardPool_) == address(0) || address(rewardPool_).code.length == 0 ||
             riskReserve_ == address(0) || maintenanceTreasury_ == address(0) ||
             address(rewardPool_) == riskReserve_ || address(rewardPool_) == maintenanceTreasury_ ||
-            riskReserve_ == maintenanceTreasury_ ||
             address(rewardPool_) == address(asset_) || riskReserve_ == address(asset_) ||
             maintenanceTreasury_ == address(asset_) ||
             maintenanceTreasury_ == address(this) ||

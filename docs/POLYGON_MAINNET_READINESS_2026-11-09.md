@@ -21,14 +21,14 @@ Deployment must use a clean, committed source tree. The eventual manifest must r
 
 - Chain: Polygon mainnet (`137`, `0x89`)
 - Asset: official Polygon USDT, six decimals
-- Protocol version expected by the frontend: `lockedin-circle/1.4.0-safe`
+- Protocol version expected by the frontend: `lockedin-circle/1.5.0-safe`
 - Mode: Safe-only
 - Earn/Aave: disabled and not part of the deployment graph
 - Rewards: unavailable in V1
 - Minimum maturity: 25,200 seconds (seven hours)
 - Maximum maturity: five years
 - Early-exit provider fee: 0.9%
-- Fee routing: 60% RewardPool, 20% risk reserve, 20% maintenance treasury
+- Fee routing: 100% maintenance treasury; RewardPool and risk-reserve allocations are zero while rewards are unavailable
 - Upgradeability: none
 
 ## Deployment graph
@@ -51,7 +51,7 @@ The read-only preflight stopped before gas-cost and nonce calculation because:
 - `POLYGON_RISK_RESERVE_ADDRESS`
 - `POLYGON_MAINTENANCE_TREASURY_ADDRESS`
 
-currently resolve to the same address. Production requires three distinct, nonzero destinations.
+currently resolve to the same address. The risk-reserve compatibility address may match maintenance because its allocation is zero, but the Safety Council must remain a distinct security authority.
 
 The following launch caps are also not stored in the local production configuration:
 
@@ -89,11 +89,11 @@ Market settlement transfers only the locked position claim. It does not transfer
 - Settlement reverts below the saver-recorded minimum payout.
 - The first successful provider settlement wins.
 
-## Safe-vault reward incompatibility
+## Safe-vault reward isolation
 
 The approved product rule is that Safe vaults receive no rewards. Rewards belong only to the future Earn mode, which is not implemented in Safe-only V1.
 
-The current market implementation nevertheless sends 60% of every Safe-position provider fee to `RewardPool`. Safe-only V1 vaults cannot activate or claim those funds, and `RewardPool` has no administrator sweep. The implementation therefore conflicts with the approved Safe-vault reward rule and must be resolved before deployment. A replacement destination or revised fee allocation cannot be inferred safely without explicit product approval.
+Safe-only V1 sends no provider fee to `RewardPool`. The complete 0.9% provider fee is transferred atomically to the immutable maintenance treasury. The retained RewardPool contract receives no early-exit revenue and cannot make Safe-vault rewards available.
 
 ## Validation results
 
@@ -124,7 +124,7 @@ Contract sizes:
 - API suite: 9 tests passed, but the PostgreSQL integration setup timed out and two integration cases were skipped. The local configuration uses Render's private/internal database URL, which is not reachable from the local computer. Re-run from Render or use Render's external database URL locally.
 - Production dependency audit: one high-severity transitive `zod@3.25.76` advisory. The API directly uses patched `zod@4.6.7`; the reported v3 dependency comes through contract tooling/dependencies, but the audit is not clean.
 - Slither: unavailable, so no current static-analysis report exists.
-- Polygon Safe-only live preflight: failed because governance and fee destinations are not distinct.
+- Polygon Safe-only live preflight must be rerun after configuring a Safety Council distinct from the maintenance/fee address.
 - Polygon mainnet manifest and explorer verification: unavailable because deployment has not occurred.
 
 ## Backend and database
@@ -156,7 +156,7 @@ The frontend production build intentionally disables contract actions until a re
 ## Required actions before GO
 
 1. Commit and validate the requested landing-site removal and preflight correction.
-2. Configure three distinct reviewed Safety Council, risk-reserve, and maintenance addresses.
+2. Configure a reviewed Safety Council that is distinct from the maintenance/fee address.
 3. Confirm the approved 5,000 / 25,000 / 50,000 USDT exposure caps.
 4. Run the Safe-only read-only preflight successfully.
 5. Record the exact cost ceiling, pending deployer nonce, predicted addresses, constructors, bytecode hashes, and clean Git commit.
@@ -164,6 +164,6 @@ The frontend production build intentionally disables contract actions until a re
 7. Install and run Slither, then resolve or document every finding.
 8. Run PostgreSQL integration tests successfully against a reachable isolated database.
 9. Obtain an independent smart-contract security review before accepting meaningful real-fund exposure.
-10. Correct the Safe-position provider-fee routing so it does not fund an unavailable Safe reward.
+10. Confirm the immutable 100% maintenance provider-fee routing in the final preflight manifest.
 11. Set `POLYGON_DEPLOYMENT_APPROVED=I_APPROVE_THE_EXACT_MANIFEST` only after the final plan is approved.
 

@@ -16,12 +16,12 @@ export async function deploySafeV1Graph({
   minimumRewardTarget = 10n * 10n ** 6n,
   minimumRewardSavingDuration = 7 * 60 * 60,
 }) {
-  if (!Number.isSafeInteger(minimumMaturityDuration) || minimumMaturityDuration < 600) {
-    throw new Error('minimumMaturityDuration must be at least 600 seconds.')
+  if (!Number.isSafeInteger(minimumMaturityDuration) || minimumMaturityDuration < 25_200) {
+    throw new Error('minimumMaturityDuration must be at least 25,200 seconds.')
   }
   const deployerAddress = await deployer.getAddress()
   const nonce = await ethers.provider.getTransactionCount(deployerAddress, 'pending')
-  if (!riskReserve) throw new Error('riskReserve is required for the immutable 60/20/20 fee split.')
+  if (!riskReserve) throw new Error('riskReserve compatibility address is required even though Safe-only fees route to maintenance.')
   const predictedFactory = ethers.getCreateAddress({ from: deployerAddress, nonce: nonce + 3 })
   const safetyArguments = [
     predictedFactory,

@@ -44,8 +44,10 @@ contract EarlyExitMarket is ReentrancyGuard {
     uint16 public constant MIN_DISCOUNT_BPS = 450;
     uint16 public constant MAX_DISCOUNT_BPS = 800;
     uint16 public constant PROVIDER_FEE_BPS = 90;
-    uint16 public constant REWARD_POOL_SHARE_BPS = 6_000;
-    uint16 public constant RISK_RESERVE_SHARE_BPS = 2_000;
+    // Rewards and risk-reserve funding are deliberately disabled for the
+    // Safe-only launch. The full provider fee is routed to maintenance.
+    uint16 public constant REWARD_POOL_SHARE_BPS = 0;
+    uint16 public constant RISK_RESERVE_SHARE_BPS = 0;
 
     // A 15% Aave liquidity rate maps to the full 75-basis-point liquidity-risk penalty.
     // This is a deterministic utilization proxy, not a prediction of future Aave performance.
@@ -156,7 +158,6 @@ contract EarlyExitMarket is ReentrancyGuard {
                 || riskReserve_ == address(0) || maintenanceTreasury_ == address(0)
                 || rewardPool_ == riskReserve_
                 || rewardPool_ == maintenanceTreasury_
-                || riskReserve_ == maintenanceTreasury_
                 || rewardPool_ == address(asset_) || riskReserve_ == address(asset_)
                 || maintenanceTreasury_ == address(this)
                 || maintenanceTreasury_ == address(asset_)
@@ -286,7 +287,9 @@ contract EarlyExitMarket is ReentrancyGuard {
             rewardPool.receiveProtocolRevenue(rewardAllocation);
             asset.forceApprove(address(rewardPool), 0);
         }
-        _transferOutExact(riskReserve, riskAllocation);
+        if (riskAllocation != 0) {
+            _transferOutExact(riskReserve, riskAllocation);
+        }
         _transferOutExact(maintenanceTreasury, maintenanceAllocation);
         vault.transferPosition(listing.positionId, listing.seller, msg.sender);
 
@@ -327,7 +330,7 @@ contract EarlyExitMarket is ReentrancyGuard {
         return saverPayout * PROVIDER_FEE_BPS / 10_000;
     }
 
-    /// @notice Splits a fee 60/20/20; indivisible remainder is assigned to maintenance.
+    /// @notice Routes the complete provider fee to maintenance while rewards are disabled.
     function feeAllocations(uint256 providerFee)
         public
         pure

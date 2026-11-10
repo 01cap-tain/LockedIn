@@ -28,7 +28,7 @@ contract SavingsVault is ReentrancyGuard {
     uint16 public constant MIN_GROUP_EXIT_APPROVAL_PROGRESS_BPS = 2_500;
     uint256 public constant MIN_GROUP_SIZE = 4;
     uint256 public constant MIN_ACTIVE_MEMBERS_AFTER_COOPERATIVE_EXIT = 2;
-    uint64 public constant LOWEST_CONFIGURABLE_MATURITY_DURATION = 10 minutes;
+    uint64 public constant LOWEST_CONFIGURABLE_MATURITY_DURATION = 7 hours;
     uint64 public constant MAX_MATURITY_DURATION = 5 * 365 days;
 
     enum VaultMode { Safe, Earn }

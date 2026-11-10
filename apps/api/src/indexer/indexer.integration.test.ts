@@ -121,7 +121,7 @@ config.deployments = [{
 }]
 
 describeDatabase('PostgreSQL indexer persistence and reorganization recovery', () => {
-  let database: IsolatedDatabase
+  let database: IsolatedDatabase | undefined
   let pool: DatabasePool
 
   beforeAll(async () => {
@@ -131,7 +131,7 @@ describeDatabase('PostgreSQL indexer persistence and reorganization recovery', (
   })
 
   afterAll(async () => {
-    await database.close()
+    await database?.close()
   })
 
   it('applies migrations idempotently', async () => {

@@ -189,7 +189,7 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await market.positionSold(await vault.getAddress(), 0)).to.equal(false)
   })
 
-  it('fuzzes the 0.9% fee calculation and exact 60/20/20 allocation', async function () {
+  it('fuzzes the 0.9% fee calculation and exact maintenance allocation', async function () {
     const values = [1n, 2n, 10n, 111n, 112n, 999n, UNIT, 17n * UNIT, 999_999n * UNIT]
     for (let discount = 450; discount <= 800; discount += 7) {
       for (const positionValue of values) {
@@ -199,8 +199,9 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
         const allocation = await market.feeAllocations(fee)
         expect(allocation.rewardAllocation + allocation.riskAllocation + allocation.maintenanceAllocation)
           .to.equal(fee)
-        expect(allocation.rewardAllocation).to.equal(fee * 6_000n / 10_000n)
-        expect(allocation.riskAllocation).to.equal(fee * 2_000n / 10_000n)
+        expect(allocation.rewardAllocation).to.equal(0n)
+        expect(allocation.riskAllocation).to.equal(0n)
+        expect(allocation.maintenanceAllocation).to.equal(fee)
       }
     }
   })
@@ -336,7 +337,20 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
     expect(await feeMarket.positionSold(await feeVault.getAddress(), 0)).to.equal(false)
   })
 
-  it('rejects duplicate treasury and group-member addresses', async function () {
+  it('allows one inactive risk and maintenance destination while rejecting invalid treasury and group inputs', async function () {
+    const sharedFeeDestination = await maintenanceTreasury.getAddress()
+    const sharedDeployment = await deployFactory(ethers, [
+      await token.getAddress(),
+      sharedFeeDestination,
+      sharedFeeDestination,
+      ethers.ZeroAddress,
+      ethers.ZeroAddress,
+      31_337,
+      ethers.ZeroAddress,
+    ], await riskReserve.getAddress())
+    expect(await sharedDeployment.factory.riskReserve()).to.equal(sharedFeeDestination)
+    expect(await sharedDeployment.factory.maintenanceTreasury()).to.equal(sharedFeeDestination)
+
     await expect(
       deployFactory(ethers, [
         await outsider.getAddress(),
@@ -390,6 +404,22 @@ describe('Phase 1 and 2A checkpoint invariants', function () {
       await expect(vault.connect(account).withdrawEmergency(0, UNIT)).to.be.revertedWithCustomError(vault, 'MemberOnly')
       await expect(vault.connect(account).withdrawLocked(0)).to.be.revertedWithCustomError(vault, 'PositionOwnerOnly')
     }
+
+    const safetyCouncil = riskReserve
+    const ownerBefore = await vault.positionOwner(0)
+    const quote = await market.referenceDiscount(await vault.getAddress(), 0)
+    const payout = await market.payoutFor(await vault.positionValue(0), quote.discountBps)
+    await expect(
+      market.connect(safetyCouncil).createListing(await vault.getAddress(), 0, maturity, payout),
+    ).to.be.revertedWithCustomError(market, 'PositionOwnerOnly')
+    await expect(
+      vault.connect(safetyCouncil).transferPosition(0, ownerBefore, await safetyCouncil.getAddress()),
+    ).to.be.revertedWithCustomError(vault, 'MarketOnly')
+    expect(await vault.positionOwner(0)).to.equal(ownerBefore)
+
+    await market.connect(saver).createListing(await vault.getAddress(), 0, maturity, payout)
+    await expect(market.connect(safetyCouncil).fundListing(0)).to.revert(ethers)
+    expect(await vault.positionOwner(0)).to.equal(ownerBefore)
 
     for (const address of [await factory.getAddress(), await market.getAddress()]) {
       await networkHelpers.setBalance(address, 10n ** 18n)
