@@ -4,6 +4,7 @@ import {
   Contract,
   Interface,
   JsonRpcProvider,
+  VoidSigner,
   formatUnits,
   getAddress,
   hexlify,
@@ -321,6 +322,10 @@ function publicReadProvider(preferredProvider?: Provider | null): Provider {
   throw new Error(
     "Configure VITE_PUBLIC_RPC_URL to read public vaults without a wallet."
   );
+}
+
+function publicReadSigner(): Signer {
+  return new VoidSigner("0x0000000000000000000000000000000000000001", publicReadProvider());
 }
 
 export interface CreateVaultInput {
@@ -879,6 +884,22 @@ export async function verifyDeployment(
       return !message.includes("Deployment mismatch");
     }
   );
+}
+
+/** Verifies immutable deployment identity without depending on a wallet RPC bridge. */
+export async function verifyPublicDeployment(): Promise<DeploymentVerification> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await verifyDeployment(publicReadSigner());
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Deployment mismatch") || attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 async function marketFor(signer: Signer): Promise<Contract> {
@@ -2771,6 +2792,13 @@ export async function loadAllExitListings(
       loadExitListingFromMarket(signer, marketAddress, listingId)
     )
   );
+}
+
+/** Public market discovery uses the configured read RPC; signing remains wallet-only. */
+export async function loadPublicExitListings(
+  indexedListings?: Array<{ listingId: bigint; marketAddress: string }>
+): Promise<ExitListingSnapshot[]> {
+  return loadAllExitListings(publicReadSigner(), indexedListings);
 }
 
 export async function createExitListing(

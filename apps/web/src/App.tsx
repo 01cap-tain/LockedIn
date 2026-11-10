@@ -19,6 +19,7 @@ import {
   encodeGroupInvitation,
   loadActivity,
   loadAllExitListings,
+  loadPublicExitListings,
   loadPublicCompletedTrades,
   loadPublicGroups,
   loadActiveSecureGroupInvitation,
@@ -47,6 +48,7 @@ import {
   withdrawEmergency,
   withdrawLocked,
   verifyDeployment,
+  verifyPublicDeployment,
   warmTransactionPreflight,
   type ActivityItem,
   type CompletedTrade,
@@ -87,6 +89,11 @@ import { GroupCashAnimation } from "./components/GroupCashAnimation";
 import { LoadingAnimation } from "./components/LoadingAnimation";
 import { WheelDatePicker } from "./components/WheelDatePicker";
 import { SavingsLockAnimation } from "./components/SavingsLockAnimation";
+import { OnboardingGuide } from "./components/OnboardingGuide";
+import {
+  markOnboardingComplete,
+  onboardingIsComplete,
+} from "./lib/onboarding";
 import {
   allocationAmounts,
   EmergencyAllocationSlider,
@@ -499,14 +506,6 @@ function displayBalance(value: string | null, maximumFractionDigits = 2): string
   });
 }
 
-function onboardingStorageKey(
-  chainId: string,
-  address: string,
-  deploymentId: string
-): string {
-  return `lockedin:onboarding:v3:${chainId.toLowerCase()}:${deploymentId.toLowerCase()}:${address.toLowerCase()}`;
-}
-
 function contributionPlanText(
   contributionAmount: number | null | undefined,
   frequency: ContributionFrequency,
@@ -901,22 +900,26 @@ function FirstLoadGate({ stage, onUnlock }: { stage: EntryStage; onUnlock: () =>
   const checked = stage === "locking";
   return (
     <main className="first-load-gate lock-stage">
-      <input
-        aria-label="Unlock LockedIn Circle"
-        checked={checked}
-        className="entry-lock-input"
-        disabled={checked}
-        id="lockedin-entry-lock"
-        onChange={onUnlock}
-        type="checkbox"
-      />
-      <label className="entry-lock-button" htmlFor="lockedin-entry-lock">
-        <svg aria-hidden="true" width="36" height="40" viewBox="0 0 36 40">
-          <path className="entry-lock-body" d="M27 27C27 34.1797 21.1797 40 14 40C6.8203 40 1 34.1797 1 27C1 19.8203 6.8203 14 14 14C21.1797 14 27 19.8203 27 27ZM15.6298 26.5191C16.4544 25.9845 17 25.056 17 24C17 22.3431 15.6569 21 14 21C12.3431 21 11 22.3431 11 24C11 25.056 11.5456 25.9845 12.3702 26.5191L11 32H17L15.6298 26.5191Z" />
-          <path className="entry-lock-shackle" d="M6 21V10C6 5.58172 9.58172 2 14 2C18.4183 2 22 5.58172 22 10V21" />
-          <path className="entry-lock-bling" d="M29 20L31 22M31.5 15H34.5M29 10L31 8" />
-        </svg>
-      </label>
+      <div className="entry-lock-prompt">
+        <input
+          aria-label="Unlock LockedIn Circle"
+          checked={checked}
+          className="entry-lock-input"
+          disabled={checked}
+          id="lockedin-entry-lock"
+          onChange={onUnlock}
+          type="checkbox"
+        />
+        <label className="entry-lock-button" htmlFor="lockedin-entry-lock">
+          <svg aria-hidden="true" width="36" height="40" viewBox="0 0 36 40">
+            <path className="entry-lock-body" d="M27 27C27 34.1797 21.1797 40 14 40C6.8203 40 1 34.1797 1 27C1 19.8203 6.8203 14 14 14C21.1797 14 27 19.8203 27 27ZM15.6298 26.5191C16.4544 25.9845 17 25.056 17 24C17 22.3431 15.6569 21 14 21C12.3431 21 11 22.3431 11 24C11 25.056 11.5456 25.9845 12.3702 26.5191L11 32H17L15.6298 26.5191Z" />
+            <path className="entry-lock-shackle" d="M6 21V10C6 5.58172 9.58172 2 14 2C18.4183 2 22 5.58172 22 10V21" />
+            <path className="entry-lock-bling" d="M29 20L31 22M31.5 15H34.5M29 10L31 8" />
+          </svg>
+        </label>
+        <strong>{checked ? "Opening LockedIn…" : "Tap the lock to continue"}</strong>
+        <span>{checked ? "Preparing your savings space" : "Your guide starts inside"}</span>
+      </div>
     </main>
   );
 }
@@ -1059,7 +1062,6 @@ export function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
-  const onboardingTouchStart = useRef<number | null>(null);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileUsernameDraft, setProfileUsernameDraft] = useState("");
   const [editingProfileUsername, setEditingProfileUsername] = useState(false);
@@ -1362,6 +1364,7 @@ export function App() {
   const selectedListing = exitState?.listing;
   const listingFundingError = (() => {
     if (!selectedListing || purchaseAsset !== "usdt") return null;
+    if (!walletAccessReady) return null;
     if (selectedListing.seller.toLowerCase() === connectedAddress)
       return "You cannot fund your own savings exit. Switch to a different provider wallet.";
     if (selectedListing.expiresAt.getTime() <= clock)
@@ -1657,32 +1660,30 @@ export function App() {
   }, [evmSession?.address, evmSession?.chainId, profileOpen]);
 
   useEffect(() => {
-    if (!evmSession || deployment.status !== "valid") return;
-    const key = onboardingStorageKey(
-      evmSession.chainId,
-      evmSession.address,
-      deployment.value.deploymentId
-    );
+    if (!walletAccessReady || !evmSession || deployment.status !== "valid") return;
     try {
-      if (window.localStorage.getItem(key) === "complete") return;
+      if (onboardingIsComplete(
+        window.localStorage,
+        evmSession.chainId,
+        evmSession.address,
+        deployment.value.deploymentId
+      )) return;
     } catch {
       // Storage can be unavailable in a privacy-restricted wallet webview. In
       // that case, showing the guide is safer than silently skipping it.
     }
     setOnboardingStep(0);
     setOnboardingOpen(true);
-  }, [evmSession?.address, evmSession?.chainId, deployment.status]);
+  }, [walletAccessReady, evmSession?.address, evmSession?.chainId, deployment.status]);
 
   function finishOnboarding(): void {
     if (evmSession && deployment.status === "valid") {
       try {
-        window.localStorage.setItem(
-          onboardingStorageKey(
-            evmSession.chainId,
-            evmSession.address,
-            deployment.value.deploymentId
-          ),
-          "complete"
+        markOnboardingComplete(
+          window.localStorage,
+          evmSession.chainId,
+          evmSession.address,
+          deployment.value.deploymentId
         );
       } catch {
         // The guide still closes for this session when persistent storage is
@@ -1693,7 +1694,10 @@ export function App() {
   }
 
   useEffect(() => {
-    if (route === "discover" || walletAccessReady) return;
+    // Home and the provider-facing market are public read-only surfaces.
+    // Every route that can expose user state or initiate a write remains
+    // behind both required wallet connections and deployment verification.
+    if (route === "discover" || route === "market" || walletAccessReady) return;
     window.history.replaceState(null, "", "#/discover");
     setRoute("discover");
     setPendingGroup(null);
@@ -1775,20 +1779,25 @@ export function App() {
   }, [deploymentReady, evmSession?.address, deployment.status]);
 
   useEffect(() => {
-    if (!evmSession || deployment.status !== "valid" || route !== "market") return;
+    if (!deploymentReady || route !== "market") return;
     const refresh = async () => {
       try {
         const indexed = indexedApiAvailable()
           ? await loadIndexedActiveListingIds()
           : undefined;
-        setListings(await loadAllExitListings(evmSession.signer, indexed));
+        setListings(await (
+          evmSession && deployment.status === "valid"
+            ? loadAllExitListings(evmSession.signer, indexed)
+            : loadPublicExitListings(indexed)
+        ));
       } catch (error) {
         console.warn("Live exit-market refresh deferred", error);
       }
     };
+    void refresh();
     const timer = window.setInterval(() => void refresh(), 15_000);
     return () => window.clearInterval(timer);
-  }, [route, evmSession?.address, deployment.status]);
+  }, [deploymentReady, route, evmSession?.address, deployment.status]);
 
   useEffect(() => {
     if (!snapshot || !evmSession || deployment.status !== "valid") return;
@@ -1913,6 +1922,12 @@ export function App() {
       const wallet = await connectNimiqWallet();
       setNimiq({ status: "connected", wallet });
       setNimBalanceLuna(await loadNimBalance(wallet.address));
+      // Polygon can connect before a temporary deployment-read failure. Retry
+      // automatically when the second required wallet arrives so a healthy
+      // connection never leaves the user on a manual retry screen.
+      if (evmSession && deploymentReady && deployment.status !== "valid") {
+        await verifyConnectedDeployment(evmSession);
+      }
     } catch (error) {
       setNimiq({
         status: "error",
@@ -1962,7 +1977,16 @@ export function App() {
   ): Promise<boolean> {
     setDeployment({ status: "checking" });
     try {
-      const verified = await verifyDeployment(session.signer);
+      let verified: DeploymentVerification;
+      try {
+        // Contract identity is public state. Prefer the configured RPC so a
+        // slow wallet bridge cannot turn a successful connection into a false
+        // deployment failure.
+        verified = await verifyPublicDeployment();
+      } catch (publicReadError) {
+        console.warn("Public deployment verification deferred to wallet provider", publicReadError);
+        verified = await verifyDeployment(session.signer);
+      }
       setDeployment({ status: "valid", value: verified });
       return true;
     } catch (error) {
@@ -2196,10 +2220,7 @@ export function App() {
       setSnapshot(null);
       setExitState(null);
     }
-    if (
-      nextRoute !== "discover" && nextRoute !== "rewards" &&
-      !walletAccessReady
-    ) {
+    if (nextRoute !== "discover" && nextRoute !== "market" && !walletAccessReady) {
       setPendingGroup(null);
       setConnectionSheetOpen(true);
       return;
@@ -3038,102 +3059,12 @@ export function App() {
         </div>
       </header>
 
-      {onboardingOpen && evmSession && (
-        <div className="overlay-layer onboarding-layer">
-          <button aria-label="Close onboarding guide" className="overlay-backdrop" onClick={finishOnboarding} type="button" />
-          <section
-            className="onboarding-sheet"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="onboarding-title"
-            onTouchStart={(event) => {
-              onboardingTouchStart.current = event.changedTouches[0]?.clientX ?? null;
-            }}
-            onTouchEnd={(event) => {
-              if (onboardingTouchStart.current === null) return;
-              const distance = (event.changedTouches[0]?.clientX ?? onboardingTouchStart.current) - onboardingTouchStart.current;
-              onboardingTouchStart.current = null;
-              if (Math.abs(distance) < 48) return;
-              setOnboardingStep((step) => distance < 0 ? Math.min(3, step + 1) : Math.max(0, step - 1));
-            }}
-          >
-            <div className="sheet-grabber" />
-            <header className="onboarding-header">
-              <div>
-                <span className="eyebrow">Quick guide</span>
-                <strong>How LockedIn works</strong>
-                <small>Swipe or use Continue to follow each action</small>
-              </div>
-              <button className="text-action" onClick={finishOnboarding} type="button">Skip</button>
-            </header>
-            <div className="onboarding-progress" aria-label={`Onboarding step ${onboardingStep + 1} of 4`}>
-              {[0, 1, 2, 3].map((step) => <i className={step <= onboardingStep ? "active" : ""} key={step} />)}
-            </div>
-            <div className="onboarding-content" key={onboardingStep}>
-              {onboardingStep === 0 && (
-                <>
-                  <div className="onboarding-visual goal-visual" aria-hidden="true">
-                    <span><Wallet size={25} /></span>
-                    <div><small>Your savings</small><strong>Total, progress and next goal</strong><i><b /></i></div>
-                    <House size={20} />
-                  </div>
-                  <span className="onboarding-kicker">Home</span>
-                  <h2 id="onboarding-title">See your savings at a glance.</h2>
-                  <p>The Home card shows your total saved, combined goal, progress and next maturity. Press and hold any corner to interact with the card.</p>
-                  <div className="onboarding-location"><House aria-hidden="true" size={17} /><span><strong>Home tab</strong><small>Your overview and next contribution</small></span><MoveRight aria-hidden="true" size={17} /></div>
-                </>
-              )}
-              {onboardingStep === 1 && (
-                <>
-                  <div className="onboarding-visual split-visual" aria-hidden="true">
-                    <span><Plus size={24} /></span>
-                    <i />
-                    <div><small>Add savings</small><CirclePlus size={18} /></div>
-                    <div><small>Create goal</small><Target size={18} /></div>
-                  </div>
-                  <span className="onboarding-kicker">Quick actions</span>
-                  <h2 id="onboarding-title">Use Plus for your main actions.</h2>
-                  <p>Add savings, withdraw emergency funds, create a personal goal or start a savings circle from one compact menu.</p>
-                  <div className="onboarding-location"><Plus aria-hidden="true" size={17} /><span><strong>Plus button</strong><small>At the bottom-right of every main page</small></span><MoveRight aria-hidden="true" size={17} /></div>
-                </>
-              )}
-              {onboardingStep === 2 && (
-                <>
-                  <div className="onboarding-visual circle-visual" aria-hidden="true">
-                    <span><Target size={17} /></span><span><UsersRound size={17} /></span><span><Wallet size={17} /></span><span><BadgeCheck size={17} /></span>
-                    <div><Vault size={25} /></div>
-                  </div>
-                  <span className="onboarding-kicker">Vaults</span>
-                  <h2 id="onboarding-title">Open a vault to manage it.</h2>
-                  <p>Personal goals, circles and purchased positions appear together. Open one to add savings, check maturity or withdraw available emergency funds.</p>
-                  <div className="onboarding-location"><Wallet aria-hidden="true" size={17} /><span><strong>Vaults tab</strong><small>Your active, completed and purchased positions</small></span><MoveRight aria-hidden="true" size={17} /></div>
-                </>
-              )}
-              {onboardingStep === 3 && (
-                <>
-                  <div className="onboarding-visual exit-visual" aria-hidden="true">
-                    <span><Vault size={22} /><small>Savings</small></span>
-                    <ArrowRight size={18} />
-                    <span><HandCoins size={22} /><small>Early payout</small></span>
-                  </div>
-                  <span className="onboarding-kicker">If plans change</span>
-                  <h2 id="onboarding-title">Request an early savings exit.</h2>
-                  <p>The contract calculates the discount. You set a minimum payout, and the first funder to complete it receives the locked position.</p>
-                  <div className="onboarding-location"><ArrowUpDown aria-hidden="true" size={17} /><span><strong>Exits tab</strong><small>Request an exit or fund an available request</small></span><MoveRight aria-hidden="true" size={17} /></div>
-                  {!import.meta.env.PROD && <div className="onboarding-testnet"><AlertTriangle aria-hidden="true" size={17} /><span>This alpha uses MockUSDT on Polygon Amoy. It has no real value, and POL is needed only for testnet fees.</span></div>}
-                </>
-              )}
-            </div>
-            <footer className="onboarding-actions">
-              <button className="secondary" disabled={onboardingStep === 0} onClick={() => setOnboardingStep((step) => Math.max(0, step - 1))} type="button"><ArrowLeft aria-hidden="true" size={16} />Back</button>
-              {onboardingStep < 3 ? (
-                <button className="primary" onClick={() => setOnboardingStep((step) => Math.min(3, step + 1))} type="button">Continue<ArrowRight aria-hidden="true" size={16} /></button>
-              ) : (
-                <button className="primary" onClick={finishOnboarding} type="button">Start saving<CircleCheckBig aria-hidden="true" size={17} /></button>
-              )}
-            </footer>
-          </section>
-        </div>
+      {onboardingOpen && walletAccessReady && evmSession && (
+        <OnboardingGuide
+          onFinish={finishOnboarding}
+          onStepChange={setOnboardingStep}
+          step={onboardingStep}
+        />
       )}
 
       {menuOpen && (
@@ -3506,12 +3437,10 @@ export function App() {
         </div>
       )}
 
-      {/* The disconnected home stays clear while the connection sheet is active. */}
+      {/* Home and the public Exit Market remain useful before wallet connection. */}
       {(route === "discover" || route === "explore-circles") && (
         <section className={`route-page discover-page ${route === "explore-circles" ? "available-circles-page" : ""}`}>
-          {!walletAccessReady && route === "discover" ? (
-            <div className="wallet-entry-blank" aria-hidden="true" />
-          ) : walletAccessReady && route === "discover" ? (
+          {walletAccessReady && route === "discover" ? (
             <div className="savings-home">
               <section
                 aria-label="Savings summary"
@@ -5101,7 +5030,13 @@ export function App() {
             </button>
             <button
               className={marketView === "mine" ? "active" : ""}
-              onClick={() => setMarketView("mine")}
+              onClick={() => {
+                if (!walletAccessReady) {
+                  setConnectionSheetOpen(true);
+                  return;
+                }
+                setMarketView("mine");
+              }}
             >
               My exit requests
             </button>
@@ -5130,8 +5065,12 @@ export function App() {
                 <div className="my-exit-heading-actions">
                   <button
                     className="secondary compact icon-action"
-                    disabled={riskActionsDisabled}
+                    disabled={walletAccessReady && riskActionsDisabled}
                     onClick={() => {
+                      if (!walletAccessReady) {
+                        setConnectionSheetOpen(true);
+                        return;
+                      }
                       setSnapshot(null);
                       setExitDraft(null);
                       setExitState(null);
@@ -5144,7 +5083,7 @@ export function App() {
                   <button
                     aria-label="Refresh exit requests"
                     className="icon-button my-exit-refresh"
-                    disabled={riskActionsDisabled}
+                    disabled={walletAccessReady && riskActionsDisabled}
                     onClick={() => void refreshPortfolio()}
                     title="Refresh exit requests"
                     type="button"
@@ -5155,8 +5094,18 @@ export function App() {
               ) : (
                 <button
                   className="icon-button"
-                  disabled={riskActionsDisabled}
-                  onClick={() => void refreshPortfolio()}
+                  disabled={walletAccessReady && riskActionsDisabled}
+                  onClick={() => {
+                    if (walletAccessReady) {
+                      void refreshPortfolio();
+                      return;
+                    }
+                    void loadIndexedActiveListingIds()
+                      .catch(() => undefined)
+                      .then((indexed) => loadPublicExitListings(indexed))
+                      .then(setListings)
+                      .catch((error) => console.warn("Public exit refresh deferred", error));
+                  }}
                   title="Refresh"
                   type="button"
                 >
@@ -5281,8 +5230,8 @@ export function App() {
                   )}
                   {marketView === "mine" && <button
                     className="secondary compact"
-                    disabled={riskActionsDisabled}
-                    onClick={() => setMarketPositionPickerOpen(true)}
+                    disabled={walletAccessReady && riskActionsDisabled}
+                    onClick={() => walletAccessReady ? setMarketPositionPickerOpen(true) : setConnectionSheetOpen(true)}
                     type="button"
                   >
                     Request early exit
@@ -5555,7 +5504,7 @@ export function App() {
                 entry={exitState!}
                 connectedAddress={connectedAddress}
                 disabled={actionsDisabled}
-                fundDisabled={riskActionsDisabled || purchaseAsset === "nim" || Boolean(listingFundingError)}
+                fundDisabled={(walletAccessReady && riskActionsDisabled) || purchaseAsset === "nim" || Boolean(listingFundingError)}
                 fundError={listingFundingError}
                 purchasing={transaction.status === "pending"}
                 onCancel={() =>
@@ -5570,6 +5519,10 @@ export function App() {
                   )
                 }
                 onFund={() => {
+                  if (!walletAccessReady) {
+                    setConnectionSheetOpen(true);
+                    return;
+                  }
                   if (!window.confirm("Fund this exit at the live contract price? The locked savings claim transfers permanently after settlement; the saver keeps their emergency funds.")) return;
                   void transactAndRefresh(
                     "Funding listing at the live system price…",
