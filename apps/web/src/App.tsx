@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import {
   acceptGroupInvitation,
@@ -131,7 +131,6 @@ import {
   ClockAlert,
   Compass,
   Copy,
-  Eye,
   Gift,
   GraduationCap,
   HandCoins,
@@ -481,7 +480,7 @@ function onboardingStorageKey(
   address: string,
   deploymentId: string
 ): string {
-  return `lockedin:onboarding:v2:${chainId.toLowerCase()}:${deploymentId.toLowerCase()}:${address.toLowerCase()}`;
+  return `lockedin:onboarding:v3:${chainId.toLowerCase()}:${deploymentId.toLowerCase()}:${address.toLowerCase()}`;
 }
 
 function contributionPlanText(
@@ -952,8 +951,7 @@ export function App() {
   // an on-chain savings position.
   const [route, setRoute] = useState<AppRoute>(routeFromHash);
   const [summaryCurrency, setSummaryCurrency] = useState<"usdt" | "nim">("usdt");
-  const [summaryRevealed, setSummaryRevealed] = useState(false);
-  const [summaryTouch, setSummaryTouch] = useState({ x: 24, y: 24, id: 0 });
+  const [summaryTilt, setSummaryTilt] = useState({ x: 0, y: 0, active: false });
   const [nimiq, setNimiq] = useState<NimiqState>({ status: "idle" });
   const [evm, setEvm] = useState<EvmState>({ status: "idle" });
   const [transaction, setTransaction] = useState<TransactionState>({
@@ -1099,6 +1097,30 @@ export function App() {
     deployment.status === "valid" &&
     (!nimiqConnectionRequired || nimiqWallet)
   );
+
+  function pressSavingsSummary(event: ReactPointerEvent<HTMLElement>): void {
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width - .5) * 2));
+    const y = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height - .5) * 2));
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSummaryTilt({ x, y, active: true });
+  }
+
+  function moveSavingsSummary(event: ReactPointerEvent<HTMLElement>): void {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width - .5) * 2));
+    const y = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height - .5) * 2));
+    setSummaryTilt({ x, y, active: true });
+  }
+
+  function releaseSavingsSummary(event: ReactPointerEvent<HTMLElement>): void {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setSummaryTilt({ x: 0, y: 0, active: false });
+  }
 
   useEffect(() => {
     if (entryStage === "ready" && !walletAccessReady) {
@@ -3024,8 +3046,9 @@ export function App() {
             <div className="sheet-grabber" />
             <header className="onboarding-header">
               <div>
-                <span className="eyebrow">Welcome to LockedIn Circle</span>
-                <small>Swipe or continue to explore</small>
+                <span className="eyebrow">Quick guide</span>
+                <strong>How LockedIn works</strong>
+                <small>Swipe or use Continue to follow each action</small>
               </div>
               <button className="text-action" onClick={finishOnboarding} type="button">Skip</button>
             </header>
@@ -3036,13 +3059,13 @@ export function App() {
               {onboardingStep === 0 && (
                 <>
                   <div className="onboarding-visual goal-visual" aria-hidden="true">
-                    <span><Eye size={25} /></span>
-                    <div><small>Your savings</small><strong>Reveal totals and progress</strong><i><b /></i></div>
+                    <span><Wallet size={25} /></span>
+                    <div><small>Your savings</small><strong>Total, progress and next goal</strong><i><b /></i></div>
                     <House size={20} />
                   </div>
                   <span className="onboarding-kicker">Home</span>
                   <h2 id="onboarding-title">See your savings at a glance.</h2>
-                  <p>Tap the eye on the savings card to reveal your total, combined goal, progress and next maturity.</p>
+                  <p>The Home card shows your total saved, combined goal, progress and next maturity. Press and hold any corner to interact with the card.</p>
                   <div className="onboarding-location"><House aria-hidden="true" size={17} /><span><strong>Home tab</strong><small>Your overview and next contribution</small></span><MoveRight aria-hidden="true" size={17} /></div>
                 </>
               )}
@@ -3478,31 +3501,16 @@ export function App() {
             <div className="savings-home">
               <section
                 aria-label="Savings summary"
-                className={`home-summary ${summaryRevealed ? "revealed" : "concealed"}`}
-                onPointerDown={(event) => {
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  setSummaryTouch({
-                    x: event.clientX - bounds.left,
-                    y: event.clientY - bounds.top,
-                    id: Date.now(),
-                  });
-                }}
+                className={`home-summary interactive-tilt ${summaryTilt.active ? "pressed" : ""}`}
+                onPointerCancel={releaseSavingsSummary}
+                onPointerDown={pressSavingsSummary}
+                onPointerMove={moveSavingsSummary}
+                onPointerUp={releaseSavingsSummary}
                 style={{
-                  "--summary-touch-x": `${summaryTouch.x}px`,
-                  "--summary-touch-y": `${summaryTouch.y}px`,
+                  "--summary-rotate-x": `${summaryTilt.y * -8}deg`,
+                  "--summary-rotate-y": `${summaryTilt.x * 8}deg`,
                 } as CSSProperties}
               >
-                {summaryTouch.id > 0 && <i aria-hidden="true" className="summary-touch-effect" key={summaryTouch.id} />}
-                <button
-                  aria-label={summaryRevealed ? "Hide savings summary" : "Reveal savings summary"}
-                  aria-pressed={summaryRevealed}
-                  className="summary-visibility-toggle"
-                  onClick={() => setSummaryRevealed((visible) => !visible)}
-                  type="button"
-                >
-                  <Eye aria-hidden="true" size={19} strokeWidth={1.5} />
-                </button>
-                <div className="summary-private-content">
                 <span className="eyebrow">Your savings</span>
                 <div className="summary-balance-row">
                   <span className="summary-vault-logo"><Wallet aria-hidden="true" size={24} strokeWidth={1.6} /></span>
@@ -3526,7 +3534,6 @@ export function App() {
                 <div className="home-progress" aria-label={`${portfolioProgressLabel}% of combined savings goals reached`}><i><span style={{ width: `${portfolioProgress}%` }} /></i><b>{portfolioProgressLabel}%</b></div>
                 <div className="home-summary-meta"><span><Target aria-hidden="true" size={15} />Goal {amountLabel(portfolioTotalTarget)} USDT</span><span><CalendarDays aria-hidden="true" size={15} />{nearestMaturity ? `Next goal ${nearestMaturity.toLocaleDateString()}` : "No maturity scheduled"}</span></div>
                 <button className="home-add-savings" onClick={() => startQuickVaultAction("save")} type="button"><CirclePlus aria-hidden="true" size={18} strokeWidth={1.6} />Add savings</button>
-                </div>
               </section>
 
               <section className="home-quick-actions" aria-label="Savings shortcuts">
