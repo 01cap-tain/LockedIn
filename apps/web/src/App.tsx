@@ -21,6 +21,7 @@ import {
   loadAllExitListings,
   loadPublicExitListings,
   loadPublicCompletedTrades,
+  loadRecoveredPurchaseTrades,
   loadPublicGroups,
   loadActiveSecureGroupInvitation,
   loadSecureGroupInvitation,
@@ -920,6 +921,46 @@ function FirstLoadGate({ stage, onUnlock }: { stage: EntryStage; onUnlock: () =>
         <span>{checked ? "Preparing your savings space" : "Your guide starts inside"}</span>
       </div>
     </main>
+  );
+}
+
+function mergeCompletedTrades(
+  ...groups: CompletedTrade[][]
+): CompletedTrade[] {
+  const trades = new Map<string, CompletedTrade>();
+  for (const trade of groups.flat()) {
+    trades.set(trade.transactionHash.toLowerCase(), trade);
+  }
+  return [...trades.values()].sort(
+    (left, right) => right.blockNumber - left.blockNumber
+  );
+}
+
+function mergeActivityWithPurchases(
+  items: ActivityItem[],
+  purchases: CompletedTrade[]
+): ActivityItem[] {
+  const merged = new Map<string, ActivityItem>();
+  for (const item of items) merged.set(item.id, item);
+  for (const purchase of purchases) {
+    const id = `${purchase.transactionHash.toLowerCase()}:purchase`;
+    if ([...merged.values()].some((item) =>
+      item.transactionHash.toLowerCase() === purchase.transactionHash.toLowerCase()
+    )) continue;
+    merged.set(id, {
+      id,
+      blockNumber: purchase.blockNumber,
+      transactionHash: purchase.transactionHash,
+      title: "Savings position purchased",
+      detail: "The locked claim is now yours and remains available at maturity.",
+      vault: purchase.vault,
+      member: purchase.provider,
+      amount: purchase.claimValue,
+      timestamp: purchase.timestamp,
+    });
+  }
+  return [...merged.values()].sort(
+    (left, right) => right.blockNumber - left.blockNumber
   );
 }
 
@@ -1850,27 +1891,49 @@ export function App() {
     // succeeded; a transient RPC failure must not erase the wallet session.
     if (!evmSession || !deploymentReady || deployment.status !== "valid")
       return;
-    void recoverPendingTransactions(evmSession.signer).then((operations) => {
-      const uncertain = operations.find((operation) =>
-        operation.state === "OUTCOME_UNKNOWN" || operation.state === "REPLACED"
-      );
-      if (uncertain) {
-        setTransaction({
-          status: "error",
-          message: "Transaction status unknown. Check the transaction before trying again.",
-          transactionHash: uncertain.replacementHash ?? uncertain.transactionHash,
-          recoverable: true,
-        });
+    let cancelled = false;
+    void (async () => {
+      try {
+        const operations = await recoverPendingTransactions(evmSession.signer);
+        const uncertain = operations.find((operation) =>
+          operation.state === "OUTCOME_UNKNOWN" || operation.state === "REPLACED"
+        );
+        if (uncertain && !cancelled) {
+          setTransaction({
+            status: "error",
+            message: "Transaction status unknown. Check the transaction before trying again.",
+            transactionHash: uncertain.replacementHash ?? uncertain.transactionHash,
+            recoverable: true,
+          });
+        }
+      } catch (error) {
+        console.warn("Pending transaction recovery deferred", error);
       }
-    }).catch((error) => console.warn("Pending transaction recovery deferred", error));
-    void refreshPortfolio(evmSession).catch((error) =>
-      setTransaction({ status: "error", message: describeContractError(error) })
-    );
+
+      try {
+        const recoveredPurchases = await loadRecoveredPurchaseTrades(evmSession.signer);
+        if (!cancelled) {
+          pendingCompletedTrades.current = recoveredPurchases;
+          setCompletedTrades((current) => mergeCompletedTrades(recoveredPurchases, current));
+        }
+      } catch (error) {
+        console.warn("Confirmed purchase recovery deferred", error);
+      }
+
+      if (!cancelled) {
+        await refreshPortfolio(evmSession).catch((error) =>
+          setTransaction({ status: "error", message: describeContractError(error) })
+        );
+      }
+    })();
     if (evmSession.source === "hardhat-development") {
       void listDevelopmentAccounts()
         .then(setDevelopmentAccounts)
         .catch(() => setDevelopmentAccounts([]));
     }
+    return () => {
+      cancelled = true;
+    };
   }, [evmSession?.address, evmSession?.chainId, deployment.status]);
 
   async function checkPendingTransactions(): Promise<void> {
@@ -2021,11 +2084,15 @@ export function App() {
               );
             })
             .then((items) => {
-              setActivity(items);
-              return items;
+              const merged = mergeActivityWithPurchases(items, pendingCompletedTrades.current);
+              setActivity(merged);
+              return merged;
             })
         : null;
-      let projectedTrades = [...pendingCompletedTrades.current, ...completedTrades];
+      let projectedTrades = mergeCompletedTrades(
+        pendingCompletedTrades.current,
+        completedTrades
+      );
       let indexedMemberVaults: IndexedVaultReference[] | undefined;
       if (indexedApiAvailable()) {
         try {
@@ -2038,7 +2105,10 @@ export function App() {
               (indexed) => indexed.transactionHash.toLowerCase() === pending.transactionHash.toLowerCase()
             )
           );
-          projectedTrades = [...pendingCompletedTrades.current, ...indexedTrades];
+          projectedTrades = mergeCompletedTrades(
+            pendingCompletedTrades.current,
+            indexedTrades
+          );
           indexedMemberVaults = indexedVaults;
           setCompletedTrades(projectedTrades);
           setPublicTradesError(null);
@@ -2076,7 +2146,10 @@ export function App() {
       if (listingsResult.status === "fulfilled")
         setListings(listingsResult.value);
       if (!activityPromise && activityResult.status === "fulfilled")
-        setActivity(activityResult.value);
+        setActivity(mergeActivityWithPurchases(
+          activityResult.value,
+          pendingCompletedTrades.current
+        ));
       if (balanceResult.status === "fulfilled")
         setMockTokenBalance(balanceResult.value);
       if (nativeBalanceResult.status === "fulfilled")
@@ -2119,7 +2192,7 @@ export function App() {
           (indexed) => indexed.transactionHash.toLowerCase() === pending.transactionHash.toLowerCase()
         )
       );
-      setCompletedTrades([...pendingCompletedTrades.current, ...trades]);
+      setCompletedTrades(mergeCompletedTrades(pendingCompletedTrades.current, trades));
       setPublicTradesError(null);
     } catch (error) {
       console.error("Public trade history failed", error);

@@ -68,6 +68,29 @@ describe("durable Polygon operation metadata", () => {
     expect(pendingOperationsFor(operation.account, 137n)).toHaveLength(0);
   });
 
+  it("retains a confirmed purchase as a non-authoritative discovery reference", () => {
+    const operation = recordSubmittedOperation({
+      account: "0x1111111111111111111111111111111111111111",
+      chainId: "137",
+      transactionHash: `0x${"78".repeat(32)}`,
+      action: "EXIT_PURCHASE",
+      targetContract: "0x2222222222222222222222222222222222222222",
+      expectedEvent: "ListingFunded",
+      expectedArguments: { listingId: "12", provider: "0x1111111111111111111111111111111111111111" },
+    });
+    updateRecoverableOperation(operation.operationId, "CONFIRMED");
+
+    expect(loadRecoverableOperations()).toEqual([
+      expect.objectContaining({
+        state: "CONFIRMED",
+        action: "EXIT_PURCHASE",
+        transactionHash: `0x${"78".repeat(32)}`,
+        expectedArguments: expect.objectContaining({ listingId: "12" }),
+      }),
+    ]);
+    expect(pendingOperationsFor(operation.account, 137n)).toEqual([]);
+  });
+
   it("keeps a replacement recoverable under the original operation identity", () => {
     const operation = recordSubmittedOperation({
       account: "0x1111111111111111111111111111111111111111",

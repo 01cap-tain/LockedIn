@@ -18,6 +18,7 @@ import {
 } from "ethers";
 import {
   attachSubmittedTransaction,
+  loadRecoverableOperations,
   pendingOperationsFor,
   recordAwaitingOperation,
   recordSubmittedOperation,
@@ -3045,6 +3046,119 @@ export async function loadCompletedTrades(
     scanCompletedTrades(provider, deployment.marketAddress, deployment.deploymentBlock)
   ));
   return trades.flat().sort((left, right) => right.blockNumber - left.blockNumber);
+}
+
+/**
+ * Restores purchases confirmed by this browser without trusting browser
+ * storage as financial state. Persisted recovery records are only discovery
+ * hints: the receipt, market event, listing identity and current position
+ * owner must all agree with Polygon before a trade is returned.
+ */
+export async function loadRecoveredPurchaseTrades(
+  signer: Signer
+): Promise<CompletedTrade[]> {
+  const provider = readProviderFor(signer);
+  const [network, account] = await Promise.all([
+    provider.getNetwork(),
+    signer.getAddress(),
+  ]);
+  const buyer = getAddress(account);
+  const deploymentsByMarket = new Map(
+    configuredDeployments().map((deployment) => [
+      deployment.marketAddress.toLowerCase(),
+      deployment,
+    ])
+  );
+  const candidates = loadRecoverableOperations().filter((operation) =>
+    operation.action === "EXIT_PURCHASE"
+    && operation.chainId === network.chainId.toString()
+    && operation.account.toLowerCase() === buyer.toLowerCase()
+    && Boolean(operation.transactionHash ?? operation.replacementHash)
+    && deploymentsByMarket.has(operation.targetContract.toLowerCase())
+  );
+  const uniqueCandidates = new Map<string, RecoverableOperation>();
+  for (const candidate of candidates) {
+    const hash = candidate.replacementHash ?? candidate.transactionHash;
+    if (hash) uniqueCandidates.set(hash.toLowerCase(), candidate);
+  }
+
+  const restored = await Promise.all(
+    [...uniqueCandidates.entries()].map(async ([, operation]) => {
+      try {
+        const hash = operation.replacementHash ?? operation.transactionHash;
+        if (!hash) return null;
+        const marketAddress = getAddress(operation.targetContract);
+        const receipt = await provider.getTransactionReceipt(hash);
+        if (
+          !receipt
+          || receipt.status !== 1
+          || getAddress(receipt.from) !== buyer
+          || !receipt.to
+          || getAddress(receipt.to) !== marketAddress
+        ) return null;
+
+        const fundedEvent = receipt.logs
+          .filter((log) => log.address.toLowerCase() === marketAddress.toLowerCase())
+          .map((log) => parsedEvent(log, marketAbi))
+          .find((event) =>
+            event?.name === "ListingFunded"
+            && getAddress(event.args.provider) === buyer
+            && (
+              operation.expectedArguments.listingId === undefined
+              || event.args.listingId.toString() === operation.expectedArguments.listingId
+            )
+          );
+        if (!fundedEvent) return null;
+
+        const listingId = BigInt(fundedEvent.args.listingId);
+        const market = new Contract(marketAddress, marketAbi, provider);
+        const listing = await market.getFunction("listings")(listingId);
+        const vaultAddress = getAddress(listing.vault);
+        const deployment = deploymentsByMarket.get(marketAddress.toLowerCase());
+        if (!deployment) return null;
+        const factory = new Contract(deployment.factoryAddress, factoryAbi, provider);
+        if (!await factory.getFunction("isVault")(vaultAddress)) return null;
+
+        const vault = new Contract(vaultAddress, vaultAbi, provider);
+        const [positionOwner, isGroup, block] = await Promise.all([
+          vault.getFunction("positionOwner")(listing.positionId),
+          vault.getFunction("isGroup")(),
+          provider.getBlock(receipt.blockNumber),
+        ]);
+        if (getAddress(positionOwner) !== buyer) return null;
+
+        const claimValue = BigInt(fundedEvent.args.claimValue);
+        const saverPayout = BigInt(fundedEvent.args.saverPayout);
+        const providerFee = BigInt(fundedEvent.args.providerFee);
+        return {
+          listingId,
+          vault: vaultAddress,
+          positionId: BigInt(listing.positionId),
+          isGroup: Boolean(isGroup),
+          seller: getAddress(listing.seller),
+          provider: buyer,
+          claimValue: formatUnits(claimValue, USDT_DECIMALS),
+          systemDiscountPercent: Number(fundedEvent.args.systemDiscountBps) / 100,
+          saverPayout: formatUnits(saverPayout, USDT_DECIMALS),
+          providerPotentialReturn: formatUnits(
+            BigInt(fundedEvent.args.providerPotentialReturn),
+            USDT_DECIMALS
+          ),
+          providerFee: formatUnits(providerFee, USDT_DECIMALS),
+          totalProviderPaid: formatUnits(saverPayout + providerFee, USDT_DECIMALS),
+          blockNumber: receipt.blockNumber,
+          transactionHash: hash,
+          timestamp: new Date(Number(block?.timestamp ?? 0) * 1_000),
+        } satisfies CompletedTrade;
+      } catch (error) {
+        console.warn("A saved purchase reference could not be verified", error);
+        return null;
+      }
+    })
+  );
+  return restored
+    .filter((trade): trade is CompletedTrade => trade !== null)
+    .sort((left, right) => right.blockNumber - left.blockNumber);
 }
 
 /**
