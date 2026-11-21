@@ -74,10 +74,18 @@ export interface ApiConfig {
 }
 
 function resolveManifestPath(value: string): string {
-  if (path.isAbsolute(value)) return value
-  const fromProcess = path.resolve(process.cwd(), value)
+  // A previous deployment guide showed the variable assignment beside the
+  // value. Some hosted environments therefore contain
+  // `INDEXER_MANIFEST_PATH=packages/...` as the value itself. Accept that
+  // unambiguous legacy form so the API does not fail its health check before
+  // it can report a useful status.
+  const normalizedValue = value
+    .trim()
+    .replace(/^INDEXER_MANIFEST_PATHS?\s*=\s*/i, '')
+  if (path.isAbsolute(normalizedValue)) return normalizedValue
+  const fromProcess = path.resolve(process.cwd(), normalizedValue)
   if (existsSync(fromProcess)) return fromProcess
-  return path.resolve(repositoryRoot, value)
+  return path.resolve(repositoryRoot, normalizedValue)
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiConfig {

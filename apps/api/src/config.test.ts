@@ -23,4 +23,20 @@ describe('production API configuration', () => {
     )
     expect(config.deploymentBlock).toBe(97_068_820)
   })
+
+  it('normalizes a legacy manifest value that includes the variable name', () => {
+    const config = loadConfig({
+      DATABASE_URL: 'postgres://user:password@database/lockedin',
+      INDEXER_RPC_URL: 'https://polygon.example.invalid',
+      INDEXER_MANIFEST_PATHS:
+        'INDEXER_MANIFEST_PATH=packages/contracts/deployments/polygon/latest.json',
+      API_HOST: '0.0.0.0',
+      API_CORS_ORIGINS: 'https://lockedin.example',
+    })
+
+    expect(config.manifest.chainId).toBe(137)
+    expect(config.manifestPath).toBe(
+      path.join(repositoryRoot, 'packages/contracts/deployments/polygon/latest.json'),
+    )
+  })
 })
