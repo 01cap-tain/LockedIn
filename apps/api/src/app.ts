@@ -10,6 +10,7 @@ import { registerAuthRoutes } from './routes/auth-routes.js'
 import { registerReadRoutes } from './routes/read-routes.js'
 import { registerStreamRoutes } from './routes/stream-routes.js'
 import { registerInvitationRoutes } from './routes/invitation-routes.js'
+import { registerBoosterRoutes } from './routes/booster-routes.js'
 import type { IndexerEventStream } from './realtime/event-stream.js'
 
 export async function buildApp(
@@ -100,5 +101,6 @@ export async function buildApp(
   await registerStreamRoutes(app, stream)
   await registerAuthRoutes(app, pool, auth)
   await registerInvitationRoutes(app, pool, auth, config)
+  await registerBoosterRoutes(app, pool, auth)
   return app
 }

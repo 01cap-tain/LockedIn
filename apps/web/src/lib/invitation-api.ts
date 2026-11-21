@@ -35,7 +35,7 @@ async function session(signer: Signer): Promise<AuthSession> {
   return authenticated;
 }
 
-async function authenticatedFetch(signer: Signer, path: string, init?: RequestInit): Promise<Response> {
+export async function authenticatedFetch(signer: Signer, path: string, init?: RequestInit): Promise<Response> {
   const authenticated = await session(signer);
   return fetch(endpoint(path), {
     ...init,
@@ -43,7 +43,7 @@ async function authenticatedFetch(signer: Signer, path: string, init?: RequestIn
   });
 }
 
-async function responseError(response: Response, fallback: string): Promise<Error> {
+export async function responseError(response: Response, fallback: string): Promise<Error> {
   const result = await response.json().catch(() => null) as { message?: string } | null;
   return new Error(result?.message?.trim() || fallback);
 }

@@ -286,7 +286,7 @@ const routes: Array<{ id: AppRoute; label: string }> = [
 ];
 
 const secondaryRoutes: Array<{ id: AppRoute; label: string }> = [
-  { id: "rewards", label: "Rewards · Coming soon" },
+  { id: "rewards", label: "NIM Booster" },
   { id: "activity", label: "Transaction history" },
   { id: "wallet", label: "Wallet & network" },
 ];
@@ -5863,7 +5863,14 @@ export function App() {
 
       {!deploymentBlocked && route === "rewards" && (
         <Suspense fallback={<RouteLoading label="Loading rewards" />}>
-          <RewardsRoute />
+          <RewardsRoute
+            activity={activity}
+            listings={listings}
+            nimiqAddress={nimiqWallet?.address ?? null}
+            onConnect={() => setConnectionSheetOpen(true)}
+            signer={evmSession?.signer ?? null}
+            vaults={vaults}
+          />
         </Suspense>
       )}
 

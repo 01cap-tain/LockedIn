@@ -11328,6 +11328,142 @@ textarea { min-height: 44px; }
   .reward-coming-soon > span { padding-inline: 12px; font-size: 13px; }
 }
 
+/* LockedIn NIM Booster ------------------------------------------------- */
+.booster-page {
+  display: grid;
+  width: min(100%, 620px);
+  margin-inline: auto;
+  gap: 14px;
+  padding: 22px 14px calc(118px + env(safe-area-inset-bottom));
+  color: var(--text-primary);
+}
+.booster-heading { display: grid; gap: 7px; padding: 4px 3px 8px; }
+.booster-heading .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-yellow); }
+.booster-heading h1 { margin: 0; font-family: Manrope, sans-serif; font-size: clamp(25px, 7vw, 34px); line-height: 1.08; }
+.booster-heading p { max-width: 430px; margin: 0; color: var(--text-secondary); font-size: 14px; }
+.booster-prize-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(244, 200, 74, .23);
+  border-radius: 23px;
+  padding: 17px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(244, 200, 74, .16), transparent 37%),
+    linear-gradient(145deg, #242316, #171a16 72%);
+}
+.booster-prize-card::after {
+  position: absolute;
+  right: -22px;
+  bottom: -52px;
+  width: 140px;
+  height: 140px;
+  border: 1px solid rgba(244, 200, 74, .08);
+  border-radius: 50%;
+  content: "";
+  box-shadow: 0 0 0 22px rgba(244, 200, 74, .025);
+}
+.booster-prize-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid rgba(244, 241, 232, .18);
+  border-radius: 17px;
+  color: #171a16;
+  background: #f4f1e8;
+}
+.booster-prize-card > div:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.booster-prize-card span { color: #c8c3b4; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.booster-prize-card strong { color: #f4f1e8; font-size: clamp(23px, 7vw, 31px); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.booster-prize-card small { color: #c8c3b4; font-size: 12px; }
+.booster-prize-card .booster-stage {
+  position: relative;
+  z-index: 1;
+  align-self: start;
+  border: 1px solid rgba(85, 197, 138, .24);
+  border-radius: 999px;
+  padding: 6px 8px;
+  color: #7ed8a6;
+  background: rgba(85, 197, 138, .09);
+  font-size: 9px;
+}
+.booster-score-card, .booster-requirements, .booster-selection-note {
+  border: 1px solid rgba(244, 241, 232, .1);
+  border-radius: 21px;
+  background: #1a1e1b;
+}
+.booster-score-card { display: grid; gap: 11px; padding: 17px; }
+.booster-score-topline { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.booster-score-topline > div:first-child { display: grid; gap: 1px; color: var(--text-secondary); font-size: 12px; }
+.booster-score-topline strong { color: #f4f1e8; font-size: 28px; font-variant-numeric: tabular-nums; }
+.booster-score-topline strong small { color: #a8aea8; font-size: 12px; }
+.booster-score-ring {
+  --booster-score: 0;
+  display: grid;
+  width: 49px;
+  height: 49px;
+  place-items: center;
+  border-radius: 50%;
+  color: #f4f1e8;
+  background: radial-gradient(circle, #242925 61%, transparent 63%), conic-gradient(#f4c84a calc(var(--booster-score) * 1%), #41433c 0);
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.booster-score-ring.qualified { color: #55c58a; }
+.booster-score-track { height: 6px; overflow: hidden; border-radius: 999px; background: #343832; }
+.booster-score-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #a97f1f, #f4c84a); transition: width .4s ease; }
+.booster-score-card p { margin: 0; color: #b8b7af; font-size: 12px; line-height: 1.55; }
+.booster-requirements { padding: 15px; }
+.booster-section-heading, .booster-section-heading > div { display: flex; align-items: center; }
+.booster-section-heading { justify-content: space-between; gap: 10px; padding: 1px 2px 12px; }
+.booster-section-heading > div { gap: 8px; }
+.booster-section-heading svg { color: #f4c84a; }
+.booster-section-heading h2 { margin: 0; font-size: 16px; }
+.booster-section-heading > span { color: #a8aea8; font-size: 12px; font-variant-numeric: tabular-nums; }
+.booster-checklist { display: grid; }
+.booster-checklist article {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  border-top: 1px solid rgba(244, 241, 232, .07);
+  padding: 8px 2px;
+}
+.booster-check-icon { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 10px; color: #8d928c; background: #242925; }
+.booster-checklist article.complete .booster-check-icon { color: #173625; background: #8ad8ad; }
+.booster-checklist article > div { display: grid; gap: 2px; }
+.booster-checklist strong { color: #f4f1e8; font-size: 13px; }
+.booster-checklist small { color: #a8aea8; font-size: 11px; line-height: 1.35; }
+.booster-selection-note { display: grid; grid-template-columns: 37px minmax(0, 1fr); gap: 9px; padding: 14px; }
+.booster-selection-note > svg { color: #9b8be8; }
+.booster-selection-note strong { color: #f4f1e8; font-size: 13px; }
+.booster-selection-note p { margin: 3px 0 0; color: #a8aea8; font-size: 11px; line-height: 1.45; }
+.booster-error { border: 1px solid rgba(223, 107, 101, .35); border-radius: 15px; padding: 11px 13px; color: #f2aaa5; background: rgba(223, 107, 101, .1); font-size: 12px; }
+.booster-action-area { display: grid; gap: 9px; padding-top: 2px; }
+.booster-join-button { width: 100%; min-height: 48px; }
+.booster-entry-confirmed { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 9px; border: 1px solid rgba(85, 197, 138, .25); border-radius: 17px; padding: 12px; color: #173625; background: #8ad8ad; }
+.booster-entry-confirmed > svg { justify-self: center; }
+.booster-entry-confirmed > div { display: grid; gap: 1px; }
+.booster-entry-confirmed strong { font-size: 13px; }
+.booster-entry-confirmed small { color: #28583a; font-size: 11px; }
+.booster-payout-note { display: flex; align-items: flex-start; justify-content: center; gap: 5px; margin: 0; color: #8d928c; font-size: 10px; line-height: 1.4; text-align: center; }
+.booster-payout-note svg { flex: 0 0 auto; margin-top: 1px; }
+
+@media (max-width: 390px) {
+  .booster-page { padding-inline: 10px; }
+  .booster-prize-card { grid-template-columns: 45px minmax(0, 1fr); padding: 14px; }
+  .booster-prize-icon { width: 45px; height: 45px; border-radius: 14px; }
+  .booster-prize-card .booster-stage { position: absolute; top: 11px; right: 11px; }
+  .booster-prize-card strong { font-size: 23px; }
+  .booster-prize-card > div:nth-child(2) { padding-right: 38px; }
+}
+
 /* First-load unlock gate ------------------------------------------------ */
 .first-load-gate {
   display: grid;
