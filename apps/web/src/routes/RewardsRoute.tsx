@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { Signer } from "ethers";
-import { Check, Circle, Gift, LockKeyhole, ShieldCheck, Sparkles, Trophy, Users } from "lucide-react";
+import { Check, Circle, LockKeyhole, ShieldCheck, Sparkles, Trophy, Users } from "lucide-react";
 
 import type { ActivityItem, ExitListingSnapshot, VaultSummary } from "../lib/contracts";
 import {
@@ -76,7 +76,7 @@ export function RewardsRoute({ signer, nimiqAddress, vaults, activity, listings,
       </header>
 
       <article className="booster-prize-card">
-        <div className="booster-prize-icon"><Gift aria-hidden="true" size={24} strokeWidth={1.5} /></div>
+        <div className="booster-prize-icon"><img alt="" aria-hidden="true" src="/brand/nimiq-hexagon.svg" /></div>
         <div>
           <span>Official LockedIn campaign</span>
           <strong>{campaign ? campaign.totalRewardNim.toLocaleString() : "50,000"} NIM</strong>
@@ -87,7 +87,7 @@ export function RewardsRoute({ signer, nimiqAddress, vaults, activity, listings,
 
       <section className="booster-score-card" aria-label="Your Booster qualification">
         <div className="booster-score-topline">
-          <div><span>Your qualification</span><strong>{qualification.score}<small>/100</small></strong></div>
+          <div><span>Live qualification estimate</span><strong>{qualification.score}<small>/100</small></strong></div>
           <div className={`booster-score-ring ${qualification.eligible ? "qualified" : ""}`} style={{ "--booster-score": qualification.score } as CSSProperties}>
             {qualification.eligible ? <Trophy aria-hidden="true" size={22} strokeWidth={1.5} /> : qualification.score}
           </div>

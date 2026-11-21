@@ -11376,6 +11376,7 @@ textarea { min-height: 44px; }
   color: #171a16;
   background: #f4f1e8;
 }
+.booster-prize-icon img { display: block; width: 29px; height: 27px; }
 .booster-prize-card > div:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
 .booster-prize-card span { color: #c8c3b4; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .booster-prize-card strong { color: #f4f1e8; font-size: clamp(23px, 7vw, 31px); font-variant-numeric: tabular-nums; line-height: 1.1; }
