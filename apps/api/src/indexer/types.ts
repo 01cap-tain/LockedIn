@@ -28,7 +28,7 @@ export interface IndexedBatch {
 }
 
 export interface IndexerStatus {
-  rpcStatus: 'ok'
+  rpcStatus: 'ok' | 'degraded'
   chainId: number
   deploymentId: string
   protocolVersion: string

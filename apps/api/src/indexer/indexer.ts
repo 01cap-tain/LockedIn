@@ -158,14 +158,22 @@ export class BlockchainIndexer {
   async status(): Promise<IndexerStatus> {
     const [cursor, latest, failures] = await Promise.all([
       this.loadCursor(),
-      this.provider.getBlockNumber(),
+      // RPC quota and transport failures must degrade indexing without making
+      // the API fail its hosting health check. On-chain reads remain
+      // authoritative; this fallback only reports the last persisted cursor.
+      this.provider.getBlockNumber().catch(() => null),
       this.pool.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM indexer_errors WHERE chain_id = $1 AND deployment_id = $2',
         [this.config.manifest.chainId, this.config.manifest.deploymentId],
       ),
     ])
+    const rpcAvailable = latest !== null
+    const latestRpcBlock = latest ?? cursor.blockNumber
+    const lastError = cursor.lastError ?? (
+      rpcAvailable ? null : 'Polygon RPC is temporarily unavailable.'
+    )
     return {
-      rpcStatus: 'ok',
+      rpcStatus: rpcAvailable ? 'ok' : 'degraded',
       chainId: this.config.manifest.chainId,
       deploymentId: this.config.manifest.deploymentId,
       protocolVersion: this.config.manifest.protocolVersion,
@@ -173,10 +181,10 @@ export class BlockchainIndexer {
       deploymentBlock: this.config.deploymentBlock,
       lastSafeBlock: cursor.blockNumber,
       lastSafeHash: cursor.blockHash,
-      latestRpcBlock: latest,
+      latestRpcBlock,
       confirmationDepth: this.config.confirmationDepth,
-      lag: Math.max(0, latest - this.config.confirmationDepth - cursor.blockNumber),
-      lastError: cursor.lastError,
+      lag: Math.max(0, latestRpcBlock - this.config.confirmationDepth - cursor.blockNumber),
+      lastError,
       lastErrorAt: cursor.lastErrorAt,
       failedEventProcessingCount: Number(failures.rows[0]?.count ?? 0),
     }
